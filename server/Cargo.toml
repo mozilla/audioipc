@@ -1,0 +1,8 @@
+[package]
+name = "server"
+version = "0.1.0"
+authors = ["Dan Glastonbury <dan.glastonbury@gmail.com>"]
+description = "Remote cubeb server"
+
+[dependencies]
+cubeb = { git = "https://github.com/djg/cubeb-rs" }

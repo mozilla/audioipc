@@ -1,0 +1,22 @@
+[package]
+name = "audioipc"
+version = "0.1.0"
+authors = [
+        "Matthew Gregan <kinetik@flim.org>",
+        "Dan Glastonbury <dan.glastonbury@gmail.com>"
+        ]
+description = "Remote Cubeb IPC"
+
+[dependencies]
+serde = "0.9"
+serde_derive = "0.9"
+bincode = "0.8"
+libc = "0.2.22"
+mio-uds = "0.6.4"
+mio = "0.6.7"
+nix = "0.8.1"
+ctrlc = "3.0.1"
+error-chain = "0.10.0"
+log = "0.3.8"
+env_logger = "0.4.3"
+slab = "0.3.0"
