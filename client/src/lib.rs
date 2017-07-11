@@ -3,6 +3,7 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details.
 
+extern crate audioipc;
 extern crate cubeb_core;
 #[macro_use]
 extern crate cubeb_backend;

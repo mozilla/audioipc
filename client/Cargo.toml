@@ -5,5 +5,6 @@ authors = ["Dan Glastonbury <dan.glastonbury@gmail.com>"]
 description = "Cubeb Backend for talking to remote cubeb server."
 
 [dependencies]
+audioipc = { path="../audioipc" }
 cubeb-core = { git="https://github.com/djg/cubeb-rs", branch="workspace-reorg" }
 cubeb-backend = { git="https://github.com/djg/cubeb-rs", branch="workspace-reorg" }

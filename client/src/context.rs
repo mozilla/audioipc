@@ -4,22 +4,58 @@
 // accompanying file LICENSE for details
 
 use ClientStream;
+use audioipc::{self, ClientMessage, Connection, ServerMessage, messages};
 use cubeb_backend::{Context, Ops};
-use cubeb_core::{ChannelLayout, DeviceId, DeviceType, Result, StreamParams, ffi};
+use cubeb_core::{ChannelLayout, DeviceId, DeviceType, Error, Result, StreamParams, ffi};
+use cubeb_core::binding::Binding;
 use std::ffi::CStr;
 use std::os::raw::c_void;
+use std::os::unix::net::UnixStream;
 use std::ptr;
 
 pub struct ClientContext {
-    _ops: *const Ops
+    _ops: *const Ops,
+    connection: Connection
+}
+
+macro_rules! t(
+    ($e:expr) => (
+        match $e {
+            Ok(e) => e,
+            Err(_) => return Err(Error::default())
+        }
+    ));
+
+macro_rules! send_recv {
+    ($self_:ident, $smsg:ident => $rmsg:ident) => {{
+        $self_.connection
+            .send(ServerMessage::$smsg)
+            .unwrap();
+        send_recv!(__recv $self_, $rmsg)
+    }};
+    ($self_:ident, $smsg:ident($p:tt) => $rmsg:ident) => {{
+        $self_.connection
+            .send(ServerMessage::$smsg($p))
+            .unwrap();
+        send_recv!(__recv $self_, $rmsg)
+    }};
+    (__recv $self_:ident, $rmsg:ident) =>
+        (if let ClientMessage::$rmsg(v) = $self_.connection.receive().unwrap() {
+            Ok(v)
+        } else {
+            panic!("wrong message received");
+        })
 }
 
 pub const CLIENT_OPS: Ops = capi_new!(ClientContext, ClientStream);
 
 impl Context for ClientContext {
     fn init(_context_name: Option<&CStr>) -> Result<*mut ffi::cubeb> {
+        // TODO: encapsulate connect, etc inside audioipc.
+        let stream = t!(UnixStream::connect(audioipc::get_uds_path()));
         let ctx = Box::new(ClientContext {
-            _ops: &CLIENT_OPS as *const _
+            _ops: &CLIENT_OPS as *const _,
+            connection: Connection::new(stream)
         });
         Ok(Box::into_raw(ctx) as *mut _)
     }
@@ -28,13 +64,20 @@ impl Context for ClientContext {
         unsafe { CStr::from_ptr(b"remote\0".as_ptr() as *const _) }
     }
     fn max_channel_count(&self) -> Result<u32> {
-        Ok(0u32)
+        self.connection
+            .send(ServerMessage::ContextGetMaxChannelCount)
+            .unwrap();
+        if let ClientMessage::ContextMaxChannelCount(channels) = self.connection.receive().unwrap() {
+            return Ok(channels);
+        }
+        panic!("wrong message received");
     }
-    fn min_latency(&self, _params: &StreamParams) -> Result<u32> {
-        Ok(0u32)
+    fn min_latency(&self, params: &StreamParams) -> Result<u32> {
+        let params = messages::StreamParams::from(unsafe { &*params.raw() });
+        send_recv!(self, ContextGetMinLatency(params) => ContextMinLatency)
     }
     fn preferred_sample_rate(&self) -> Result<u32> {
-        Ok(0u32)
+        send_recv!(self, ContextGetPreferredSampleRate => ContextPreferredSampleRate)
     }
     fn preferred_channel_layout(&self) -> Result<ChannelLayout> {
         Ok(ChannelLayout::Undefined)
