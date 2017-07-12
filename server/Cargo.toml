@@ -5,4 +5,12 @@ authors = ["Dan Glastonbury <dan.glastonbury@gmail.com>"]
 description = "Remote cubeb server"
 
 [dependencies]
-cubeb = { git = "https://github.com/djg/cubeb-rs" }
+audioipc = { path = "../audioipc" }
+#cubeb = { git = "https://github.com/djg/cubeb-rs", branch = "workspace-reorg" }
+cubeb = { path = "/home/djg/Mozilla/cubeb-rs/cubeb-api/" }
+error-chain = "0.10.0"
+log = "0.3.8"
+mio = "0.6.7"
+mio-uds = "0.6.4"
+slab = "0.3.0"
+

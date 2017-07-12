@@ -6,7 +6,7 @@
 use ClientStream;
 use audioipc::{self, ClientMessage, Connection, ServerMessage, messages};
 use cubeb_backend::{Context, Ops};
-use cubeb_core::{ChannelLayout, DeviceId, DeviceType, Error, Result, StreamParams, ffi};
+use cubeb_core::{DeviceId, DeviceType, Error, Result, StreamParams, ffi};
 use cubeb_core::binding::Binding;
 use std::ffi::CStr;
 use std::os::raw::c_void;
@@ -60,35 +60,36 @@ impl Context for ClientContext {
         Ok(Box::into_raw(ctx) as *mut _)
     }
 
-    fn backend_id(&self) -> &'static CStr {
+    fn backend_id(&mut self) -> &'static CStr {
         unsafe { CStr::from_ptr(b"remote\0".as_ptr() as *const _) }
     }
-    fn max_channel_count(&self) -> Result<u32> {
-        self.connection
-            .send(ServerMessage::ContextGetMaxChannelCount)
-            .unwrap();
-        if let ClientMessage::ContextMaxChannelCount(channels) = self.connection.receive().unwrap() {
-            return Ok(channels);
-        }
-        panic!("wrong message received");
+
+    fn max_channel_count(&mut self) -> Result<u32> {
+        send_recv!(self, ContextGetMaxChannelCount => ContextMaxChannelCount)
     }
-    fn min_latency(&self, params: &StreamParams) -> Result<u32> {
+
+    fn min_latency(&mut self, params: &StreamParams) -> Result<u32> {
         let params = messages::StreamParams::from(unsafe { &*params.raw() });
         send_recv!(self, ContextGetMinLatency(params) => ContextMinLatency)
     }
-    fn preferred_sample_rate(&self) -> Result<u32> {
+
+    fn preferred_sample_rate(&mut self) -> Result<u32> {
         send_recv!(self, ContextGetPreferredSampleRate => ContextPreferredSampleRate)
     }
-    fn preferred_channel_layout(&self) -> Result<ChannelLayout> {
-        Ok(ChannelLayout::Undefined)
+
+    fn preferred_channel_layout(&mut self) -> Result<ffi::cubeb_channel_layout> {
+        send_recv!(self, ContextGetPreferredChannelLayout => ContextPreferredChannelLayout)
     }
-    fn enumerate_devices(&self, _devtype: DeviceType) -> Result<ffi::cubeb_device_collection> {
+
+    fn enumerate_devices(&mut self, _devtype: DeviceType) -> Result<ffi::cubeb_device_collection> {
         Ok(ffi::cubeb_device_collection {
             device: ptr::null(),
             count: 0
         })
     }
-    fn device_collection_destroy(&self, _collection: *mut ffi::cubeb_device_collection) {}
+
+    fn device_collection_destroy(&mut self, _collection: *mut ffi::cubeb_device_collection) {}
+
     fn stream_init(
         &mut self,
         _stream_name: Option<&CStr>,
@@ -103,6 +104,7 @@ impl Context for ClientContext {
     ) -> Result<*mut ffi::cubeb_stream> {
         Ok(ptr::null_mut())
     }
+
     fn register_device_collection_changed(
         &mut self,
         _dev_type: DeviceType,

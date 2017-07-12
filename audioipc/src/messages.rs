@@ -126,7 +126,7 @@ pub enum ClientMessage {
     StreamPanningSet(),
     StreamCurrentDevice(Device),
 
-    ContextError(i32),
+    ContextError(ffi::cubeb_error_code),
     StreamError, /*(Error)*/
     ClientError /*(Error)*/
 }

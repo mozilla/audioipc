@@ -24,7 +24,7 @@ extern crate slab;
 extern crate cubeb_core;
 
 mod connection;
-mod errors;
+pub mod errors;
 pub mod messages;
 
 pub use connection::Connection;

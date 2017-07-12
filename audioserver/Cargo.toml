@@ -1,0 +1,12 @@
+[package]
+name = "audioserver"
+version = "0.1.0"
+authors = ["Dan Glastonbury <dan.glastonbury@gmail.com>"]
+
+[dependencies]
+audioipc = { path = "../audioipc" }
+ctrlc = "3.0.1"
+env_logger = "0.4.3"
+error-chain = "0.10.0"
+log = "0.3.8"
+server = { path = "../server" }
