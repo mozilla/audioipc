@@ -14,10 +14,11 @@ use audioipc::messages::{ClientMessage, ServerMessage};
 use mio::Token;
 use mio_uds::UnixListener;
 use std::convert::From;
+use std::os::unix::prelude::*;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-mod errors {
+pub mod errors {
     error_chain! {
         links {
             AudioIPC(::audioipc::errors::Error, ::audioipc::errors::ErrorKind);
@@ -32,21 +33,28 @@ use errors::*;
 
 type Slab<T> = slab::Slab<T, Token>;
 
+// TODO: Server token must be outside range used by server.connections slab.
+// usize::MAX is already used internally in mio.
+const SERVER: Token = Token(std::usize::MAX - 1);
+
 struct ServerConn {
     connection: audioipc::Connection,
     token: Option<Token>
 }
 
 impl ServerConn {
-    fn new(conn: audioipc::Connection) -> ServerConn {
+    fn new<FD>(fd: FD) -> ServerConn
+    where
+        FD: IntoRawFd,
+    {
         ServerConn {
-            connection: conn,
+            connection: unsafe { audioipc::Connection::from_raw_fd(fd.into_raw_fd()) },
             token: None
         }
     }
 
     fn process(&mut self, poll: &mut mio::Poll, context: &mut cubeb::Context) -> Result<()> {
-        let r = self.connection.receive::<ServerMessage>();
+        let r = self.connection.receive();
         debug!("got {:?}", r);
 
         // TODO: Might need a simple state machine to deal with create/use/destroy ordering, etc.
@@ -92,7 +100,7 @@ impl ServerConn {
                 }
             },
 
-            &ServerMessage::ContextGetMinLatency(params) => {
+            &ServerMessage::ContextGetMinLatency(ref params) => {
 
                 let format = cubeb::SampleFormat::from(params.format);
                 let layout = cubeb::ChannelLayout::from(params.layout);
@@ -232,7 +240,7 @@ pub struct Server {
 
 impl Server {
     pub fn new(socket: UnixListener) -> Server {
-        let mut ctx = cubeb::Context::init("AudioIPC Server", None).expect("Failed to create cubeb context");
+        let ctx = cubeb::Context::init("AudioIPC Server", None).expect("Failed to create cubeb context");
 
         Server {
             socket: socket,
@@ -266,7 +274,7 @@ impl Server {
         // Register the connection
         self.conns[token].token = Some(token);
         poll.register(
-            &self.conns[token].socket,
+            &self.conns[token].connection,
             token,
             mio::Ready::readable(),
             mio::PollOpt::edge() | mio::PollOpt::oneshot()
@@ -276,11 +284,8 @@ impl Server {
         debug!("received {:?}", r);
         let r = self.conns[token].send(ClientMessage::ClientConnected);
         debug!("sent {:?} (ClientConnected)", r);
-*/
-    }
-
-    fn conn(&mut self, tok: Token) -> &mut ServerConn {
-        &mut self.conns[tok]
+         */
+        Ok(())
     }
 
     pub fn poll(&mut self, poll: &mut mio::Poll) -> Result<()> {
@@ -304,7 +309,10 @@ impl Server {
                 token => {
                     debug!("token {:?} ready", token);
 
-                    let r = self.conn(token).process(poll, &mut self.context);
+                    //                    let r = self.process(poll, token);
+
+                    let r = self.conns[token].process(poll, &mut self.context);
+
                     debug!("got {:?}", r);
 
                     // TODO: Handle disconnection etc.
@@ -315,12 +323,12 @@ impl Server {
                         continue;
                     }
 
-                    poll.reregister(
-                        &self.conn(token).connection,
-                        token,
-                        mio::Ready::readable(),
-                        mio::PollOpt::edge() | mio::PollOpt::oneshot()
-                    ).unwrap();
+                    // poll.reregister(
+                    //     &self.conn(token).connection,
+                    //     token,
+                    //     mio::Ready::readable(),
+                    //     mio::PollOpt::edge() | mio::PollOpt::oneshot()
+                    // ).unwrap();
                 },
             }
         }
@@ -335,16 +343,13 @@ impl Server {
 // it as an Evented that we can send/recv file descriptors (or HANDLEs on
 // Windows) over.
 pub fn run(running: Arc<AtomicBool>) -> Result<()> {
-    // TODO: Server token must be outside range used by server.connections slab.
-    // usize::MAX is already used internally in mio.
-    const SERVER: Token = Token(std::usize::MAX - 1);
 
     // Ignore result.
     let _ = std::fs::remove_file(audioipc::get_uds_path());
 
     // TODO: Use a SEQPACKET, wrap it in UnixStream?
     let mut server = Server::new(UnixListener::bind(audioipc::get_uds_path())?);
-    let poll = mio::Poll::new()?;
+    let mut poll = mio::Poll::new()?;
 
     poll.register(
         &server.socket,

@@ -5,6 +5,8 @@ extern crate error_chain;
 extern crate audioipc;
 extern crate ctrlc;
 extern crate env_logger;
+#[macro_use]
+extern crate log;
 extern crate server;
 
 use std::process::exit;
@@ -15,6 +17,7 @@ mod errors {
     error_chain! {
         links {
             AudioIPC(::audioipc::errors::Error, ::audioipc::errors::ErrorKind);
+            Server(::server::errors::Error, ::server::errors::ErrorKind);
         }
     }
 }

@@ -27,7 +27,7 @@ mod connection;
 pub mod errors;
 pub mod messages;
 
-pub use connection::Connection;
+pub use connection::*;
 pub use messages::{ClientMessage, ServerMessage};
 use std::env::temp_dir;
 use std::path::PathBuf;
