@@ -1,15 +1,14 @@
 [package]
-name = "server"
+name = "audioclient"
 version = "0.1.0"
 authors = ["Dan Glastonbury <dan.glastonbury@gmail.com>"]
-description = "Remote cubeb server"
 
 [dependencies]
 audioipc = { path = "../audioipc" }
+client = { path = "../client" }
 cubeb = { git = "https://github.com/djg/cubeb-rs", branch = "workspace-reorg" }
+cubeb-core = { git = "https://github.com/djg/cubeb-rs", branch = "workspace-reorg" }
+env_logger = "0.4.3"
 error-chain = "0.10.0"
 log = "0.3.8"
-mio = "0.6.7"
-mio-uds = "0.6.4"
-slab = "0.3.0"
 

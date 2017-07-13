@@ -33,15 +33,33 @@ macro_rules! send_recv {
             .unwrap();
         send_recv!(__recv $self_, $rmsg)
     }};
+    ($self_:ident, $smsg:ident => $rmsg:ident()) => {{
+        $self_.connection
+            .send(ServerMessage::$smsg)
+            .unwrap();
+        send_recv!(__recv $self_, $rmsg ())
+    }};
+    ($self_:ident, $smsg:ident($p:tt) => $rmsg:ident()) => {{
+        $self_.connection
+            .send(ServerMessage::$smsg($p))
+            .unwrap();
+        send_recv!(__recv $self_, $rmsg ())
+    }};
     ($self_:ident, $smsg:ident($p:tt) => $rmsg:ident) => {{
         $self_.connection
             .send(ServerMessage::$smsg($p))
             .unwrap();
         send_recv!(__recv $self_, $rmsg)
     }};
-    (__recv $self_:ident, $rmsg:ident) =>
+    (__recv $self_:ident, $rmsg:ident ()) =>
         (if let ClientMessage::$rmsg(v) = $self_.connection.receive().unwrap() {
             Ok(v)
+        } else {
+            panic!("wrong message received");
+        });
+    (__recv $self_:ident, $rmsg:ident) =>
+        (if let ClientMessage::$rmsg = $self_.connection.receive().unwrap() {
+            ()
         } else {
             panic!("wrong message received");
         })
@@ -65,20 +83,20 @@ impl Context for ClientContext {
     }
 
     fn max_channel_count(&mut self) -> Result<u32> {
-        send_recv!(self, ContextGetMaxChannelCount => ContextMaxChannelCount)
+        send_recv!(self, ContextGetMaxChannelCount => ContextMaxChannelCount())
     }
 
     fn min_latency(&mut self, params: &StreamParams) -> Result<u32> {
         let params = messages::StreamParams::from(unsafe { &*params.raw() });
-        send_recv!(self, ContextGetMinLatency(params) => ContextMinLatency)
+        send_recv!(self, ContextGetMinLatency(params) => ContextMinLatency())
     }
 
     fn preferred_sample_rate(&mut self) -> Result<u32> {
-        send_recv!(self, ContextGetPreferredSampleRate => ContextPreferredSampleRate)
+        send_recv!(self, ContextGetPreferredSampleRate => ContextPreferredSampleRate())
     }
 
     fn preferred_channel_layout(&mut self) -> Result<ffi::cubeb_channel_layout> {
-        send_recv!(self, ContextGetPreferredChannelLayout => ContextPreferredChannelLayout)
+        send_recv!(self, ContextGetPreferredChannelLayout => ContextPreferredChannelLayout())
     }
 
     fn enumerate_devices(&mut self, _devtype: DeviceType) -> Result<ffi::cubeb_device_collection> {
@@ -112,5 +130,12 @@ impl Context for ClientContext {
         _user_ptr: *mut c_void,
     ) -> Result<()> {
         Ok(())
+    }
+}
+
+impl Drop for ClientContext {
+    fn drop(&mut self) {
+        info!("ClientContext drop...");
+        send_recv!(self, ClientDisconnect => ClientDisconnected);
     }
 }

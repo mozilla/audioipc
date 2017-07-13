@@ -33,6 +33,7 @@ pub struct Connection {
 
 impl Connection {
     pub fn new(stream: net::UnixStream) -> Connection {
+        info!("Create new connection");
         Connection {
             stream: stream
         }
@@ -90,9 +91,10 @@ impl Connection {
         // TODO: Switch back to send_fd.
         // TODO: Pass fd with StreamCreated message, not separately OOB.
         // let msg = vec![0; 0];
-        // info!("send_fd {:?}", remote_fd.as_raw_fd());
+        let fd = fd_to_send.into();
+        info!("send_with_fd {:?}, {:?}", msg, fd);
         // super::send_fd(&mut stream.stream, &msg, remote_fd.into_raw_fd()).unwrap();
-        self.stream.send_fd(&encoded, fd_to_send.into()).chain_err(
+        self.stream.send_fd(&encoded, fd).chain_err(
             || "Failed to send message with fd"
         )
     }

@@ -42,6 +42,8 @@ fn run() -> Result<()> {
 fn main() {
     env_logger::init().unwrap();
 
+    println!("Cubeb AudioServer...");
+
     if let Err(ref e) = run() {
         error!("error: {}", e);
 

@@ -55,11 +55,11 @@ impl ServerConn {
 
     fn process(&mut self, poll: &mut mio::Poll, context: &mut cubeb::Context) -> Result<()> {
         let r = self.connection.receive();
-        debug!("got {:?}", r);
+        info!("ServerConn::process: got {:?}", r);
 
         // TODO: Might need a simple state machine to deal with create/use/destroy ordering, etc.
         // TODO: receive() and all this handling should be moved out of this event loop code.
-        let msg = r.unwrap();
+        let msg = try!(r);
         let _ = try!(self.process_msg(&msg, context));
 
         poll.reregister(
@@ -355,7 +355,7 @@ pub fn run(running: Arc<AtomicBool>) -> Result<()> {
         &server.socket,
         SERVER,
         mio::Ready::readable(),
-        mio::PollOpt::edge() | mio::PollOpt::oneshot()
+        mio::PollOpt::edge()
     ).unwrap();
 
     loop {
