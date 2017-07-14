@@ -10,6 +10,8 @@ extern crate cubeb_backend;
 #[macro_use]
 extern crate log;
 
+#[macro_use]
+mod send_recv;
 mod context;
 mod stream;
 

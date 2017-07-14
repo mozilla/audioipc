@@ -10,7 +10,7 @@ extern crate mio;
 extern crate mio_uds;
 extern crate slab;
 
-use audioipc::messages::{ClientMessage, ServerMessage};
+use audioipc::messages::{ClientMessage, DeviceInfo, ServerMessage};
 use mio::Token;
 use mio_uds::UnixListener;
 use std::convert::From;
@@ -149,6 +149,21 @@ impl ServerConn {
                     },
                 }
             },
+
+            &ServerMessage::ContextGetDeviceEnumeration(device_type) => {
+                match context.enumerate_devices(cubeb::DeviceType::from_bits_truncate(device_type)) {
+                    Ok(devices) => {
+                        let v: Vec<DeviceInfo> = devices.iter().map(|i| i.raw().into()).collect();
+                        self.connection
+                            .send(ClientMessage::ContextEnumeratedDevices(v))
+                            .unwrap();
+                    },
+                    Err(e) => {
+                        self.send_error(e);
+                    },
+                }
+            },
+
             /*
             &ServerMessage::StreamInit(params) => {
                 match server.connections[token].stream_init(server.context, params) {

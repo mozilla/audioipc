@@ -4,8 +4,108 @@
 // accompanying file LICENSE for details
 
 use cubeb_core::ffi;
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
+use std::ptr;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Device {
+    pub output_name: Option<Vec<u8>>,
+    pub input_name: Option<Vec<u8>>
+}
+
+impl From<ffi::cubeb_device> for Device {
+    fn from(info: ffi::cubeb_device) -> Self {
+        Self {
+            output_name: dup_str(info.output_name),
+            input_name: dup_str(info.input_name)
+        }
+    }
+}
+
+impl From<Device> for ffi::cubeb_device {
+    fn from(info: Device) -> Self {
+        Self {
+            output_name: opt_str(info.output_name),
+            input_name: opt_str(info.input_name)
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DeviceInfo {
+    pub devid: usize,
+    pub device_id: Option<Vec<u8>>,
+    pub friendly_name: Option<Vec<u8>>,
+    pub group_id: Option<Vec<u8>>,
+    pub vendor_name: Option<Vec<u8>>,
+
+    pub device_type: ffi::cubeb_device_type,
+    pub state: ffi::cubeb_device_state,
+    pub preferred: ffi::cubeb_device_pref,
+
+    pub format: ffi::cubeb_device_fmt,
+    pub default_format: ffi::cubeb_device_fmt,
+    pub max_channels: u32,
+    pub default_rate: u32,
+    pub max_rate: u32,
+    pub min_rate: u32,
+
+    pub latency_lo: u32,
+    pub latency_hi: u32
+}
+
+impl<'a> From<&'a ffi::cubeb_device_info> for DeviceInfo {
+    fn from(info: &'a ffi::cubeb_device_info) -> Self {
+        DeviceInfo {
+            devid: info.devid as _,
+            device_id: dup_str(info.device_id),
+            friendly_name: dup_str(info.friendly_name),
+            group_id: dup_str(info.group_id),
+            vendor_name: dup_str(info.vendor_name),
+
+            device_type: info.device_type,
+            state: info.state,
+            preferred: info.preferred,
+
+            format: info.format,
+            default_format: info.default_format,
+            max_channels: info.max_channels,
+            default_rate: info.default_rate,
+            max_rate: info.max_rate,
+            min_rate: info.min_rate,
+
+            latency_lo: info.latency_lo,
+            latency_hi: info.latency_hi
+        }
+    }
+}
+
+impl From<DeviceInfo> for ffi::cubeb_device_info {
+    fn from(info: DeviceInfo) -> Self {
+        ffi::cubeb_device_info {
+            devid: info.devid as _,
+            device_id: opt_str(info.device_id),
+            friendly_name: opt_str(info.friendly_name),
+            group_id: opt_str(info.group_id),
+            vendor_name: opt_str(info.vendor_name),
+
+            device_type: info.device_type,
+            state: info.state,
+            preferred: info.preferred,
+
+            format: info.format,
+            default_format: info.default_format,
+            max_channels: info.max_channels,
+            default_rate: info.default_rate,
+            max_rate: info.max_rate,
+            min_rate: info.min_rate,
+
+            latency_lo: info.latency_lo,
+            latency_hi: info.latency_hi
+        }
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StreamParams {
@@ -16,7 +116,7 @@ pub struct StreamParams {
 }
 
 impl<'a> From<&'a ffi::cubeb_stream_params> for StreamParams {
-    fn from(params: &ffi::cubeb_stream_params) -> Self {
+    fn from(params: &'a ffi::cubeb_stream_params) -> Self {
         assert!(params.channels <= u8::max_value() as u32);
 
         StreamParams {
@@ -51,11 +151,7 @@ pub struct StreamInitParams {
     pub user_ptr: usize
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Device {
-    pub output_name: Option<Vec<u8>>,
-    pub input_name: Option<Vec<u8>>
-}
+
 
 fn dup_str(s: *const c_char) -> Option<Vec<u8>> {
     if s.is_null() {
@@ -66,15 +162,20 @@ fn dup_str(s: *const c_char) -> Option<Vec<u8>> {
     }
 }
 
-impl From<ffi::cubeb_device> for Device {
-    fn from(device: ffi::cubeb_device) -> Self {
-        let output_name = dup_str(device.output_name);
-        let input_name = dup_str(device.input_name);
-
-        Device {
-            output_name: output_name,
-            input_name: input_name
-        }
+fn opt_str(v: Option<Vec<u8>>) -> *const c_char {
+    match v {
+        Some(v) => {
+            let vs = if v.last() == Some(&0u8) {
+                &v[..v.len() - 1]
+            } else {
+                &v[..]
+            };
+            match CString::new(vs) {
+                Ok(s) => s.into_raw(),
+                Err(_) => ptr::null(),
+            }
+        },
+        None => ptr::null(),
     }
 }
 
@@ -89,6 +190,7 @@ pub enum ServerMessage {
     ContextGetMinLatency(StreamParams),
     ContextGetPreferredSampleRate,
     ContextGetPreferredChannelLayout,
+    ContextGetDeviceEnumeration(ffi::cubeb_device_type),
 
     StreamInit(StreamInitParams),
     StreamDestroy(usize),
@@ -114,6 +216,7 @@ pub enum ClientMessage {
     ContextMinLatency(u32),
     ContextPreferredSampleRate(u32),
     ContextPreferredChannelLayout(ffi::cubeb_channel_layout),
+    ContextEnumeratedDevices(Vec<DeviceInfo>),
 
     StreamCreated, /*(RawFd)*/
     StreamDestroyed,
@@ -122,8 +225,8 @@ pub enum ClientMessage {
     StreamStopped,
     StreamPosition(u64),
     StreamLatency(u32),
-    StreamVolumeSet(),
-    StreamPanningSet(),
+    StreamVolumeSet,
+    StreamPanningSet,
     StreamCurrentDevice(Device),
 
     ContextError(ffi::cubeb_error_code),

@@ -8,11 +8,13 @@ use audioipc::{self, ClientMessage, Connection, ServerMessage, messages};
 use cubeb_backend::{Context, Ops};
 use cubeb_core::{DeviceId, DeviceType, Error, Result, StreamParams, ffi};
 use cubeb_core::binding::Binding;
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
+use std::mem;
 use std::os::raw::c_void;
 use std::os::unix::net::UnixStream;
 use std::ptr;
 
+#[derive(Debug)]
 pub struct ClientContext {
     _ops: *const Ops,
     connection: Connection
@@ -26,46 +28,14 @@ macro_rules! t(
         }
     ));
 
-macro_rules! send_recv {
-    ($self_:ident, $smsg:ident => $rmsg:ident) => {{
-        $self_.connection
-            .send(ServerMessage::$smsg)
-            .unwrap();
-        send_recv!(__recv $self_, $rmsg)
-    }};
-    ($self_:ident, $smsg:ident => $rmsg:ident()) => {{
-        $self_.connection
-            .send(ServerMessage::$smsg)
-            .unwrap();
-        send_recv!(__recv $self_, $rmsg ())
-    }};
-    ($self_:ident, $smsg:ident($p:tt) => $rmsg:ident()) => {{
-        $self_.connection
-            .send(ServerMessage::$smsg($p))
-            .unwrap();
-        send_recv!(__recv $self_, $rmsg ())
-    }};
-    ($self_:ident, $smsg:ident($p:tt) => $rmsg:ident) => {{
-        $self_.connection
-            .send(ServerMessage::$smsg($p))
-            .unwrap();
-        send_recv!(__recv $self_, $rmsg)
-    }};
-    (__recv $self_:ident, $rmsg:ident ()) =>
-        (if let ClientMessage::$rmsg(v) = $self_.connection.receive().unwrap() {
-            Ok(v)
-        } else {
-            panic!("wrong message received");
-        });
-    (__recv $self_:ident, $rmsg:ident) =>
-        (if let ClientMessage::$rmsg = $self_.connection.receive().unwrap() {
-            ()
-        } else {
-            panic!("wrong message received");
-        })
-}
-
 pub const CLIENT_OPS: Ops = capi_new!(ClientContext, ClientStream);
+
+impl ClientContext {
+    #[doc(hidden)]
+    pub fn conn(&mut self) -> &mut Connection {
+        &mut self.connection
+    }
+}
 
 impl Context for ClientContext {
     fn init(_context_name: Option<&CStr>) -> Result<*mut ffi::cubeb> {
@@ -83,30 +53,63 @@ impl Context for ClientContext {
     }
 
     fn max_channel_count(&mut self) -> Result<u32> {
-        send_recv!(self, ContextGetMaxChannelCount => ContextMaxChannelCount())
+        send_recv!(self.conn(), ContextGetMaxChannelCount => ContextMaxChannelCount())
     }
 
     fn min_latency(&mut self, params: &StreamParams) -> Result<u32> {
         let params = messages::StreamParams::from(unsafe { &*params.raw() });
-        send_recv!(self, ContextGetMinLatency(params) => ContextMinLatency())
+        send_recv!(self.conn(), ContextGetMinLatency(params) => ContextMinLatency())
     }
 
     fn preferred_sample_rate(&mut self) -> Result<u32> {
-        send_recv!(self, ContextGetPreferredSampleRate => ContextPreferredSampleRate())
+        send_recv!(self.conn(), ContextGetPreferredSampleRate => ContextPreferredSampleRate())
     }
 
     fn preferred_channel_layout(&mut self) -> Result<ffi::cubeb_channel_layout> {
-        send_recv!(self, ContextGetPreferredChannelLayout => ContextPreferredChannelLayout())
+        send_recv!(self.conn(), ContextGetPreferredChannelLayout => ContextPreferredChannelLayout())
     }
 
-    fn enumerate_devices(&mut self, _devtype: DeviceType) -> Result<ffi::cubeb_device_collection> {
-        Ok(ffi::cubeb_device_collection {
-            device: ptr::null(),
-            count: 0
-        })
+    fn enumerate_devices(&mut self, devtype: DeviceType) -> Result<ffi::cubeb_device_collection> {
+        let v: Vec<ffi::cubeb_device_info> =
+            match send_recv!(self.conn(), ContextGetDeviceEnumeration(devtype.bits()) => ContextEnumeratedDevices()) {
+                Ok(mut v) => v.drain(..).map(|i| i.into()).collect(),
+                Err(e) => return Err(e),
+            };
+        let vs = v.into_boxed_slice();
+        let coll = ffi::cubeb_device_collection {
+            count: vs.len(),
+            device: vs.as_ptr()
+        };
+        // Giving away the memory owned by vs.  Don't free it!
+        // Reclaimed in `device_collection_destroy`.
+        mem::forget(vs);
+        Ok(coll)
     }
 
-    fn device_collection_destroy(&mut self, _collection: *mut ffi::cubeb_device_collection) {}
+    fn device_collection_destroy(&mut self, collection: *mut ffi::cubeb_device_collection) {
+        unsafe {
+            let coll = *collection;
+            let mut devices = Vec::from_raw_parts(
+                coll.device as *mut ffi::cubeb_device_info,
+                coll.count,
+                coll.count
+            );
+            for dev in devices.iter_mut() {
+                if !dev.device_id.is_null() {
+                    let _ = CString::from_raw(dev.device_id as *mut _);
+                }
+                if !dev.group_id.is_null() {
+                    let _ = CString::from_raw(dev.group_id as *mut _);
+                }
+                if !dev.vendor_name.is_null() {
+                    let _ = CString::from_raw(dev.vendor_name as *mut _);
+                }
+                if !dev.friendly_name.is_null() {
+                    let _ = CString::from_raw(dev.friendly_name as *mut _);
+                }
+            }
+        }
+    }
 
     fn stream_init(
         &mut self,
@@ -136,6 +139,6 @@ impl Context for ClientContext {
 impl Drop for ClientContext {
     fn drop(&mut self) {
         info!("ClientContext drop...");
-        send_recv!(self, ClientDisconnect => ClientDisconnected);
+        let _: Result<()> = send_recv!(self.conn(), ClientDisconnect => ClientDisconnected);
     }
 }
