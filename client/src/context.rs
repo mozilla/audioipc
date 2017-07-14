@@ -12,7 +12,7 @@ use std::ffi::{CStr, CString};
 use std::mem;
 use std::os::raw::c_void;
 use std::os::unix::net::UnixStream;
-use std::ptr;
+use stream;
 
 #[derive(Debug)]
 pub struct ClientContext {
@@ -113,17 +113,42 @@ impl Context for ClientContext {
 
     fn stream_init(
         &mut self,
-        _stream_name: Option<&CStr>,
-        _input_device: DeviceId,
-        _input_stream_params: Option<&ffi::cubeb_stream_params>,
-        _output_device: DeviceId,
-        _output_stream_params: Option<&ffi::cubeb_stream_params>,
-        _latency_frame: u32,
-        _data_callback: ffi::cubeb_data_callback,
-        _state_callback: ffi::cubeb_state_callback,
-        _user_ptr: *mut c_void,
+        stream_name: Option<&CStr>,
+        input_device: DeviceId,
+        input_stream_params: Option<&ffi::cubeb_stream_params>,
+        output_device: DeviceId,
+        output_stream_params: Option<&ffi::cubeb_stream_params>,
+        latency_frame: u32,
+        // These params aren't sent to the server
+        data_callback: ffi::cubeb_data_callback,
+        state_callback: ffi::cubeb_state_callback,
+        user_ptr: *mut c_void,
     ) -> Result<*mut ffi::cubeb_stream> {
-        Ok(ptr::null_mut())
+
+        fn opt_stream_params(p: Option<&ffi::cubeb_stream_params>) -> Option<messages::StreamParams> {
+            match p {
+                Some(raw) => Some(messages::StreamParams::from(raw)),
+                None => None,
+            }
+        }
+
+        let stream_name = match stream_name {
+            Some(s) => Some(s.to_bytes().to_vec()),
+            None => None,
+        };
+
+        let input_stream_params = opt_stream_params(input_stream_params);
+        let output_stream_params = opt_stream_params(output_stream_params);
+
+        let init_params = messages::StreamInitParams {
+            stream_name: stream_name,
+            input_device: input_device.raw() as _,
+            input_stream_params: input_stream_params,
+            output_device: output_device.raw() as _,
+            output_stream_params: output_stream_params,
+            latency_frames: latency_frame
+        };
+        stream::init(self, init_params, data_callback, state_callback, user_ptr)
     }
 
     fn register_device_collection_changed(

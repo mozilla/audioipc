@@ -141,16 +141,13 @@ impl<'a> From<&'a StreamParams> for ffi::cubeb_stream_params {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StreamInitParams {
-    pub context: usize,
     pub stream_name: Option<Vec<u8>>,
     pub input_device: usize,
     pub input_stream_params: Option<StreamParams>,
     pub output_device: usize,
     pub output_stream_params: Option<StreamParams>,
-    pub latency_frames: u32,
-    pub user_ptr: usize
+    pub latency_frames: u32
 }
-
 
 
 fn dup_str(s: *const c_char) -> Option<Vec<u8>> {
@@ -218,7 +215,7 @@ pub enum ClientMessage {
     ContextPreferredChannelLayout(ffi::cubeb_channel_layout),
     ContextEnumeratedDevices(Vec<DeviceInfo>),
 
-    StreamCreated, /*(RawFd)*/
+    StreamCreated(usize), /*(RawFd)*/
     StreamDestroyed,
 
     StreamStarted,

@@ -4,15 +4,50 @@
 // accompanying file LICENSE for details
 
 use ClientContext;
-use audioipc::{ClientMessage, ServerMessage};
+use audioipc::{ClientMessage, ServerMessage, messages};
 use cubeb_backend::Stream;
 use cubeb_core::Result;
 use cubeb_core::ffi;
 use std::ffi::CString;
+use std::os::raw::c_void;
 
 pub struct ClientStream<'ctx> {
     context: &'ctx mut ClientContext,
-    token: usize
+    token: usize,
+    //
+    data_callback: ffi::cubeb_data_callback,
+    state_callback: ffi::cubeb_state_callback,
+    user_ptr: *mut c_void
+}
+
+impl<'ctx> ClientStream<'ctx> {
+    fn init(
+        ctx: &'ctx mut ClientContext,
+        init_params: messages::StreamInitParams,
+        data_callback: ffi::cubeb_data_callback,
+        state_callback: ffi::cubeb_state_callback,
+        user_ptr: *mut c_void,
+    ) -> Result<*mut ffi::cubeb_stream> {
+
+        let token = match send_recv!(ctx.conn(), StreamInit(init_params) => StreamCreated()) {
+            Ok(t) => t,
+            Err(e) => return Err(e),
+        };
+
+        Ok(Box::into_raw(Box::new(ClientStream {
+            context: ctx,
+            token: token,
+            data_callback: data_callback,
+            state_callback: state_callback,
+            user_ptr: user_ptr
+        })) as _)
+    }
+}
+
+impl<'ctx> Drop for ClientStream<'ctx> {
+    fn drop(&mut self) {
+        let _: Result<()> = send_recv!(self.context.conn(), StreamDestroy(self.token) => StreamDestroyed);
+    }
 }
 
 impl<'ctx> Stream for ClientStream<'ctx> {
@@ -70,4 +105,14 @@ impl<'ctx> Stream for ClientStream<'ctx> {
     ) -> Result<()> {
         Ok(())
     }
+}
+
+pub fn init(
+    ctx: &mut ClientContext,
+    init_params: messages::StreamInitParams,
+    data_callback: ffi::cubeb_data_callback,
+    state_callback: ffi::cubeb_state_callback,
+    user_ptr: *mut c_void,
+) -> Result<*mut ffi::cubeb_stream> {
+    ClientStream::init(ctx, init_params, data_callback, state_callback, user_ptr)
 }
