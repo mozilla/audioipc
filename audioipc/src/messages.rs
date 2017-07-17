@@ -3,7 +3,7 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details
 
-use cubeb_core::ffi;
+use cubeb_core::{self, ffi};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::ptr;
@@ -12,6 +12,15 @@ use std::ptr;
 pub struct Device {
     pub output_name: Option<Vec<u8>>,
     pub input_name: Option<Vec<u8>>
+}
+
+impl<'a> From<cubeb_core::Device<'a>> for Device {
+    fn from(info: cubeb_core::Device) -> Self {
+        Self {
+            output_name: info.output_name_bytes().map(|s| s.to_vec()),
+            input_name: info.input_name_bytes().map(|s| s.to_vec())
+        }
+    }
 }
 
 impl From<ffi::cubeb_device> for Device {
@@ -149,12 +158,11 @@ pub struct StreamInitParams {
     pub latency_frames: u32
 }
 
-
 fn dup_str(s: *const c_char) -> Option<Vec<u8>> {
     if s.is_null() {
         None
     } else {
-        let vec: Vec<u8> = unsafe { CStr::from_ptr(s) }.to_bytes_with_nul().to_vec();
+        let vec: Vec<u8> = unsafe { CStr::from_ptr(s) }.to_bytes().to_vec();
         Some(vec)
     }
 }
@@ -162,14 +170,12 @@ fn dup_str(s: *const c_char) -> Option<Vec<u8>> {
 fn opt_str(v: Option<Vec<u8>>) -> *const c_char {
     match v {
         Some(v) => {
-            let vs = if v.last() == Some(&0u8) {
-                &v[..v.len() - 1]
-            } else {
-                &v[..]
-            };
-            match CString::new(vs) {
+            match CString::new(v) {
                 Ok(s) => s.into_raw(),
-                Err(_) => ptr::null(),
+                Err(_) => {
+                    debug!("Failed to convert bytes to CString");
+                    ptr::null()
+                },
             }
         },
         None => ptr::null(),

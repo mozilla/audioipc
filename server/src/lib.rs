@@ -6,15 +6,21 @@ extern crate log;
 
 extern crate audioipc;
 extern crate cubeb;
+extern crate cubeb_core;
 extern crate mio;
 extern crate mio_uds;
 extern crate slab;
+// TODO: For testing. Remove.
+extern crate rand;
 
-use audioipc::messages::{ClientMessage, DeviceInfo, ServerMessage};
+use audioipc::messages::{ClientMessage, DeviceInfo, ServerMessage, StreamParams};
+use cubeb_core::binding::Binding;
+use cubeb_core::ffi;
 use mio::Token;
 use mio_uds::UnixListener;
 use std::convert::From;
 use std::os::unix::prelude::*;
+use std::slice;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -31,34 +37,76 @@ pub mod errors {
 
 use errors::*;
 
+// TODO: this should forward to the client.
+struct Callback {
+    /// Size of input frame in bytes
+    input_frame_size: u16,
+    /// Size of output frame in bytes
+    output_frame_size: u16
+}
+
+impl cubeb::StreamCallback for Callback {
+    type Frame = u8;
+
+    fn data_callback(&mut self, input: &[u8], output: &mut [u8]) -> isize {
+        // TODO: Send to client
+
+        // len is of input and output is frame len. Turn these into the real lengths.
+        let real_input = unsafe { slice::from_raw_parts(input.as_ptr(), input.len() * self.input_frame_size as usize) };
+        let real_output = unsafe {
+            slice::from_raw_parts_mut(
+                output.as_mut_ptr(),
+                output.len() * self.output_frame_size as usize
+            )
+        };
+
+        for x in real_output.iter_mut() {
+            *x = rand::random();
+        }
+
+        output.len() as _
+    }
+
+    fn state_callback(&mut self, state: cubeb::State) {
+        info!("Stream state change: {:?}", state);
+        // TODO: Send to client
+    }
+}
+
 type Slab<T> = slab::Slab<T, Token>;
+type StreamSlab<'ctx> = slab::Slab<cubeb::Stream<'ctx, Callback>, usize>;
 
 // TODO: Server token must be outside range used by server.connections slab.
 // usize::MAX is already used internally in mio.
 const SERVER: Token = Token(std::usize::MAX - 1);
 
-struct ServerConn {
+struct ServerConn<'ctx> {
     connection: audioipc::Connection,
-    token: Option<Token>
+    token: Option<Token>,
+    streams: StreamSlab<'ctx>
 }
 
-impl ServerConn {
-    fn new<FD>(fd: FD) -> ServerConn
+impl<'ctx> ServerConn<'ctx> {
+    fn new<FD>(fd: FD) -> ServerConn<'ctx>
     where
         FD: IntoRawFd,
     {
         ServerConn {
             connection: unsafe { audioipc::Connection::from_raw_fd(fd.into_raw_fd()) },
-            token: None
+            token: None,
+            // TODO: Handle increasing slab size. Pick a good default size.
+            streams: StreamSlab::with_capacity(64)
         }
     }
 
-    fn process(&mut self, poll: &mut mio::Poll, context: &mut cubeb::Context) -> Result<()> {
+    fn process(&mut self, poll: &mut mio::Poll, context: &'ctx mut cubeb::Context) -> Result<()> {
         let r = self.connection.receive();
         info!("ServerConn::process: got {:?}", r);
 
-        // TODO: Might need a simple state machine to deal with create/use/destroy ordering, etc.
-        // TODO: receive() and all this handling should be moved out of this event loop code.
+        // TODO: Might need a simple state machine to deal with
+        // create/use/destroy ordering, etc.
+        // TODO: receive() and all this handling should be moved out
+        // of this event loop code.
         let msg = try!(r);
         let _ = try!(self.process_msg(&msg, context));
 
@@ -72,7 +120,7 @@ impl ServerConn {
         Ok(())
     }
 
-    fn process_msg(&mut self, msg: &ServerMessage, context: &mut cubeb::Context) -> Result<()> {
+    fn process_msg(&mut self, msg: &ServerMessage, context: &'ctx mut cubeb::Context) -> Result<()> {
         match msg {
             &ServerMessage::ClientConnect => {
                 panic!("already connected");
@@ -164,77 +212,154 @@ impl ServerConn {
                 }
             },
 
-            /*
-            &ServerMessage::StreamInit(params) => {
-                match server.connections[token].stream_init(server.context, params) {
-                    Ok(_) => {
-                        server.connections[token]
-                            .send(ClientMessage::StreamCreated)
-                            .unwrap()
+            &ServerMessage::StreamInit(ref params) => {
+                fn opt_stream_params(params: Option<&StreamParams>) -> Option<cubeb::StreamParams> {
+                    match params {
+                        Some(p) => {
+                            let raw = ffi::cubeb_stream_params::from(p);
+                            Some(unsafe { cubeb::StreamParams::from_raw(&raw as *const _) })
+                        },
+                        None => None,
+                    }
+                }
+
+                fn frame_size_in_bytes(params: Option<cubeb::StreamParams>) -> u16 {
+                    match params.as_ref() {
+                        Some(p) => {
+                            let sample_size = match p.format() {
+                                cubeb::SampleFormat::S16LE |
+                                cubeb::SampleFormat::S16BE |
+                                cubeb::SampleFormat::S16NE => 2,
+                                cubeb::SampleFormat::Float32LE |
+                                cubeb::SampleFormat::Float32BE |
+                                cubeb::SampleFormat::Float32NE => 4,
+                            };
+                            let channel_count = p.channels() as u16;
+                            sample_size * channel_count
+                        },
+                        None => 0,
+                    }
+                }
+
+                // TODO: Yuck!
+                let input_device = unsafe { cubeb::DeviceId::from_raw(params.input_device as *const _) };
+                let output_device = unsafe { cubeb::DeviceId::from_raw(params.output_device as *const _) };
+                let latency = params.latency_frames;
+                let mut builder = cubeb::StreamInitOptionsBuilder::new();
+                builder
+                    .input_device(input_device)
+                    .output_device(output_device)
+                    .latency(latency);
+
+                if let Some(ref stream_name) = params.stream_name {
+                    builder.stream_name(stream_name);
+                }
+                let input_stream_params = opt_stream_params(params.input_stream_params.as_ref());
+                if let Some(ref isp) = input_stream_params {
+                    builder.input_stream_param(isp);
+                }
+                let output_stream_params = opt_stream_params(params.output_stream_params.as_ref());
+                if let Some(ref osp) = output_stream_params {
+                    builder.output_stream_param(osp);
+                }
+                let params = builder.take();
+
+                let input_frame_size = frame_size_in_bytes(input_stream_params);
+                let output_frame_size = frame_size_in_bytes(output_stream_params);
+
+                match context.stream_init(
+                    &params,
+                    Callback {
+                        input_frame_size: input_frame_size,
+                        output_frame_size: output_frame_size
+                    }
+                ) {
+                    Ok(stream) => {
+                        let stm_tok = match self.streams.vacant_entry() {
+                            Some(entry) => {
+                                debug!("Registering stream {:?}", entry.index());
+                                entry.insert(stream).index()
+                            },
+                            None => {
+                                // TODO: Turn into error
+                                panic!("Failed to insert stream into slab. No entries");
+                            },
+                        };
+
+                        self.connection
+                            .send(ClientMessage::StreamCreated(stm_tok))
+                            .unwrap();
                     },
                     Err(e) => {
                         self.send_error(e);
                     },
                 }
             },
-            &ServerMessage::StreamDestroy(stream) => {
-                server.connections[token].stream_destroy(stream as *mut _);
-                server.connections[token]
+
+            &ServerMessage::StreamDestroy(stm_tok) => {
+                self.streams.remove(stm_tok);
+                self.connection
                     .send(ClientMessage::StreamDestroyed)
                     .unwrap();
             },
 
-            &ServerMessage::StreamStart(stream) => {
-                server.connections[token].stream.start();
-                server.connections[token]
-                    .send(ClientMessage::StreamStarted)
-                    .unwrap();
+            &ServerMessage::StreamStart(stm_tok) => {
+                self.streams[stm_tok].start();
+                self.connection.send(ClientMessage::StreamStarted).unwrap();
             },
-            &ServerMessage::StreamStop(stream) => {
-                server.connections[token].stream.stop();
-                server.connections[token]
-                    .send(ClientMessage::StreamStopped)
-                    .unwrap();
+            &ServerMessage::StreamStop(stm_tok) => {
+                self.streams[stm_tok].stop();
+                self.connection.send(ClientMessage::StreamStopped).unwrap();
             },
-            &ServerMessage::StreamGetPosition(stream) => {
-                match server.connections[token].stream.position() {
+            &ServerMessage::StreamGetPosition(stm_tok) => {
+                match self.streams[stm_tok].position() {
                     Ok(position) => {
-                        server.connections[token]
+                        self.connection
                             .send(ClientMessage::StreamPosition(position))
-                            .unwrap()
+                            .unwrap();
                     },
-                    Err(_) => panic!(""),
+                    Err(e) => {
+                        self.send_error(e);
+                    },
                 }
             },
-            &ServerMessage::StreamGetLatency(stream) => {
-                match server.connections[token].stream.latency() {
+            &ServerMessage::StreamGetLatency(stm_tok) => {
+                match self.streams[stm_tok].latency() {
                     Ok(latency) => {
-                        server.connections[token]
+                        self.connection
                             .send(ClientMessage::StreamLatency(latency))
-                            .unwrap()
+                            .unwrap();
                     },
-                    Err(_) => panic!(""),
+                    Err(e) => self.send_error(e),
                 }
             },
-            &ServerMessage::StreamSetVolume(stream, volume) => {
-                server.connections[token].stream.set_volume(volume);
-                server.connections[token]
-                    .send(ClientMessage::StreamVolumeSet())
+            &ServerMessage::StreamSetVolume(stm_tok, volume) => {
+                self.streams[stm_tok].set_volume(volume);
+                self.connection
+                    .send(ClientMessage::StreamVolumeSet)
                     .unwrap();
             },
-            &ServerMessage::StreamSetPanning(stream, panning) => {
-                server.connections[token].stream.set_panning();
-                server.connections[token]
-                    .send(ClientMessage::StreamPanningSet())
+            &ServerMessage::StreamSetPanning(stm_tok, panning) => {
+                self.streams[stm_tok].set_panning(panning);
+                self.connection
+                    .send(ClientMessage::StreamPanningSet)
                     .unwrap();
             },
-            &ServerMessage::StreamGetCurrentDevice(stream) => {
-                panic!("Not implemented");
-                            server.connections[token].stream_get_current_device(stream as *mut _);
-                            server.connections[token].
-                                send(ClientMessage::StreamCurrentDevice())
-            .unwrap();
-             */
+            &ServerMessage::StreamGetCurrentDevice(stm_tok) => {
+                let err = match self.streams[stm_tok].current_device() {
+                    Ok(device) => {
+                        // TODO: Yuck!
+                        self.connection
+                            .send(ClientMessage::StreamCurrentDevice(device.into()))
+                            .unwrap();
+                        None
+                    },
+                    Err(e) => Some(e),
+                };
+                if let Some(e) = err {
+                    self.send_error(e);
+                }
+            },
             _ => bail!("Not implemented"),
         }
         Ok(())
@@ -247,14 +372,14 @@ impl ServerConn {
     }
 }
 
-pub struct Server {
+pub struct Server<'ctx> {
     socket: UnixListener,
     context: cubeb::Context,
-    conns: Slab<ServerConn>
+    conns: Slab<ServerConn<'ctx>>
 }
 
-impl Server {
-    pub fn new(socket: UnixListener) -> Server {
+impl<'ctx> Server<'ctx> {
+    pub fn new(socket: UnixListener) -> Server<'ctx> {
         let ctx = cubeb::Context::init("AudioIPC Server", None).expect("Failed to create cubeb context");
 
         Server {
@@ -303,7 +428,7 @@ impl Server {
         Ok(())
     }
 
-    pub fn poll(&mut self, poll: &mut mio::Poll) -> Result<()> {
+    pub fn poll(&mut self, poll: &mut mio::Poll, ctx: &'ctx mut cubeb::Context) -> Result<()> {
         let mut events = mio::Events::with_capacity(16);
 
         match poll.poll(&mut events, None) {
@@ -324,14 +449,13 @@ impl Server {
                 token => {
                     debug!("token {:?} ready", token);
 
-                    //                    let r = self.process(poll, token);
-
-                    let r = self.conns[token].process(poll, &mut self.context);
+                    let r = self.conns[token].process(poll, ctx);
 
                     debug!("got {:?}", r);
 
                     // TODO: Handle disconnection etc.
-                    // TODO: Should be handled at a higher level by a disconnect message.
+                    // TODO: Should be handled at a higher level by a
+                    // disconnect message.
                     if let Err(e) = r {
                         debug!("dropped client {:?} due to error {:?}", token, e);
                         self.conns.remove(token);
@@ -363,8 +487,9 @@ pub fn run(running: Arc<AtomicBool>) -> Result<()> {
     let _ = std::fs::remove_file(audioipc::get_uds_path());
 
     // TODO: Use a SEQPACKET, wrap it in UnixStream?
-    let mut server = Server::new(UnixListener::bind(audioipc::get_uds_path())?);
+    let __anchor = &();
     let mut poll = mio::Poll::new()?;
+    let mut server = Server::new(UnixListener::bind(audioipc::get_uds_path())?);
 
     poll.register(
         &server.socket,
@@ -378,6 +503,8 @@ pub fn run(running: Arc<AtomicBool>) -> Result<()> {
             bail!("server quit due to ctrl-c");
         }
 
-        let _ = try!(server.poll(&mut poll));
+        let _ = try!(server.poll(&mut poll, &mut server.context));
     }
+
+    poll.deregister(&server.socket).unwrap();
 }

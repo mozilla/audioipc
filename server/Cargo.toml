@@ -7,9 +7,12 @@ description = "Remote cubeb server"
 [dependencies]
 audioipc = { path = "../audioipc" }
 cubeb = { git = "https://github.com/djg/cubeb-rs", branch = "workspace-reorg" }
+cubeb-core = { git = "https://github.com/djg/cubeb-rs", branch = "workspace-reorg" }
 error-chain = "0.10.0"
 log = "0.3.8"
 mio = "0.6.7"
 mio-uds = "0.6.4"
 slab = "0.3.0"
+# For testing
+rand = "^0.3"
 
