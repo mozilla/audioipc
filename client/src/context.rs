@@ -8,6 +8,7 @@ use audioipc::{self, ClientMessage, Connection, ServerMessage, messages};
 use cubeb_backend::{Context, Ops};
 use cubeb_core::{DeviceId, DeviceType, Error, Result, StreamParams, ffi};
 use cubeb_core::binding::Binding;
+use std::cell::{RefCell, RefMut};
 use std::ffi::{CStr, CString};
 use std::mem;
 use std::os::raw::c_void;
@@ -17,7 +18,7 @@ use stream;
 #[derive(Debug)]
 pub struct ClientContext {
     _ops: *const Ops,
-    connection: Connection
+    connection: RefCell<Connection>
 }
 
 macro_rules! t(
@@ -32,8 +33,8 @@ pub const CLIENT_OPS: Ops = capi_new!(ClientContext, ClientStream);
 
 impl ClientContext {
     #[doc(hidden)]
-    pub fn conn(&mut self) -> &mut Connection {
-        &mut self.connection
+    pub fn conn(&self) -> RefMut<Connection> {
+        self.connection.borrow_mut()
     }
 }
 
@@ -43,33 +44,33 @@ impl Context for ClientContext {
         let stream = t!(UnixStream::connect(audioipc::get_uds_path()));
         let ctx = Box::new(ClientContext {
             _ops: &CLIENT_OPS as *const _,
-            connection: Connection::new(stream)
+            connection: RefCell::new(Connection::new(stream))
         });
         Ok(Box::into_raw(ctx) as *mut _)
     }
 
-    fn backend_id(&mut self) -> &'static CStr {
+    fn backend_id(&self) -> &'static CStr {
         unsafe { CStr::from_ptr(b"remote\0".as_ptr() as *const _) }
     }
 
-    fn max_channel_count(&mut self) -> Result<u32> {
+    fn max_channel_count(&self) -> Result<u32> {
         send_recv!(self.conn(), ContextGetMaxChannelCount => ContextMaxChannelCount())
     }
 
-    fn min_latency(&mut self, params: &StreamParams) -> Result<u32> {
+    fn min_latency(&self, params: &StreamParams) -> Result<u32> {
         let params = messages::StreamParams::from(unsafe { &*params.raw() });
         send_recv!(self.conn(), ContextGetMinLatency(params) => ContextMinLatency())
     }
 
-    fn preferred_sample_rate(&mut self) -> Result<u32> {
+    fn preferred_sample_rate(&self) -> Result<u32> {
         send_recv!(self.conn(), ContextGetPreferredSampleRate => ContextPreferredSampleRate())
     }
 
-    fn preferred_channel_layout(&mut self) -> Result<ffi::cubeb_channel_layout> {
+    fn preferred_channel_layout(&self) -> Result<ffi::cubeb_channel_layout> {
         send_recv!(self.conn(), ContextGetPreferredChannelLayout => ContextPreferredChannelLayout())
     }
 
-    fn enumerate_devices(&mut self, devtype: DeviceType) -> Result<ffi::cubeb_device_collection> {
+    fn enumerate_devices(&self, devtype: DeviceType) -> Result<ffi::cubeb_device_collection> {
         let v: Vec<ffi::cubeb_device_info> =
             match send_recv!(self.conn(), ContextGetDeviceEnumeration(devtype.bits()) => ContextEnumeratedDevices()) {
                 Ok(mut v) => v.drain(..).map(|i| i.into()).collect(),
@@ -86,7 +87,7 @@ impl Context for ClientContext {
         Ok(coll)
     }
 
-    fn device_collection_destroy(&mut self, collection: *mut ffi::cubeb_device_collection) {
+    fn device_collection_destroy(&self, collection: *mut ffi::cubeb_device_collection) {
         unsafe {
             let coll = *collection;
             let mut devices = Vec::from_raw_parts(
@@ -112,7 +113,7 @@ impl Context for ClientContext {
     }
 
     fn stream_init(
-        &mut self,
+        &self,
         stream_name: Option<&CStr>,
         input_device: DeviceId,
         input_stream_params: Option<&ffi::cubeb_stream_params>,
@@ -148,11 +149,11 @@ impl Context for ClientContext {
             output_stream_params: output_stream_params,
             latency_frames: latency_frame
         };
-        stream::init(self, init_params, data_callback, state_callback, user_ptr)
+        stream::init(&self, init_params, data_callback, state_callback, user_ptr)
     }
 
     fn register_device_collection_changed(
-        &mut self,
+        &self,
         _dev_type: DeviceType,
         _collection_changed_callback: ffi::cubeb_device_collection_changed_callback,
         _user_ptr: *mut c_void,

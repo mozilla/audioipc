@@ -99,7 +99,7 @@ impl<'ctx> ServerConn<'ctx> {
         }
     }
 
-    fn process(&mut self, poll: &mut mio::Poll, context: &'ctx mut cubeb::Context) -> Result<()> {
+    fn process(&mut self, poll: &mut mio::Poll, context: &'ctx cubeb::Context) -> Result<()> {
         let r = self.connection.receive();
         info!("ServerConn::process: got {:?}", r);
 
@@ -120,7 +120,7 @@ impl<'ctx> ServerConn<'ctx> {
         Ok(())
     }
 
-    fn process_msg(&mut self, msg: &ServerMessage, context: &'ctx mut cubeb::Context) -> Result<()> {
+    fn process_msg(&mut self, msg: &ServerMessage, context: &'ctx cubeb::Context) -> Result<()> {
         match msg {
             &ServerMessage::ClientConnect => {
                 panic!("already connected");
@@ -360,7 +360,6 @@ impl<'ctx> ServerConn<'ctx> {
                     self.send_error(e);
                 }
             },
-            _ => bail!("Not implemented"),
         }
         Ok(())
     }
@@ -374,17 +373,13 @@ impl<'ctx> ServerConn<'ctx> {
 
 pub struct Server<'ctx> {
     socket: UnixListener,
-    context: cubeb::Context,
     conns: Slab<ServerConn<'ctx>>
 }
 
 impl<'ctx> Server<'ctx> {
     pub fn new(socket: UnixListener) -> Server<'ctx> {
-        let ctx = cubeb::Context::init("AudioIPC Server", None).expect("Failed to create cubeb context");
-
         Server {
             socket: socket,
-            context: ctx,
             conns: Slab::with_capacity(16)
         }
     }
@@ -428,7 +423,10 @@ impl<'ctx> Server<'ctx> {
         Ok(())
     }
 
-    pub fn poll(&mut self, poll: &mut mio::Poll, ctx: &'ctx mut cubeb::Context) -> Result<()> {
+    pub fn poll<'c>(&mut self, poll: &mut mio::Poll, ctx: &'c cubeb::Context) -> Result<()>
+    where
+        'c: 'ctx,
+    {
         let mut events = mio::Events::with_capacity(16);
 
         match poll.poll(&mut events, None) {
@@ -487,7 +485,8 @@ pub fn run(running: Arc<AtomicBool>) -> Result<()> {
     let _ = std::fs::remove_file(audioipc::get_uds_path());
 
     // TODO: Use a SEQPACKET, wrap it in UnixStream?
-    let __anchor = &();
+    let context = cubeb::Context::init("AudioIPC Server", None).expect("Failed to create cubeb context");
+    let ctx = &context;
     let mut poll = mio::Poll::new()?;
     let mut server = Server::new(UnixListener::bind(audioipc::get_uds_path())?);
 
@@ -503,8 +502,8 @@ pub fn run(running: Arc<AtomicBool>) -> Result<()> {
             bail!("server quit due to ctrl-c");
         }
 
-        let _ = try!(server.poll(&mut poll, &mut server.context));
+        let _ = try!(server.poll(&mut poll, ctx));
     }
 
-    poll.deregister(&server.socket).unwrap();
+    //poll.deregister(&server.socket).unwrap();
 }
