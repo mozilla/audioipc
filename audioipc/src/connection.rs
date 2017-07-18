@@ -27,6 +27,8 @@ pub trait SendFd {
 // crate on a struct from yet another crate.
 //
 // This class is effectively mds_uds::UnixStream.
+
+#[derive(Debug)]
 pub struct Connection {
     stream: net::UnixStream
 }
@@ -37,6 +39,35 @@ impl Connection {
         Connection {
             stream: stream
         }
+    }
+
+    /// Creates an unnamed pair of connected sockets.
+    ///
+    /// Returns two `Connection`s which are connected to each other.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use audioipc::Connection;
+    ///
+    /// let (conn1, conn2) = match Connection::pair() {
+    ///     Ok((conn1, conn2)) => (conn1, conn2),
+    ///     Err(e) => {
+    ///         println!("Couldn't create a pair of connections: {:?}", e);
+    ///         return
+    ///     }
+    /// };
+    /// ```
+    pub fn pair() -> io::Result<(Connection, Connection)> {
+        let (s1, s2) = net::UnixStream::pair()?;
+        Ok((
+            Connection {
+                stream: s1
+            },
+            Connection {
+                stream: s2
+            }
+        ))
     }
 
     pub fn receive<RT>(&mut self) -> Result<RT>
@@ -55,7 +86,7 @@ impl Connection {
         RT: DeserializeOwned + Debug,
     {
         // TODO: Check deserialize_from and serialize_into.
-        let mut encoded = vec![0; 1024]; // TODO: Get max size from bincode, or at least assert.
+        let mut encoded = vec![0; 8192]; // TODO: Get max size from bincode, or at least assert.
         // TODO: Read until block, EOF, or error.
         // TODO: Switch back to recv_fd.
         match self.stream.recv_fd(&mut encoded) {
@@ -157,10 +188,16 @@ impl RecvFd for Connection {
 }
 
 impl FromRawFd for Connection {
-    unsafe fn from_raw_fd(fd: i32) -> Connection {
+    unsafe fn from_raw_fd(fd: RawFd) -> Connection {
         Connection {
             stream: net::UnixStream::from_raw_fd(fd)
         }
+    }
+}
+
+impl IntoRawFd for Connection {
+    fn into_raw_fd(self) -> RawFd {
+        self.stream.into_raw_fd()
     }
 }
 

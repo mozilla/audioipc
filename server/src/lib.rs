@@ -10,8 +10,6 @@ extern crate cubeb_core;
 extern crate mio;
 extern crate mio_uds;
 extern crate slab;
-// TODO: For testing. Remove.
-extern crate rand;
 
 use audioipc::messages::{ClientMessage, DeviceInfo, ServerMessage, StreamParams};
 use cubeb_core::binding::Binding;
@@ -42,34 +40,56 @@ struct Callback {
     /// Size of input frame in bytes
     input_frame_size: u16,
     /// Size of output frame in bytes
-    output_frame_size: u16
+    output_frame_size: u16,
+    connection: audioipc::Connection
 }
 
 impl cubeb::StreamCallback for Callback {
     type Frame = u8;
 
     fn data_callback(&mut self, input: &[u8], output: &mut [u8]) -> isize {
-        // TODO: Send to client
+        info!("Stream data callback: {} {}", input.len(), output.len());
+
+        let output_nbytes = output.len() * self.output_frame_size as usize;
 
         // len is of input and output is frame len. Turn these into the real lengths.
         let real_input = unsafe { slice::from_raw_parts(input.as_ptr(), input.len() * self.input_frame_size as usize) };
         let real_output = unsafe {
-            slice::from_raw_parts_mut(
-                output.as_mut_ptr(),
-                output.len() * self.output_frame_size as usize
-            )
+            info!("Resize output to {}", output_nbytes);
+            slice::from_raw_parts_mut(output.as_mut_ptr(), output_nbytes)
         };
 
-        for x in real_output.iter_mut() {
-            *x = rand::random();
-        }
+        self.connection
+            .send(ClientMessage::StreamDataCallback(
+                real_input.to_vec(),
+                output.len() as isize,
+                self.output_frame_size as usize
+            ))
+            .unwrap();
 
-        output.len() as _
+        let r = self.connection.receive();
+        match r {
+            Ok(ServerMessage::StreamDataCallback(v)) => {
+                let nbytes = v.len();
+                real_output[..nbytes].copy_from_slice(&v);
+                return nbytes as isize / self.output_frame_size as isize;
+            },
+            _ => {
+                return 0;
+            },
+        }
     }
 
     fn state_callback(&mut self, state: cubeb::State) {
-        info!("Stream state change: {:?}", state);
-        // TODO: Send to client
+        info!("Stream state callback: {:?}", state);
+    }
+}
+
+impl Drop for Callback {
+    fn drop(&mut self) {
+        self.connection
+            .send(ClientMessage::StreamDestroyed)
+            .unwrap();
     }
 }
 
@@ -267,17 +287,25 @@ impl<'ctx> ServerConn<'ctx> {
                 let input_frame_size = frame_size_in_bytes(input_stream_params);
                 let output_frame_size = frame_size_in_bytes(output_stream_params);
 
+                let (conn1, conn2) = audioipc::Connection::pair()?;
+                info!("Created connection pair: {:?}-{:?}", conn1, conn2);
+
                 match context.stream_init(
                     &params,
                     Callback {
                         input_frame_size: input_frame_size,
-                        output_frame_size: output_frame_size
+                        output_frame_size: output_frame_size,
+                        connection: conn2
                     }
                 ) {
                     Ok(stream) => {
                         let stm_tok = match self.streams.vacant_entry() {
                             Some(entry) => {
-                                debug!("Registering stream {:?}", entry.index());
+                                debug!(
+                                    "Registering stream {:?}",
+                                    entry.index(),
+                                );
+
                                 entry.insert(stream).index()
                             },
                             None => {
@@ -287,7 +315,7 @@ impl<'ctx> ServerConn<'ctx> {
                         };
 
                         self.connection
-                            .send(ClientMessage::StreamCreated(stm_tok))
+                            .send_with_fd(ClientMessage::StreamCreated(stm_tok), conn1.into_raw_fd())
                             .unwrap();
                     },
                     Err(e) => {
@@ -304,11 +332,11 @@ impl<'ctx> ServerConn<'ctx> {
             },
 
             &ServerMessage::StreamStart(stm_tok) => {
-                self.streams[stm_tok].start();
+                let _ = self.streams[stm_tok].start();
                 self.connection.send(ClientMessage::StreamStarted).unwrap();
             },
             &ServerMessage::StreamStop(stm_tok) => {
-                self.streams[stm_tok].stop();
+                let _ = self.streams[stm_tok].stop();
                 self.connection.send(ClientMessage::StreamStopped).unwrap();
             },
             &ServerMessage::StreamGetPosition(stm_tok) => {
@@ -334,13 +362,13 @@ impl<'ctx> ServerConn<'ctx> {
                 }
             },
             &ServerMessage::StreamSetVolume(stm_tok, volume) => {
-                self.streams[stm_tok].set_volume(volume);
+                let _ = self.streams[stm_tok].set_volume(volume);
                 self.connection
                     .send(ClientMessage::StreamVolumeSet)
                     .unwrap();
             },
             &ServerMessage::StreamSetPanning(stm_tok, panning) => {
-                self.streams[stm_tok].set_panning(panning);
+                let _ = self.streams[stm_tok].set_panning(panning);
                 self.connection
                     .send(ClientMessage::StreamPanningSet)
                     .unwrap();
@@ -359,6 +387,9 @@ impl<'ctx> ServerConn<'ctx> {
                 if let Some(e) = err {
                     self.send_error(e);
                 }
+            },
+            _ => {
+                bail!("Unexpected Message");
             },
         }
         Ok(())

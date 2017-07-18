@@ -183,6 +183,8 @@ fn opt_str(v: Option<Vec<u8>>) -> *const c_char {
 }
 
 // Client -> Server messages.
+// TODO: Callbacks should be different messages types so
+// ServerConn::process_msg doesn't have a catch-all case.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ServerMessage {
     ClientConnect,
@@ -204,7 +206,9 @@ pub enum ServerMessage {
     StreamGetLatency(usize),
     StreamSetVolume(usize, f32),
     StreamSetPanning(usize, f32),
-    StreamGetCurrentDevice(usize)
+    StreamGetCurrentDevice(usize),
+
+    StreamDataCallback(Vec<u8>)
 }
 
 // Server -> Client messages.
@@ -231,6 +235,9 @@ pub enum ClientMessage {
     StreamVolumeSet,
     StreamPanningSet,
     StreamCurrentDevice(Device),
+
+    StreamDataCallback(Vec<u8>, isize, usize),
+    StreamStateCallback(ffi::cubeb_state),
 
     ContextError(ffi::cubeb_error_code),
     StreamError, /*(Error)*/

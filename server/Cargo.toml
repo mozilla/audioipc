@@ -13,6 +13,4 @@ log = "0.3.8"
 mio = "0.6.7"
 mio-uds = "0.6.4"
 slab = "0.3.0"
-# For testing
-rand = "^0.3"
 
