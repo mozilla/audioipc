@@ -5,7 +5,7 @@ authors = ["Dan Glastonbury <dan.glastonbury@gmail.com>"]
 
 [dependencies]
 audioipc = { path = "../audioipc" }
-client = { path = "../client" }
+audioipc-client = { path = "../client" }
 cubeb = { git = "https://github.com/djg/cubeb-rs", branch = "workspace-reorg" }
 cubeb-core = { git = "https://github.com/djg/cubeb-rs", branch = "workspace-reorg" }
 env_logger = "0.4.3"

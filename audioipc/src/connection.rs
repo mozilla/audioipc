@@ -86,7 +86,7 @@ impl Connection {
         RT: DeserializeOwned + Debug,
     {
         // TODO: Check deserialize_from and serialize_into.
-        let mut encoded = vec![0; 8192]; // TODO: Get max size from bincode, or at least assert.
+        let mut encoded = vec![0; 32 * 1024]; // TODO: Get max size from bincode, or at least assert.
         // TODO: Read until block, EOF, or error.
         // TODO: Switch back to recv_fd.
         match self.stream.recv_fd(&mut encoded) {

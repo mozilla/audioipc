@@ -202,6 +202,7 @@ pub enum ServerMessage {
 
     StreamStart(usize),
     StreamStop(usize),
+    StreamResetDefaultDevice(usize),
     StreamGetPosition(usize),
     StreamGetLatency(usize),
     StreamSetVolume(usize, f32),
@@ -230,6 +231,7 @@ pub enum ClientMessage {
 
     StreamStarted,
     StreamStopped,
+    StreamDefaultDeviceReset,
     StreamPosition(u64),
     StreamLatency(u32),
     StreamVolumeSet,

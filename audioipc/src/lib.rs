@@ -18,8 +18,6 @@ extern crate bincode;
 
 extern crate nix;
 extern crate mio;
-extern crate mio_uds;
-extern crate slab;
 
 extern crate cubeb_core;
 

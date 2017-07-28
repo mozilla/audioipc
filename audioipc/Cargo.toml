@@ -8,16 +8,12 @@ authors = [
 description = "Remote Cubeb IPC"
 
 [dependencies]
+error-chain = "0.10.0"
+log = "^0.3.6"
 serde = "1.*.*"
 serde_derive = "1.*.*"
 bincode = "0.8"
 libc = "0.2.22"
-mio = "0.6.7"
-mio-uds = "0.6.4"
 nix = "0.8.1"
-ctrlc = "3.0.1"
-error-chain = "0.10.0"
-log = "0.3.8"
-env_logger = "0.4.3"
-slab = "0.3.0"
-cubeb-core = { git = "https://github.com/djg/cubeb-rs", branch="workspace-reorg" }
+mio = "0.6.7"
+cubeb-core = { git = "https://github.com/djg/cubeb-rs", branch="workspace-reorg", version="^0.1" }

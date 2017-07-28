@@ -7,7 +7,7 @@ extern crate ctrlc;
 extern crate env_logger;
 #[macro_use]
 extern crate log;
-extern crate server;
+extern crate audioipc_server as server;
 
 use std::process::exit;
 use std::sync::Arc;

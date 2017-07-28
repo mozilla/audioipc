@@ -15,10 +15,12 @@ use audioipc::messages::{ClientMessage, DeviceInfo, ServerMessage, StreamParams}
 use cubeb_core::binding::Binding;
 use cubeb_core::ffi;
 use mio::Token;
+use mio::channel;
 use mio_uds::UnixListener;
+use std::{slice, thread};
 use std::convert::From;
+use std::os::raw::c_void;
 use std::os::unix::prelude::*;
-use std::slice;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -98,6 +100,7 @@ type StreamSlab<'ctx> = slab::Slab<cubeb::Stream<'ctx, Callback>, usize>;
 
 // TODO: Server token must be outside range used by server.connections slab.
 // usize::MAX is already used internally in mio.
+const QUIT: Token = Token(std::usize::MAX - 2);
 const SERVER: Token = Token(std::usize::MAX - 1);
 
 struct ServerConn<'ctx> {
@@ -119,7 +122,10 @@ impl<'ctx> ServerConn<'ctx> {
         }
     }
 
-    fn process(&mut self, poll: &mut mio::Poll, context: &'ctx cubeb::Context) -> Result<()> {
+    fn process<'c>(&mut self, poll: &mut mio::Poll, context: &'c cubeb::Context) -> Result<()>
+    where
+        'c: 'ctx,
+    {
         let r = self.connection.receive();
         info!("ServerConn::process: got {:?}", r);
 
@@ -140,7 +146,10 @@ impl<'ctx> ServerConn<'ctx> {
         Ok(())
     }
 
-    fn process_msg(&mut self, msg: &ServerMessage, context: &'ctx cubeb::Context) -> Result<()> {
+    fn process_msg<'c>(&mut self, msg: &ServerMessage, context: &'c cubeb::Context) -> Result<()>
+    where
+        'c: 'ctx,
+    {
         match msg {
             &ServerMessage::ClientConnect => {
                 panic!("already connected");
@@ -475,6 +484,10 @@ impl<'ctx> Server<'ctx> {
                         _ => {},
                     };
                 },
+                QUIT => {
+                    info!("Quitting Audio Server loop");
+                    bail!("quit");
+                },
                 token => {
                     debug!("token {:?} ready", token);
 
@@ -537,4 +550,48 @@ pub fn run(running: Arc<AtomicBool>) -> Result<()> {
     }
 
     //poll.deregister(&server.socket).unwrap();
+}
+
+#[no_mangle]
+pub extern "C" fn audioipc_server_start() -> *mut c_void {
+
+    let (tx, rx) = channel::channel::<bool>();
+
+    thread::spawn(move || {
+        // Ignore result.
+        let _ = std::fs::remove_file(audioipc::get_uds_path());
+
+        // TODO: Use a SEQPACKET, wrap it in UnixStream?
+        let context = cubeb::Context::init("AudioIPC Server", None).expect("Failed to create cubeb context");
+        let ctx = &context;
+        let mut poll = mio::Poll::new().unwrap();
+        let mut server = Server::new(UnixListener::bind(audioipc::get_uds_path()).unwrap());
+
+        poll.register(
+            &server.socket,
+            SERVER,
+            mio::Ready::readable(),
+            mio::PollOpt::edge()
+        ).unwrap();
+
+        poll.register(&rx, QUIT, mio::Ready::readable(), mio::PollOpt::edge())
+            .unwrap();
+
+        loop {
+            match server.poll(&mut poll, ctx) {
+                Err(_) => {
+                    return;
+                },
+                _ => (),
+            }
+        }
+    });
+
+    Box::into_raw(Box::new(tx)) as *mut _
+}
+
+#[no_mangle]
+pub extern "C" fn audioipc_server_stop(p: *mut c_void) {
+    let sender = unsafe { Box::<channel::Sender<bool>>::from_raw(p as *mut _) };
+    let _ = sender.send(true);
 }

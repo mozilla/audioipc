@@ -48,12 +48,14 @@ fn stream_thread(
                     frame_size
                 );
                 // TODO: This is proof-of-concept. Make it better.
-                let mut tmp: Vec<u8> = Vec::with_capacity(nframes as usize * frame_size);
+                let mut tmp: Vec<u8> =
+                    Vec::with_capacity(nframes as usize * frame_size);
                 unsafe {
                     tmp.set_len(nframes as usize * frame_size);
                 }
                 debug!("tmp buffer: len: {}, bytes: {:?}", tmp.len(), &tmp[..16]);
-                let input_ptr: *const u8 = if v.len() > 0 { v.as_ptr() } else { ptr::null() };
+                let input_ptr: *const u8 =
+                    if v.len() > 0 { v.as_ptr() } else { ptr::null() };
                 let output_ptr: *mut u8 = if tmp.len() > 0 {
                     tmp.as_mut_ptr()
                 } else {
@@ -99,7 +101,9 @@ impl<'ctx> ClientStream<'ctx> {
         };
 
         let (token, conn) = match r {
-            (ClientMessage::StreamCreated(tok), Some(fd)) => (tok, unsafe { Connection::from_raw_fd(fd) }),
+            (ClientMessage::StreamCreated(tok), Some(fd)) => (tok, unsafe {
+                Connection::from_raw_fd(fd)
+            }),
             (ClientMessage::StreamCreated(_), None) => {
                 debug!("Missing fd!");
                 return Err(ErrorCode::Error.into());
@@ -137,6 +141,10 @@ impl<'ctx> Stream for ClientStream<'ctx> {
 
     fn stop(&self) -> Result<()> {
         send_recv!(self.context.conn(), StreamStop(self.token) => StreamStopped)
+    }
+
+    fn reset_default_device(&self) -> Result<()> {
+        send_recv!(self.context.conn(), StreamResetDefaultDevice(self.token) => StreamDefaultDeviceReset)
     }
 
     fn position(&self) -> Result<u64> {

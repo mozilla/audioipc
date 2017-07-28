@@ -3,7 +3,7 @@
 extern crate error_chain;
 
 extern crate audioipc;
-extern crate client;
+extern crate audioipc_client as client;
 extern crate cubeb;
 extern crate cubeb_core;
 extern crate env_logger;
