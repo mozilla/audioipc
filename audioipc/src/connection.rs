@@ -13,6 +13,7 @@ use std::io::{self, Read};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::os::unix::net;
 use std::os::unix::prelude::*;
+use libc;
 
 pub trait RecvFd {
     fn recv_fd(&mut self, bytes: &mut [u8]) -> io::Result<(usize, Option<RawFd>)>;
@@ -75,8 +76,8 @@ impl Connection {
         RT: DeserializeOwned + Debug,
     {
         match self.receive_with_fd() {
-            // TODO: Just dropping any received fd on the floor.  Make it an error?
-            Ok((r, _)) => Ok(r),
+            Ok((r, None)) => Ok(r),
+            Ok((_, Some(_))) => panic!("unexpected fd received"),
             Err(e) => Err(e),
         }
     }
@@ -175,7 +176,9 @@ impl RecvFd for net::UnixStream {
         let mut fd = None;
         for cmsg in msg.cmsgs() {
             if let ControlMessage::ScmRights(fds) = cmsg {
-                if fds.len() == 1 {
+                assert_eq!(fd, None);
+                if fds.len() >= 1 {
+                    assert_eq!(fds.len(), 1);
                     fd = Some(fds[0]);
                     break;
                 }
@@ -212,7 +215,9 @@ impl SendFd for net::UnixStream {
         let send_result = if fd_to_send.is_some() {
             let fds = [fd_to_send.unwrap().into_raw_fd()];
             let cmsg = ControlMessage::ScmRights(&fds);
-            sendmsg(self.as_raw_fd(), &iov, &[cmsg], MsgFlags::empty(), None)
+            let r = sendmsg(self.as_raw_fd(), &iov, &[cmsg], MsgFlags::empty(), None);
+            let _ = unsafe { libc::close(fds[0]) };
+            r
         } else {
             sendmsg(self.as_raw_fd(), &iov, &[], MsgFlags::empty(), None)
         };
