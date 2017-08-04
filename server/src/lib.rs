@@ -54,13 +54,15 @@ impl cubeb::StreamCallback for Callback {
     fn data_callback(&mut self, input: &[u8], output: &mut [u8]) -> isize {
         info!("Stream data callback: {} {}", input.len(), output.len());
 
-        let output_nbytes = output.len() * self.output_frame_size as usize;
-
         // len is of input and output is frame len. Turn these into the real lengths.
-        let real_input = unsafe { slice::from_raw_parts(input.as_ptr(), input.len() * self.input_frame_size as usize) };
+        let real_input = unsafe {
+            let size_bytes = input.len() * self.input_frame_size as usize;
+            slice::from_raw_parts(input.as_ptr(), size_bytes)
+        };
         let real_output = unsafe {
-            info!("Resize output to {}", output_nbytes);
-            slice::from_raw_parts_mut(output.as_mut_ptr(), output_nbytes)
+            let size_bytes = output.len() * self.output_frame_size as usize;
+            info!("Resize output to {}", size_bytes);
+            slice::from_raw_parts_mut(output.as_mut_ptr(), size_bytes)
         };
 
         self.connection
