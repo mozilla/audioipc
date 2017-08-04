@@ -23,6 +23,6 @@ use stream::ClientStream;
 
 #[no_mangle]
 /// Entry point from C code.
-pub unsafe extern "C" fn cubeb_remote_init(c: *mut *mut ffi::cubeb, context_name: *const c_char) -> c_int {
+pub unsafe extern "C" fn audioipc_client_init(c: *mut *mut ffi::cubeb, context_name: *const c_char) -> c_int {
     capi::capi_init::<ClientContext>(c, context_name)
 }

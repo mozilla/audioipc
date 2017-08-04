@@ -189,7 +189,7 @@ fn run() -> Result<()> {
     // init function to get a raw cubeb pointer.
     let context_name = CString::new("AudioIPC").unwrap();
     let mut c: *mut ffi::cubeb = ptr::null_mut();
-    if unsafe { client::cubeb_remote_init(&mut c, context_name.as_ptr()) } < 0 {
+    if unsafe { client::audioipc_client_init(&mut c, context_name.as_ptr()) } < 0 {
         return Err("Failed to connect to remote cubeb server.".into());
     }
     let ctx = unsafe { cubeb::Context::from_raw(c) };
