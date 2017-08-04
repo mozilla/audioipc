@@ -27,7 +27,7 @@ pub trait SendFd {
 // a wrapper class to allow implementation of a trait from another
 // crate on a struct from yet another crate.
 //
-// This class is effectively mds_uds::UnixStream.
+// This class is effectively net::UnixStream.
 
 #[derive(Debug)]
 pub struct Connection {
