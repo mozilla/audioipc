@@ -21,6 +21,8 @@ extern crate mio;
 
 extern crate cubeb_core;
 
+extern crate libc;
+
 mod connection;
 pub mod errors;
 pub mod messages;
