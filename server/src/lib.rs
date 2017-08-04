@@ -328,7 +328,7 @@ impl<'ctx> ServerConn<'ctx> {
                         };
 
                         self.connection
-                            .send_with_fd(ClientMessage::StreamCreated(stm_tok), conn1.into_raw_fd())
+                            .send_with_fd(ClientMessage::StreamCreated(stm_tok), conn1)
                             .unwrap();
                     },
                     Err(e) => {
