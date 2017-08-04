@@ -14,6 +14,7 @@ use std::os::unix::io::{AsRawFd, RawFd};
 use std::os::unix::net;
 use std::os::unix::prelude::*;
 use libc;
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 pub trait RecvFd {
     fn recv_fd(&mut self, bytes: &mut [u8]) -> io::Result<(usize, Option<RawFd>)>;
@@ -161,7 +162,9 @@ impl<'a> Read for &'a Connection {
 
 impl RecvFd for net::UnixStream {
     fn recv_fd(&mut self, buf_to_recv: &mut [u8]) -> io::Result<(usize, Option<RawFd>)> {
-        let iov = [IoVec::from_mut_slice(&mut buf_to_recv[..])];
+        let length = self.read_u32::<LittleEndian>()?;
+
+        let iov = [IoVec::from_mut_slice(&mut buf_to_recv[0..length as usize])];
         let mut cmsgspace: CmsgSpace<[RawFd; 1]> = CmsgSpace::new();
         let msg = match recvmsg(
             self.as_raw_fd(),
@@ -210,8 +213,9 @@ impl IntoRawFd for Connection {
 
 impl SendFd for net::UnixStream {
     fn send_fd<FD: IntoRawFd>(&mut self, buf_to_send: &[u8], fd_to_send: Option<FD>) -> io::Result<usize> {
-        let iov = [IoVec::from_slice(buf_to_send)];
+        self.write_u32::<LittleEndian>(buf_to_send.len() as u32)?;
 
+        let iov = [IoVec::from_slice(buf_to_send)];
         let send_result = if fd_to_send.is_some() {
             let fds = [fd_to_send.unwrap().into_raw_fd()];
             let cmsg = ControlMessage::ScmRights(&fds);
