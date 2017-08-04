@@ -224,7 +224,7 @@ impl SendFd for net::UnixStream {
         match send_result {
             Ok(n) => Ok(n),
             Err(Error::Sys(errno)) => Err(io::Error::from_raw_os_error(errno as _)),
-            Err(_) => unreachable!(),
+            Err(_) => panic!("handle this error"),
         }
     }
 }

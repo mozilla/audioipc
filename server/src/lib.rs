@@ -436,7 +436,7 @@ impl<'ctx> Server<'ctx> {
                 error!("server accept error: {}", e);
                 return Err(e.into());
             },
-            Ok(None) => unreachable!(),
+            Ok(None) => panic!("accept returned EAGAIN unexpectedly"),
             Ok(Some((socket, _))) => socket,
         };
         let token = match self.conns.vacant_entry() {
