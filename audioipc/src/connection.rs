@@ -19,7 +19,7 @@ pub trait RecvFd {
 }
 
 pub trait SendFd {
-    fn send_fd(&mut self, bytes: &[u8], fd: Option<RawFd>) -> io::Result<(usize)>;
+    fn send_fd<FD: IntoRawFd>(&mut self, bytes: &[u8], fd: Option<FD>) -> io::Result<(usize)>;
 }
 
 // Because of the trait implementation rules in Rust, this needs to be
@@ -116,7 +116,7 @@ impl Connection {
     pub fn send_with_fd<ST, FD>(&mut self, msg: ST, fd_to_send: FD) -> Result<usize>
     where
         ST: Serialize + Debug,
-        FD: Into<Option<RawFd>>,
+        FD: Into<Option<Connection>>,
     {
         let encoded: Vec<u8> = serialize(&msg, bincode::Infinite)?;
         // TODO: Switch back to send_fd.
@@ -206,11 +206,11 @@ impl IntoRawFd for Connection {
 }
 
 impl SendFd for net::UnixStream {
-    fn send_fd(&mut self, buf_to_send: &[u8], fd_to_send: Option<RawFd>) -> io::Result<usize> {
+    fn send_fd<FD: IntoRawFd>(&mut self, buf_to_send: &[u8], fd_to_send: Option<FD>) -> io::Result<usize> {
         let iov = [IoVec::from_slice(buf_to_send)];
 
         let send_result = if fd_to_send.is_some() {
-            let fds = [fd_to_send.unwrap()];
+            let fds = [fd_to_send.unwrap().into_raw_fd()];
             let cmsg = ControlMessage::ScmRights(&fds);
             sendmsg(self.as_raw_fd(), &iov, &[cmsg], MsgFlags::empty(), None)
         } else {
@@ -225,7 +225,7 @@ impl SendFd for net::UnixStream {
 }
 
 impl SendFd for Connection {
-    fn send_fd(&mut self, buf_to_send: &[u8], fd_to_send: Option<RawFd>) -> io::Result<usize> {
+    fn send_fd<FD: IntoRawFd>(&mut self, buf_to_send: &[u8], fd_to_send: Option<FD>) -> io::Result<usize> {
         self.stream.send_fd(buf_to_send, fd_to_send)
     }
 }
