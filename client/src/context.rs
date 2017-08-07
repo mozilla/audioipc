@@ -8,17 +8,17 @@ use audioipc::{self, ClientMessage, Connection, ServerMessage, messages};
 use cubeb_backend::{Context, Ops};
 use cubeb_core::{DeviceId, DeviceType, Error, Result, StreamParams, ffi};
 use cubeb_core::binding::Binding;
-use std::cell::{RefCell, RefMut};
 use std::ffi::{CStr, CString};
 use std::mem;
 use std::os::raw::c_void;
 use std::os::unix::net::UnixStream;
+use std::sync::{Mutex, MutexGuard};
 use stream;
 
 #[derive(Debug)]
 pub struct ClientContext {
     _ops: *const Ops,
-    connection: RefCell<Connection>
+    connection: Mutex<Connection>
 }
 
 macro_rules! t(
@@ -33,8 +33,8 @@ pub const CLIENT_OPS: Ops = capi_new!(ClientContext, ClientStream);
 
 impl ClientContext {
     #[doc(hidden)]
-    pub fn conn(&self) -> RefMut<Connection> {
-        self.connection.borrow_mut()
+    pub fn conn(&self) -> MutexGuard<Connection> {
+        self.connection.lock().unwrap()
     }
 }
 
@@ -44,7 +44,7 @@ impl Context for ClientContext {
         let stream = t!(UnixStream::connect(audioipc::get_uds_path()));
         let ctx = Box::new(ClientContext {
             _ops: &CLIENT_OPS as *const _,
-            connection: RefCell::new(Connection::new(stream))
+            connection: Mutex::new(Connection::new(stream))
         });
         Ok(Box::into_raw(ctx) as *mut _)
     }
