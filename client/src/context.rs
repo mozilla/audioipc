@@ -89,7 +89,7 @@ impl Context for ClientContext {
 
     fn device_collection_destroy(&self, collection: *mut ffi::cubeb_device_collection) {
         unsafe {
-            let coll = *collection;
+            let coll = &*collection;
             let mut devices = Vec::from_raw_parts(
                 coll.device as *mut ffi::cubeb_device_info,
                 coll.count,
