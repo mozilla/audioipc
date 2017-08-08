@@ -16,4 +16,4 @@ bincode = "0.8"
 libc = "0.2.22"
 nix = "0.8.1"
 mio = "0.6.7"
-cubeb-core = { git = "https://github.com/djg/cubeb-rs", branch="workspace-reorg", version="^0.1" }
+cubeb-core = { git = "https://github.com/djg/cubeb-rs", version="^0.1" }
