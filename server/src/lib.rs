@@ -8,6 +8,7 @@ extern crate audioipc;
 extern crate cubeb;
 extern crate cubeb_core;
 extern crate mio;
+extern crate mio_more;
 extern crate mio_uds;
 extern crate slab;
 
@@ -15,7 +16,7 @@ use audioipc::messages::{ClientMessage, DeviceInfo, ServerMessage, StreamParams}
 use cubeb_core::binding::Binding;
 use cubeb_core::ffi;
 use mio::Token;
-use mio::channel;
+use mio_more::channel;
 use mio_uds::UnixListener;
 use std::{slice, thread};
 use std::convert::From;
