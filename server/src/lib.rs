@@ -7,8 +7,8 @@ extern crate log;
 extern crate audioipc;
 extern crate cubeb;
 extern crate cubeb_core;
+extern crate lazycell;
 extern crate mio;
-extern crate mio_more;
 extern crate mio_uds;
 extern crate slab;
 
@@ -16,7 +16,6 @@ use audioipc::messages::{ClientMessage, DeviceInfo, ServerMessage, StreamParams}
 use cubeb_core::binding::Binding;
 use cubeb_core::ffi;
 use mio::Token;
-use mio_more::channel;
 use mio_uds::UnixListener;
 use std::{slice, thread};
 use std::convert::From;
@@ -24,6 +23,8 @@ use std::os::raw::c_void;
 use std::os::unix::prelude::*;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+mod channel;
 
 pub mod errors {
     error_chain! {
@@ -556,7 +557,7 @@ pub fn run(running: Arc<AtomicBool>) -> Result<()> {
 #[no_mangle]
 pub extern "C" fn audioipc_server_start() -> *mut c_void {
 
-    let (tx, rx) = channel::channel::<bool>();
+    let (tx, rx) = channel::ctl_pair();
 
     thread::spawn(move || {
         // Ignore result.
@@ -593,6 +594,6 @@ pub extern "C" fn audioipc_server_start() -> *mut c_void {
 
 #[no_mangle]
 pub extern "C" fn audioipc_server_stop(p: *mut c_void) {
-    let sender = unsafe { Box::<channel::Sender<bool>>::from_raw(p as *mut _) };
-    let _ = sender.send(true);
+    // Dropping SenderCtl here will notify the other end.
+    let _ = unsafe { Box::<channel::SenderCtl>::from_raw(p as *mut _) };
 }
