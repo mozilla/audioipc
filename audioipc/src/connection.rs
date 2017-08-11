@@ -162,12 +162,16 @@ impl RecvFd for net::UnixStream {
     fn recv_fd(&mut self, buf_to_recv: &mut [u8]) -> io::Result<(usize, Option<RawFd>)> {
         let iov = [IoVec::from_mut_slice(&mut buf_to_recv[..])];
         let mut cmsgspace: CmsgSpace<[RawFd; 1]> = CmsgSpace::new();
-        let msg = recvmsg(
+        let msg = match recvmsg(
             self.as_raw_fd(),
             &iov,
             Some(&mut cmsgspace),
             MsgFlags::empty()
-        )?;
+        ) {
+            Ok(msg) => msg,
+            Err(Error::Sys(errno)) => return Err(errno.into()),
+            Err(e) => panic!("recvmsg returned unexpected error: {:?}", e),
+        };
         let mut fd = None;
         for cmsg in msg.cmsgs() {
             if let ControlMessage::ScmRights(fds) = cmsg {
