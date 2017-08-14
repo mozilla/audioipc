@@ -1,11 +1,9 @@
 use bincode::{self, deserialize, serialize};
 use errors::*;
+use msg;
 use mio::{Poll, PollOpt, Ready, Token};
 use mio::event::Evented;
 use mio::unix::EventedFd;
-use nix::Error;
-use nix::sys::socket::{CmsgSpace, ControlMessage, MsgFlags, recvmsg, sendmsg};
-use nix::sys::uio::IoVec;
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use std::fmt::Debug;
@@ -164,30 +162,7 @@ impl RecvFd for net::UnixStream {
     fn recv_fd(&mut self, buf_to_recv: &mut [u8]) -> io::Result<(usize, Option<RawFd>)> {
         let length = self.read_u32::<LittleEndian>()?;
 
-        let iov = [IoVec::from_mut_slice(&mut buf_to_recv[0..length as usize])];
-        let mut cmsgspace: CmsgSpace<[RawFd; 1]> = CmsgSpace::new();
-        let msg = match recvmsg(
-            self.as_raw_fd(),
-            &iov,
-            Some(&mut cmsgspace),
-            MsgFlags::empty()
-        ) {
-            Ok(msg) => msg,
-            Err(Error::Sys(errno)) => return Err(errno.into()),
-            Err(e) => panic!("recvmsg returned unexpected error: {:?}", e),
-        };
-        let mut fd = None;
-        for cmsg in msg.cmsgs() {
-            if let ControlMessage::ScmRights(fds) = cmsg {
-                assert_eq!(fd, None);
-                if fds.len() >= 1 {
-                    assert_eq!(fds.len(), 1);
-                    fd = Some(fds[0]);
-                    break;
-                }
-            }
-        }
-        Ok((msg.bytes, fd))
+        msg::recvmsg(self.as_raw_fd(), &mut buf_to_recv[..length as usize])
     }
 }
 
@@ -215,21 +190,10 @@ impl SendFd for net::UnixStream {
     fn send_fd<FD: IntoRawFd>(&mut self, buf_to_send: &[u8], fd_to_send: Option<FD>) -> io::Result<usize> {
         self.write_u32::<LittleEndian>(buf_to_send.len() as u32)?;
 
-        let iov = [IoVec::from_slice(buf_to_send)];
-        let send_result = if fd_to_send.is_some() {
-            let fds = [fd_to_send.unwrap().into_raw_fd()];
-            let cmsg = ControlMessage::ScmRights(&fds);
-            let r = sendmsg(self.as_raw_fd(), &iov, &[cmsg], MsgFlags::empty(), None);
-            let _ = unsafe { libc::close(fds[0]) };
-            r
-        } else {
-            sendmsg(self.as_raw_fd(), &iov, &[], MsgFlags::empty(), None)
-        };
-        match send_result {
-            Ok(n) => Ok(n),
-            Err(Error::Sys(errno)) => Err(io::Error::from_raw_os_error(errno as _)),
-            Err(_) => panic!("handle this error"),
-        }
+        let fd_to_send = fd_to_send.map(|fd| fd.into_raw_fd());
+        let r = msg::sendmsg(self.as_raw_fd(), buf_to_send, fd_to_send);
+        fd_to_send.map(|fd| unsafe { libc::close(fd) });
+        r
     }
 }
 

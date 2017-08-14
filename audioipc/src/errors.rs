@@ -1,6 +1,5 @@
 use bincode;
 use cubeb_core;
-use nix;
 use std;
 
 error_chain! {
@@ -8,7 +7,6 @@ error_chain! {
     foreign_links {
         Bincode(bincode::Error);
         Io(std::io::Error);
-        Nix(nix::Error);
         Cubeb(cubeb_core::Error);
     }
 

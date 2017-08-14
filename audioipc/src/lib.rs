@@ -16,7 +16,6 @@ extern crate serde_derive;
 extern crate serde;
 extern crate bincode;
 
-extern crate nix;
 extern crate mio;
 
 extern crate cubeb_core;
@@ -27,6 +26,7 @@ extern crate byteorder;
 mod connection;
 pub mod errors;
 pub mod messages;
+mod msg;
 
 pub use connection::*;
 pub use messages::{ClientMessage, ServerMessage};
