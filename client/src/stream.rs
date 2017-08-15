@@ -5,13 +5,18 @@
 
 use ClientContext;
 use audioipc::{ClientMessage, Connection, ServerMessage, messages};
+use audioipc::shm::{SharedMemSlice, SharedMemMutSlice};
 use cubeb_backend::Stream;
 use cubeb_core::{ErrorCode, Result, ffi};
 use std::ffi::CString;
 use std::os::raw::c_void;
 use std::os::unix::io::FromRawFd;
+use std::fs::File;
 use std::ptr;
 use std::thread;
+
+// TODO: Remove and let caller allocate based on cubeb backend requirements.
+const SHM_AREA_SIZE: usize = 2 * 1024 * 1024;
 
 pub struct ClientStream<'ctx> {
     // This must be a reference to Context for cubeb, cubeb accesses stream methods via stream->context->ops
@@ -22,6 +27,8 @@ pub struct ClientStream<'ctx> {
 
 fn stream_thread(
     mut conn: Connection,
+    input_shm: SharedMemSlice,
+    mut output_shm: SharedMemMutSlice,
     data_cb: ffi::cubeb_data_callback,
     state_cb: ffi::cubeb_state_callback,
     user_ptr: usize,
@@ -40,27 +47,15 @@ fn stream_thread(
                 info!("stream_thread: Shutdown callback thread.");
                 return;
             },
-            ClientMessage::StreamDataCallback(v, nframes, frame_size) => {
+            ClientMessage::StreamDataCallback(nframes, frame_size) => {
                 info!(
-                    "stream_thread: Data Callback: {:?} nframes={} frame_size={}",
-                    v,
+                    "stream_thread: Data Callback: nframes={} frame_size={}",
                     nframes,
                     frame_size
                 );
                 // TODO: This is proof-of-concept. Make it better.
-                let mut tmp: Vec<u8> =
-                    Vec::with_capacity(nframes as usize * frame_size);
-                unsafe {
-                    tmp.set_len(nframes as usize * frame_size);
-                }
-                debug!("tmp buffer: len: {}, bytes: {:?}", tmp.len(), &tmp[..16]);
-                let input_ptr: *const u8 =
-                    if v.len() > 0 { v.as_ptr() } else { ptr::null() };
-                let output_ptr: *mut u8 = if tmp.len() > 0 {
-                    tmp.as_mut_ptr()
-                } else {
-                    ptr::null_mut()
-                };
+                let input_ptr: *const u8 = input_shm.get_slice(nframes as usize * frame_size).unwrap().as_ptr();
+                let output_ptr: *mut u8 = output_shm.get_mut_slice(nframes as usize * frame_size).unwrap().as_mut_ptr();
                 let nframes = data_cb(
                     ptr::null_mut(),
                     user_ptr as *mut c_void,
@@ -68,8 +63,7 @@ fn stream_thread(
                     output_ptr as *mut _,
                     nframes as _
                 );
-                tmp.truncate(nframes as usize * frame_size);
-                conn.send(ServerMessage::StreamDataCallback(tmp)).unwrap();
+                conn.send(ServerMessage::StreamDataCallback(nframes as isize)).unwrap();
             },
             ClientMessage::StreamStateCallback(state) => {
                 info!("stream_thread: State Callback: {:?}", state);
@@ -114,9 +108,48 @@ impl<'ctx> ClientStream<'ctx> {
             },
         };
 
+        // TODO: It'd be nicer to receive these two fds as part of
+        // StreamCreated, but that requires changing sendmsg/recvmsg to
+        // support multiple fds.
+        let r = match ctx.conn().receive_with_fd::<ClientMessage>() {
+            Ok(r) => r,
+            Err(_) => return Err(ErrorCode::Error.into()),
+        };
+
+        let input_file = match r {
+            (ClientMessage::StreamCreatedInputShm, Some(fd)) => unsafe {
+                File::from_raw_fd(fd)
+            },
+            (m, _) => {
+                debug!("Unexpected message: {:?}", m);
+                return Err(ErrorCode::Error.into());
+            },
+        };
+
+        let input_shm = SharedMemSlice::from(input_file,
+                                             SHM_AREA_SIZE).unwrap();
+
+        let r = match ctx.conn().receive_with_fd::<ClientMessage>() {
+            Ok(r) => r,
+            Err(_) => return Err(ErrorCode::Error.into()),
+        };
+
+        let output_file = match r {
+            (ClientMessage::StreamCreatedOutputShm, Some(fd)) => unsafe {
+                File::from_raw_fd(fd)
+            },
+            (m, _) => {
+                debug!("Unexpected message: {:?}", m);
+                return Err(ErrorCode::Error.into());
+            },
+        };
+
+        let output_shm = SharedMemMutSlice::from(output_file,
+                                                 SHM_AREA_SIZE).unwrap();
+
         let user_data = user_ptr as usize;
         let join_handle = thread::spawn(move || {
-            stream_thread(conn, data_callback, state_callback, user_data)
+            stream_thread(conn, input_shm, output_shm, data_callback, state_callback, user_data)
         });
 
         Ok(Box::into_raw(Box::new(ClientStream {

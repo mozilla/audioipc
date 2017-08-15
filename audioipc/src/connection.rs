@@ -110,22 +110,17 @@ impl Connection {
     where
         ST: Serialize + Debug,
     {
-        self.send_with_fd(msg, None)
+        self.send_with_fd::<ST, Connection>(msg, None)
     }
 
-    pub fn send_with_fd<ST, FD>(&mut self, msg: ST, fd_to_send: FD) -> Result<usize>
+    pub fn send_with_fd<ST, FD>(&mut self, msg: ST, fd_to_send: Option<FD>) -> Result<usize>
     where
         ST: Serialize + Debug,
-        FD: Into<Option<Connection>>,
+        FD: IntoRawFd + Debug,
     {
         let encoded: Vec<u8> = serialize(&msg, bincode::Infinite)?;
-        // TODO: Switch back to send_fd.
-        // TODO: Pass fd with StreamCreated message, not separately OOB.
-        // let msg = vec![0; 0];
-        let fd = fd_to_send.into();
-        info!("send_with_fd {:?}, {:?}", msg, fd);
-        // super::send_fd(&mut stream.stream, &msg, remote_fd.into_raw_fd()).unwrap();
-        self.stream.send_fd(&encoded, fd).chain_err(
+        info!("send_with_fd {:?}, {:?}", msg, fd_to_send);
+        self.stream.send_fd(&encoded, fd_to_send).chain_err(
             || "Failed to send message with fd"
         )
     }
