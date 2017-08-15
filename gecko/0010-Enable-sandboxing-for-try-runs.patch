@@ -1,0 +1,24 @@
+From d8f4482ea6107a89b064be71486c3abac88ac4f8 Mon Sep 17 00:00:00 2001
+From: Dan Glastonbury <dan.glastonbury@gmail.com>
+Date: Tue, 15 Aug 2017 15:05:01 +1000
+Subject: Enable sandboxing for try runs.
+
+MozReview-Commit-ID: 19LU1FkZZBi
+
+diff --git a/modules/libpref/init/all.js b/modules/libpref/init/all.js
+index 864e897..9884107 100644
+--- a/modules/libpref/init/all.js
++++ b/modules/libpref/init/all.js
+@@ -646,6 +646,9 @@ pref("media.decoder.skip-to-next-key-frame.enabled", true);
+ // "verbose", "normal" and "" (log disabled).
+ pref("media.cubeb.logging_level", "");
+ 
++// Cubeb remoting (sandbox) control
++pref("media.cubeb.sandbox", true);
++
+ // Set to true to force demux/decode warnings to be treated as errors.
+ pref("media.playback.warnings-as-errors", false);
+ 
+-- 
+2.10.2
+

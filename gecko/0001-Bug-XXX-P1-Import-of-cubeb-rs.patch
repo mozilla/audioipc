@@ -1,0 +1,4144 @@
+From 7108eb18520e66e7ddcb77f22d554df831ea4c1b Mon Sep 17 00:00:00 2001
+From: Dan Glastonbury <dan.glastonbury@gmail.com>
+Date: Wed, 9 Aug 2017 13:33:59 +1000
+Subject: Bug XXX - P1: Import of cubeb-rs
+
+MozReview-Commit-ID: GoqaGftNNLT
+
+diff --git a/media/cubeb-rs/Cargo.toml b/media/cubeb-rs/Cargo.toml
+new file mode 100644
+index 0000000..252338f
+--- /dev/null
++++ b/media/cubeb-rs/Cargo.toml
+@@ -0,0 +1,6 @@
++[workspace]
++members = [
++    "cubeb-core",
++    "cubeb-api",
++    "cubeb-backend"
++]
+\ No newline at end of file
+diff --git a/media/cubeb-rs/LICENSE b/media/cubeb-rs/LICENSE
+new file mode 100644
+index 0000000..ec9718c
+--- /dev/null
++++ b/media/cubeb-rs/LICENSE
+@@ -0,0 +1,13 @@
++Copyright © 2017 Mozilla Foundation
++
++Permission to use, copy, modify, and distribute this software for any
++purpose with or without fee is hereby granted, provided that the above
++copyright notice and this permission notice appear in all copies.
++
++THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
++WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
++MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
++ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
++WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
++ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
++OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+diff --git a/media/cubeb-rs/cubeb-api/Cargo.toml b/media/cubeb-rs/cubeb-api/Cargo.toml
+new file mode 100644
+index 0000000..e5e86d1
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-api/Cargo.toml
+@@ -0,0 +1,22 @@
++[package]
++
++name = "cubeb"
++version = "0.2.0"
++authors = ["Dan Glastonbury <dglastonbury@mozilla.com>"]
++license = "ISC"
++readme = "README.md"
++keywords = ["cubeb"]
++repository = "https://github.com/djg/cubeb-rs"
++homepage = "https://github.com/djg/cubeb-rs"
++description = """
++Bindings to libcubeb for interacting with system audio from rust.
++"""
++categories = ["api-bindings"]
++
++[badges]
++travis-ci = { repository = "djg/cubeb-rs" }
++appveyor = { repository = "djg/cubeb-rs" }
++
++[dependencies]
++cubeb-core = { path = "../cubeb-core" }
++libcubeb-sys = { path = "libcubeb-sys" }
+diff --git a/media/cubeb-rs/cubeb-api/README.md b/media/cubeb-rs/cubeb-api/README.md
+new file mode 100644
+index 0000000..53f559c
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-api/README.md
+@@ -0,0 +1,26 @@
++# cubeb-rs
++
++[![Build Status](https://travis-ci.org/djg/cubeb-rs.svg?branch=master)](https://travis-ci.org/djg/cubeb-rs)
++
++[Documentation](https://docs.rs/cubeb)
++
++cubeb bindings for Rust
++
++```toml
++[dependencies]
++cubeb = "0.1"
++```
++
++## Building cubeb-rs
++
++First, you'll need to install _CMake_. Afterwards, just run:
++
++```sh
++$ git clone https://github.com/djg/cubeb-rs
++$ cd cubeb-rs
++$ cargo build
++```
++
++# License
++
++`cubeb-rs` is distributed under an ISC-style license.  See LICENSE for details.
+diff --git a/media/cubeb-rs/cubeb-api/examples/common/mod.rs b/media/cubeb-rs/cubeb-api/examples/common/mod.rs
+new file mode 100644
+index 0000000..e21e1e4
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-api/examples/common/mod.rs
+@@ -0,0 +1,30 @@
++use cubeb::{Context, Result};
++use std::env;
++use std::io::{self, Write};
++
++pub fn init(ctx_name: &str) -> Result<Context> {
++    let backend = match env::var("CUBEB_BACKEND") {
++        Ok(s) => Some(s),
++        Err(_) => None,
++    };
++
++    let ctx = Context::init(ctx_name, None);
++    if let Ok(ref ctx) = ctx {
++        if let Some(ref backend) = backend {
++            let ctx_backend = ctx.backend_id();
++            if backend != ctx_backend {
++                let stderr = io::stderr();
++                let mut handle = stderr.lock();
++
++                writeln!(
++                    handle,
++                    "Requested backend `{}', got `{}'",
++                    backend,
++                    ctx_backend
++                ).unwrap();
++            }
++        }
++    }
++
++    ctx
++}
+diff --git a/media/cubeb-rs/cubeb-api/examples/devices.rs b/media/cubeb-rs/cubeb-api/examples/devices.rs
+new file mode 100644
+index 0000000..08446d4
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-api/examples/devices.rs
+@@ -0,0 +1,133 @@
++// Copyright © 2011 Mozilla Foundation
++// Copyright © 2015 Haakon Sporsheim <haakon.sporsheim@telenordigital.com>
++//
++// This program is made available under an ISC-style license.  See the
++// accompanying file LICENSE for details.
++
++//! libcubeb enumerate device test/example.
++//! Prints out a list of input/output devices connected to the system.
++extern crate cubeb;
++
++mod common;
++
++use std::error::Error;
++
++fn print_device_info(info: &cubeb::DeviceInfo) {
++
++    let devtype = if info.device_type().contains(cubeb::DEVICE_TYPE_INPUT) {
++        "input"
++    } else if info.device_type().contains(cubeb::DEVICE_TYPE_OUTPUT) {
++        "output"
++    } else {
++        "unknown?"
++    };
++
++    let devstate = match info.state() {
++        cubeb::DeviceState::Disabled => "disabled",
++        cubeb::DeviceState::Unplugged => "unplugged",
++        cubeb::DeviceState::Enabled => "enabled",
++    };
++
++    let devdeffmt = match info.default_format() {
++        cubeb::DEVICE_FMT_S16LE => "S16LE",
++        cubeb::DEVICE_FMT_S16BE => "S16BE",
++        cubeb::DEVICE_FMT_F32LE => "F32LE",
++        cubeb::DEVICE_FMT_F32BE => "F32BE",
++        _ => "unknown?",
++    };
++
++    let mut devfmts = "".to_string();
++    if info.format().contains(cubeb::DEVICE_FMT_S16LE) {
++        devfmts = format!("{} S16LE", devfmts);
++    }
++    if info.format().contains(cubeb::DEVICE_FMT_S16BE) {
++        devfmts = format!("{} S16BE", devfmts);
++    }
++    if info.format().contains(cubeb::DEVICE_FMT_F32LE) {
++        devfmts = format!("{} F32LE", devfmts);
++    }
++    if info.format().contains(cubeb::DEVICE_FMT_F32BE) {
++        devfmts = format!("{} F32BE", devfmts);
++    }
++
++    if let Some(device_id) = info.device_id() {
++        let preferred = if info.preferred().is_empty() {
++            ""
++        } else {
++            " (PREFERRED)"
++        };
++        println!("dev: \"{}\"{}", device_id, preferred);
++    }
++    if let Some(friendly_name) = info.friendly_name() {
++        println!("\tName:    \"{}\"", friendly_name);
++    }
++    if let Some(group_id) = info.group_id() {
++        println!("\tGroup:   \"{}\"", group_id);
++    }
++    if let Some(vendor_name) = info.vendor_name() {
++        println!("\tVendor:  \"{}\"", vendor_name);
++    }
++    println!("\tType:    {}", devtype);
++    println!("\tState:   {}", devstate);
++    println!("\tCh:      {}", info.max_channels());
++    println!(
++        "\tFormat:  {} (0x{:x}) (default: {})",
++        &devfmts[1..],
++        info.format(),
++        devdeffmt
++    );
++    println!(
++        "\tRate:    {} - {} (default: {})",
++        info.min_rate(),
++        info.max_rate(),
++        info.default_rate()
++    );
++    println!(
++        "\tLatency: lo {} frames, hi {} frames",
++        info.latency_lo(),
++        info.latency_hi()
++    );
++}
++
++fn main() {
++    let ctx = common::init("Cubeb audio test").expect("Failed to create cubeb context");
++
++    println!("Enumerating input devices for backend {}", ctx.backend_id());
++
++    let devices = match ctx.enumerate_devices(cubeb::DEVICE_TYPE_INPUT) {
++        Ok(devices) => devices,
++        Err(e) if e.code() == cubeb::ErrorCode::NotSupported => {
++            println!("Device enumeration not support for this backend.");
++            return;
++        },
++        Err(e) => {
++            println!("Error enumerating devices: {}", e.description());
++            return;
++        },
++    };
++
++    println!("Found {} input devices", devices.len());
++    for d in devices.iter() {
++        print_device_info(d);
++    }
++
++    println!(
++        "Enumerating output devices for backend {}",
++        ctx.backend_id()
++    );
++
++    let devices = match ctx.enumerate_devices(cubeb::DEVICE_TYPE_OUTPUT) {
++        Ok(devices) => devices,
++        Err(e) => {
++            println!("Error enumerating devices: {}", e.description());
++            return;
++        },
++    };
++
++    println!("Found {} output devices", devices.len());
++    for d in devices.iter() {
++        print_device_info(d);
++    }
++
++
++}
+diff --git a/media/cubeb-rs/cubeb-api/examples/tone.rs b/media/cubeb-rs/cubeb-api/examples/tone.rs
+new file mode 100644
+index 0000000..a440187
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-api/examples/tone.rs
+@@ -0,0 +1,74 @@
++// Copyright © 2011 Mozilla Foundation
++//
++// This program is made available under an ISC-style license.  See the
++// accompanying file LICENSE for details.
++
++//! libcubeb api/function test. Plays a simple tone.
++extern crate cubeb;
++
++mod common;
++
++use cubeb::SampleType;
++use std::f32::consts::PI;
++use std::thread;
++use std::time::Duration;
++
++const SAMPLE_FREQUENCY: u32 = 48000;
++const STREAM_FORMAT: cubeb::SampleFormat = cubeb::SampleFormat::S16LE;
++
++// store the phase of the generated waveform
++struct Tone {
++    position: isize
++}
++
++impl cubeb::StreamCallback for Tone {
++    type Frame = cubeb::MonoFrame<i16>;
++
++    fn data_callback(&mut self, _: &[cubeb::MonoFrame<i16>], output: &mut [cubeb::MonoFrame<i16>]) -> isize {
++
++        // generate our test tone on the fly
++        for f in output.iter_mut() {
++            // North American dial tone
++            let t1 = (2.0 * PI * 350.0 * self.position as f32 / SAMPLE_FREQUENCY as f32).sin();
++            let t2 = (2.0 * PI * 440.0 * self.position as f32 / SAMPLE_FREQUENCY as f32).sin();
++
++            f.m = i16::from_float(0.5 * (t1 + t2));
++
++            self.position += 1;
++        }
++
++        output.len() as isize
++    }
++
++    fn state_callback(&mut self, state: cubeb::State) {
++        println!("stream {:?}", state);
++    }
++}
++
++fn main() {
++    let ctx = common::init("Cubeb tone example").expect("Failed to create cubeb context");
++
++    let params = cubeb::StreamParamsBuilder::new()
++        .format(STREAM_FORMAT)
++        .rate(SAMPLE_FREQUENCY)
++        .channels(1)
++        .layout(cubeb::ChannelLayout::Mono)
++        .take();
++
++    let stream_init_opts = cubeb::StreamInitOptionsBuilder::new()
++        .stream_name("Cubeb tone (mono)")
++        .output_stream_param(&params)
++        .latency(4096)
++        .take();
++
++    let stream = ctx.stream_init(
++        &stream_init_opts,
++        Tone {
++            position: 0
++        }
++    ).expect("Failed to create cubeb stream");
++
++    stream.start().unwrap();
++    thread::sleep(Duration::from_millis(500));
++    stream.stop().unwrap();
++}
+diff --git a/media/cubeb-rs/cubeb-api/libcubeb-sys/Cargo.toml b/media/cubeb-rs/cubeb-api/libcubeb-sys/Cargo.toml
+new file mode 100644
+index 0000000..523c352
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-api/libcubeb-sys/Cargo.toml
+@@ -0,0 +1,22 @@
++[package]
++name = "libcubeb-sys"
++version = "0.1.0"
++authors = ["Dan Glastonbury <dglastonbury@mozilla.com>"]
++repository = "https://github.com/djg/cubeb-rs"
++license = "ISC"
++description = "Native bindings to the cubeb library"
++
++links = "cubeb"
++build = "build.rs"
++
++[lib]
++name = "libcubeb_sys"
++path = "lib.rs"
++
++[dependencies]
++cubeb-core = { path = "../../cubeb-core" }
++
++[build-dependencies]
++pkg-config = "0.3"
++cmake = "0.1.2"
++gcc = "0.3"
+diff --git a/media/cubeb-rs/cubeb-api/libcubeb-sys/build.rs b/media/cubeb-rs/cubeb-api/libcubeb-sys/build.rs
+new file mode 100644
+index 0000000..8876c26
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-api/libcubeb-sys/build.rs
+@@ -0,0 +1,64 @@
++extern crate cmake;
++extern crate gcc;
++extern crate pkg_config;
++
++use std::env;
++use std::fs;
++use std::path::Path;
++use std::process::Command;
++
++macro_rules! t {
++    ($e:expr) => (match $e {
++        Ok(e) => e,
++        Err(e) => panic!("{} failed with {}", stringify!($e), e),
++    })
++}
++
++fn main() {
++    if env::var("LIBCUBEB_SYS_USE_PKG_CONFIG").is_ok() {
++        if pkg_config::find_library("libcubeb").is_ok() {
++            return;
++        }
++    }
++
++    if !Path::new("libcubeb/.git").exists() {
++        let _ = Command::new("git")
++            .args(&["submodule", "update", "--init", "--recursive"])
++            .status();
++    }
++
++    let target = env::var("TARGET").unwrap();
++    //    let host = env::var("HOST").unwrap();
++    let windows = target.contains("windows");
++    let darwin = target.contains("darwin");
++    let mut cfg = cmake::Config::new("libcubeb");
++
++    let _ = fs::remove_dir_all(env::var("OUT_DIR").unwrap());
++    t!(fs::create_dir_all(env::var("OUT_DIR").unwrap()));
++
++    env::remove_var("DESTDIR");
++    let dst = cfg.define("BUILD_SHARED_LIBS", "OFF")
++        .define("BUILD_TESTS", "OFF")
++        .build();
++
++    if windows {
++        // TBD
++        println!("cargo:rustc-link-lib=static=cubeb");
++        println!("cargo:rustc-link-search=native={}/lib", dst.display());
++    } else if darwin {
++        println!("cargo:rustc-link-lib=static=cubeb");
++        println!("cargo:rustc-link-lib=framework=AudioUnit");
++        println!("cargo:rustc-link-lib=framework=CoreAudio");
++        println!("cargo:rustc-link-lib=framework=CoreServices");
++        println!("cargo:rustc-link-lib=dylib=c++");
++        println!("cargo:rustc-link-search=native={}", dst.display());
++    } else {
++        println!("cargo:rustc-link-lib=static=cubeb");
++        println!("cargo:rustc-link-lib=dylib=stdc++");
++        println!("cargo:rustc-link-search=native={}", dst.display());
++
++        pkg_config::find_library("alsa").unwrap();
++        pkg_config::find_library("libpulse").unwrap();
++        pkg_config::find_library("jack").unwrap();
++    }
++}
+diff --git a/media/cubeb-rs/cubeb-api/libcubeb-sys/lib.rs b/media/cubeb-rs/cubeb-api/libcubeb-sys/lib.rs
+new file mode 100644
+index 0000000..c8550e3
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-api/libcubeb-sys/lib.rs
+@@ -0,0 +1,104 @@
++#![allow(non_camel_case_types)]
++
++extern crate cubeb_core;
++
++use cubeb_core::ffi::{cubeb, cubeb_channel_layout, cubeb_data_callback,
++                      cubeb_device, cubeb_device_changed_callback,
++                      cubeb_device_collection,
++                      cubeb_device_collection_changed_callback, cubeb_device_type,
++                      cubeb_devid, cubeb_log_callback, cubeb_log_level,
++                      cubeb_state_callback, cubeb_stream, cubeb_stream_params};
++use std::os::raw::{c_char, c_float, c_int, c_uint, c_void};
++
++extern "C" {
++    pub fn cubeb_init(
++        context: *mut *mut cubeb,
++        context_name: *const c_char,
++        backend_name: *const c_char,
++    ) -> c_int;
++    pub fn cubeb_get_backend_id(context: *mut cubeb) -> *const c_char;
++    pub fn cubeb_get_max_channel_count(
++        context: *mut cubeb,
++        max_channels: *mut c_uint,
++    ) -> c_int;
++    pub fn cubeb_get_min_latency(
++        context: *mut cubeb,
++        params: *const cubeb_stream_params,
++        latency_frames: *mut c_uint,
++    ) -> c_int;
++    pub fn cubeb_get_preferred_sample_rate(
++        context: *mut cubeb,
++        rate: *mut c_uint,
++    ) -> c_int;
++    pub fn cubeb_get_preferred_channel_layout(
++        context: *mut cubeb,
++        layout: *mut cubeb_channel_layout,
++    ) -> c_int;
++    pub fn cubeb_destroy(context: *mut cubeb);
++    pub fn cubeb_stream_init(
++        context: *mut cubeb,
++        stream: *mut *mut cubeb_stream,
++        stream_name: *const c_char,
++        input_device: cubeb_devid,
++        input_stream_params: *const cubeb_stream_params,
++        output_device: cubeb_devid,
++        output_stream_params: *const cubeb_stream_params,
++        latency_frames: c_uint,
++        data_callback: cubeb_data_callback,
++        state_callback: cubeb_state_callback,
++        user_ptr: *mut c_void,
++    ) -> c_int;
++    pub fn cubeb_stream_destroy(stream: *mut cubeb_stream);
++    pub fn cubeb_stream_start(stream: *mut cubeb_stream) -> c_int;
++    pub fn cubeb_stream_stop(stream: *mut cubeb_stream) -> c_int;
++    pub fn cubeb_stream_get_position(
++        stream: *mut cubeb_stream,
++        position: *mut u64,
++    ) -> c_int;
++    pub fn cubeb_stream_get_latency(
++        stream: *mut cubeb_stream,
++        latency: *mut c_uint,
++    ) -> c_int;
++    pub fn cubeb_stream_set_volume(
++        stream: *mut cubeb_stream,
++        volume: c_float,
++    ) -> c_int;
++    pub fn cubeb_stream_set_panning(
++        stream: *mut cubeb_stream,
++        panning: c_float,
++    ) -> c_int;
++    pub fn cubeb_stream_get_current_device(
++        stream: *mut cubeb_stream,
++        device: *mut *const cubeb_device,
++    ) -> c_int;
++    pub fn cubeb_stream_device_destroy(
++        stream: *mut cubeb_stream,
++        devices: *const cubeb_device,
++    ) -> c_int;
++    pub fn cubeb_stream_register_device_changed_callback(
++        stream: *mut cubeb_stream,
++        device_changed_callback: cubeb_device_changed_callback,
++    ) -> c_int;
++    pub fn cubeb_enumerate_devices(
++        context: *mut cubeb,
++        devtype: cubeb_device_type,
++        collection: *mut cubeb_device_collection,
++    ) -> c_int;
++    pub fn cubeb_device_collection_destroy(
++        context: *mut cubeb,
++        collection: *mut cubeb_device_collection,
++    ) -> c_int;
++    pub fn cubeb_register_device_collection_changed(
++        context: *mut cubeb,
++        devtype: cubeb_device_type,
++        callback: cubeb_device_collection_changed_callback,
++        user_ptr: *mut c_void,
++    ) -> c_int;
++    pub fn cubeb_set_log_callback(
++        log_level: cubeb_log_level,
++        log_callback: cubeb_log_callback,
++    ) -> c_int;
++
++    pub static g_cubeb_log_level: cubeb_log_level;
++    pub static g_cubeb_log_callback: Option<cubeb_log_callback>;
++}
+diff --git a/media/cubeb-rs/cubeb-api/src/call.rs b/media/cubeb-rs/cubeb-api/src/call.rs
+new file mode 100644
+index 0000000..3096e4e
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-api/src/call.rs
+@@ -0,0 +1,145 @@
++use Error;
++use std::os::raw::c_int;
++
++macro_rules! call {
++    (sys::$p:ident ($($e:expr),*)) => (
++        sys::$p($(::call::convert(&$e)),*)
++    )
++}
++
++macro_rules! try_call {
++    (sys::$p:ident ($($e:expr),*)) => ({
++        match ::call::try(sys::$p($(::call::convert(&$e)),*)) {
++            Ok(o) => o,
++            Err(e) => { return Err(e) }
++        }
++    })
++}
++
++pub fn try(ret: c_int) -> Result<c_int, Error> {
++    match ret {
++        n if n < 0 => Err(unsafe { Error::from_raw(n) }),
++        n => Ok(n),
++    }
++}
++
++#[doc(hidden)]
++pub trait Convert<T> {
++    fn convert(&self) -> T;
++}
++
++pub fn convert<T, U>(u: &U) -> T
++where
++    U: Convert<T>,
++{
++    u.convert()
++}
++
++mod impls {
++    use call::Convert;
++    use cubeb_core::{ChannelLayout, LogLevel, SampleFormat, State};
++    use ffi;
++    use std::ffi::CString;
++    use std::os::raw::c_char;
++    use std::ptr;
++
++    impl<T: Copy> Convert<T> for T {
++        fn convert(&self) -> T {
++            *self
++        }
++    }
++
++    impl<'a, T> Convert<*const T> for &'a T {
++        fn convert(&self) -> *const T {
++            &**self as *const _
++        }
++    }
++
++    impl<'a, T> Convert<*mut T> for &'a mut T {
++        fn convert(&self) -> *mut T {
++            &**self as *const _ as *mut _
++        }
++    }
++
++    impl<T> Convert<*const T> for *mut T {
++        fn convert(&self) -> *const T {
++            *self as *const T
++        }
++    }
++
++    impl Convert<*const c_char> for CString {
++        fn convert(&self) -> *const c_char {
++            self.as_ptr()
++        }
++    }
++
++    impl<T, U: Convert<*const T>> Convert<*const T> for Option<U> {
++        fn convert(&self) -> *const T {
++            self.as_ref().map(|s| s.convert()).unwrap_or(ptr::null())
++        }
++    }
++
++    impl Convert<ffi::cubeb_sample_format> for SampleFormat {
++        #[cfg_attr(feature = "cargo-clippy", allow(match_same_arms))]
++        fn convert(&self) -> ffi::cubeb_sample_format {
++            match *self {
++                SampleFormat::S16LE => ffi::CUBEB_SAMPLE_S16LE,
++                SampleFormat::S16BE => ffi::CUBEB_SAMPLE_S16BE,
++                SampleFormat::S16NE => ffi::CUBEB_SAMPLE_S16NE,
++                SampleFormat::Float32LE => ffi::CUBEB_SAMPLE_FLOAT32LE,
++                SampleFormat::Float32BE => ffi::CUBEB_SAMPLE_FLOAT32BE,
++                SampleFormat::Float32NE => ffi::CUBEB_SAMPLE_FLOAT32NE,
++            }
++        }
++    }
++
++    impl Convert<ffi::cubeb_log_level> for LogLevel {
++        fn convert(&self) -> ffi::cubeb_log_level {
++            match *self {
++                LogLevel::Disabled => ffi::CUBEB_LOG_DISABLED,
++                LogLevel::Normal => ffi::CUBEB_LOG_NORMAL,
++                LogLevel::Verbose => ffi::CUBEB_LOG_VERBOSE,
++            }
++        }
++    }
++
++
++    impl Convert<ffi::cubeb_channel_layout> for ChannelLayout {
++        fn convert(&self) -> ffi::cubeb_channel_layout {
++            match *self {
++                ChannelLayout::Undefined => ffi::CUBEB_LAYOUT_UNDEFINED,
++                ChannelLayout::DualMono => ffi::CUBEB_LAYOUT_DUAL_MONO,
++                ChannelLayout::DualMonoLfe => ffi::CUBEB_LAYOUT_DUAL_MONO_LFE,
++                ChannelLayout::Mono => ffi::CUBEB_LAYOUT_MONO,
++                ChannelLayout::MonoLfe => ffi::CUBEB_LAYOUT_MONO_LFE,
++                ChannelLayout::Stereo => ffi::CUBEB_LAYOUT_STEREO,
++                ChannelLayout::StereoLfe => ffi::CUBEB_LAYOUT_STEREO_LFE,
++                ChannelLayout::Layout3F => ffi::CUBEB_LAYOUT_3F,
++                ChannelLayout::Layout3FLfe => ffi::CUBEB_LAYOUT_3F_LFE,
++                ChannelLayout::Layout2F1 => ffi::CUBEB_LAYOUT_2F1,
++                ChannelLayout::Layout2F1Lfe => ffi::CUBEB_LAYOUT_2F1_LFE,
++                ChannelLayout::Layout3F1 => ffi::CUBEB_LAYOUT_3F1,
++                ChannelLayout::Layout3F1Lfe => ffi::CUBEB_LAYOUT_3F1_LFE,
++                ChannelLayout::Layout2F2 => ffi::CUBEB_LAYOUT_2F2,
++                ChannelLayout::Layout2F2Lfe => ffi::CUBEB_LAYOUT_2F2_LFE,
++                ChannelLayout::Layout3F2 => ffi::CUBEB_LAYOUT_3F2,
++                ChannelLayout::Layout3F2Lfe => ffi::CUBEB_LAYOUT_3F2_LFE,
++                ChannelLayout::Layout3F3RLfe => ffi::CUBEB_LAYOUT_3F3R_LFE,
++                ChannelLayout::Layout3F4Lfe => ffi::CUBEB_LAYOUT_3F4_LFE,
++            }
++        }
++    }
++
++    impl Convert<ffi::cubeb_state> for State {
++        fn convert(&self) -> ffi::cubeb_state {
++            {
++                match *self {
++                    State::Started => ffi::CUBEB_STATE_STARTED,
++                    State::Stopped => ffi::CUBEB_STATE_STOPPED,
++                    State::Drained => ffi::CUBEB_STATE_DRAINED,
++                    State::Error => ffi::CUBEB_STATE_ERROR,
++                }
++            }
++        }
++    }
++}
+diff --git a/media/cubeb-rs/cubeb-api/src/context.rs b/media/cubeb-rs/cubeb-api/src/context.rs
+new file mode 100644
+index 0000000..66f939a
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-api/src/context.rs
+@@ -0,0 +1,148 @@
++use {ChannelLayout, DeviceCollection, DeviceType, Result, Stream, StreamInitOptions, StreamParams};
++use {ffi, sys};
++use Binding;
++
++use dev_coll;
++use std::{ptr, str};
++use std::ffi::CString;
++use stream::{StreamCallback, stream_init};
++use util::{opt_bytes, opt_cstr};
++
++pub struct Context {
++    raw: *mut ffi::cubeb
++}
++
++impl Context {
++    pub fn init(context_name: &str, backend_name: Option<&str>) -> Result<Context> {
++        let mut context: *mut ffi::cubeb = ptr::null_mut();
++        let context_name = try!(CString::new(context_name));
++        let backend_name = try!(opt_cstr(backend_name));
++        unsafe {
++            try_call!(sys::cubeb_init(&mut context, context_name, backend_name));
++            Ok(Binding::from_raw(context))
++        }
++    }
++
++    pub fn backend_id(&self) -> &str {
++        str::from_utf8(self.backend_id_bytes()).unwrap()
++    }
++    pub fn backend_id_bytes(&self) -> &[u8] {
++        unsafe { opt_bytes(self, call!(sys::cubeb_get_backend_id(self.raw))).unwrap() }
++    }
++
++    pub fn max_channel_count(&self) -> Result<u32> {
++        let mut channel_count = 0u32;
++        unsafe {
++            try_call!(sys::cubeb_get_max_channel_count(
++                self.raw,
++                &mut channel_count
++            ));
++        }
++        Ok(channel_count)
++    }
++
++    pub fn min_latency(&self, params: &StreamParams) -> Result<u32> {
++        let mut latency = 0u32;
++        unsafe {
++            try_call!(sys::cubeb_get_min_latency(
++                self.raw,
++                params.raw(),
++                &mut latency
++            ));
++        }
++        Ok(latency)
++    }
++
++    pub fn preferred_sample_rate(&self) -> Result<u32> {
++        let mut rate = 0u32;
++        unsafe {
++            try_call!(sys::cubeb_get_preferred_sample_rate(self.raw, &mut rate));
++        }
++        Ok(rate)
++    }
++
++    pub fn preferred_channel_layout(&self) -> Result<ChannelLayout> {
++        let mut layout: ffi::cubeb_channel_layout = ffi::CUBEB_LAYOUT_UNDEFINED;
++        unsafe {
++            try_call!(sys::cubeb_get_preferred_channel_layout(
++                self.raw,
++                &mut layout
++            ));
++        }
++        macro_rules! check( ($($raw:ident => $real:ident),*) => (
++            $(if layout == ffi::$raw {
++                Ok(ChannelLayout::$real)
++            }) else *
++            else {
++                panic!("unknown channel layout: {}", layout)
++            }
++        ));
++
++        check!(
++            CUBEB_LAYOUT_UNDEFINED => Undefined,
++            CUBEB_LAYOUT_DUAL_MONO => DualMono,
++            CUBEB_LAYOUT_DUAL_MONO_LFE => DualMonoLfe,
++            CUBEB_LAYOUT_MONO => Mono,
++            CUBEB_LAYOUT_MONO_LFE => MonoLfe,
++            CUBEB_LAYOUT_STEREO => Stereo,
++            CUBEB_LAYOUT_STEREO_LFE => StereoLfe,
++            CUBEB_LAYOUT_3F => Layout3F,
++            CUBEB_LAYOUT_3F_LFE => Layout3FLfe,
++            CUBEB_LAYOUT_2F1 => Layout2F1,
++            CUBEB_LAYOUT_2F1_LFE => Layout2F1Lfe,
++            CUBEB_LAYOUT_3F1 => Layout3F1,
++            CUBEB_LAYOUT_3F1_LFE => Layout3F1Lfe,
++            CUBEB_LAYOUT_2F2 => Layout2F2,
++            CUBEB_LAYOUT_2F2_LFE => Layout2F2Lfe,
++            CUBEB_LAYOUT_3F2 => Layout3F2,
++            CUBEB_LAYOUT_3F2_LFE => Layout3F2Lfe,
++            CUBEB_LAYOUT_3F3R_LFE => Layout3F3RLfe,
++            CUBEB_LAYOUT_3F4_LFE => Layout3F4Lfe
++        )
++    }
++
++    /// Initialize a stream associated with the supplied application context.
++    pub fn stream_init<'ctx, CB>(&'ctx self, opts: &StreamInitOptions, cb: CB) -> Result<Stream<'ctx, CB>>
++    where
++        CB: StreamCallback,
++    {
++        stream_init(self, opts, cb)
++    }
++
++    pub fn enumerate_devices(&self, devtype: DeviceType) -> Result<DeviceCollection> {
++        dev_coll::enumerate(self, devtype)
++    }
++
++    /*
++    pub fn register_device_collection_changed(
++        &self,
++        devtype: DeviceType,
++        callback: &mut DeviceCollectionChangedCb,
++        user_ptr: *mut c_void,
++    ) -> Result<()> {
++        unsafe {
++            try_call!(sys::cubeb_register_device_collection_changed(self.raw, devtype, cb));
++        }
++
++        Ok(())
++    }
++*/
++}
++
++impl Binding for Context {
++    type Raw = *mut ffi::cubeb;
++    unsafe fn from_raw(raw: *mut ffi::cubeb) -> Self {
++        Self {
++            raw: raw
++        }
++    }
++    fn raw(&self) -> Self::Raw {
++        self.raw
++    }
++}
++
++impl Drop for Context {
++    fn drop(&mut self) {
++        unsafe { sys::cubeb_destroy(self.raw) }
++    }
++}
+diff --git a/media/cubeb-rs/cubeb-api/src/dev_coll.rs b/media/cubeb-rs/cubeb-api/src/dev_coll.rs
+new file mode 100644
+index 0000000..3576d7c
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-api/src/dev_coll.rs
+@@ -0,0 +1,61 @@
++//! Bindings to libcubeb's raw `cubeb_device_collection` type
++
++use {Binding, Context};
++use cubeb_core::{DeviceInfo, DeviceType, Result};
++use ffi;
++use std::{ptr, slice};
++use std::ops::Deref;
++use sys;
++
++/// A collection of `DeviceInfo` used by libcubeb
++pub struct DeviceCollection<'coll, 'ctx> {
++    coll: &'coll [DeviceInfo],
++    ctx: &'ctx Context
++}
++
++impl<'coll, 'ctx> DeviceCollection<'coll, 'ctx> {
++    fn new(ctx: &'ctx Context, devtype: DeviceType) -> Result<DeviceCollection> {
++        let mut coll = ffi::cubeb_device_collection {
++            device: ptr::null(),
++            count: 0
++        };
++        let devices = unsafe {
++            try_call!(sys::cubeb_enumerate_devices(
++                ctx.raw(),
++                devtype.bits(),
++                &mut coll
++            ));
++            slice::from_raw_parts(coll.device as *const _, coll.count)
++        };
++        Ok(DeviceCollection {
++            coll: devices,
++            ctx: ctx
++        })
++    }
++}
++
++impl<'coll, 'ctx> Deref for DeviceCollection<'coll, 'ctx> {
++    type Target = [DeviceInfo];
++    fn deref(&self) -> &[DeviceInfo] {
++        self.coll
++    }
++}
++
++impl<'coll, 'ctx> Drop for DeviceCollection<'coll, 'ctx> {
++    fn drop(&mut self) {
++        let mut coll = ffi::cubeb_device_collection {
++            device: self.coll.as_ptr() as *const _,
++            count: self.coll.len()
++        };
++        unsafe {
++            call!(sys::cubeb_device_collection_destroy(
++                self.ctx.raw(),
++                &mut coll
++            ));
++        }
++    }
++}
++
++pub fn enumerate(ctx: &Context, devtype: DeviceType) -> Result<DeviceCollection> {
++    DeviceCollection::new(ctx, devtype)
++}
+diff --git a/media/cubeb-rs/cubeb-api/src/devices.rs b/media/cubeb-rs/cubeb-api/src/devices.rs
+new file mode 100644
+index 0000000..cd779bb
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-api/src/devices.rs
+@@ -0,0 +1,48 @@
++use ffi;
++use std::marker;
++use std::str;
++use util::opt_bytes;
++
++/// Audio device description
++pub struct Device<'a> {
++    raw: *const ffi::cubeb_device,
++    _marker: marker::PhantomData<&'a ffi::cubeb_device>
++}
++
++impl<'a> Device<'a> {
++    /// Gets the output device name.
++    ///
++    /// May return `None` if there is no output device.
++    pub fn output_name(&self) -> Option<&str> {
++        self.output_name_bytes().map(|b| str::from_utf8(b).unwrap())
++    }
++
++    fn output_name_bytes(&self) -> Option<&[u8]> {
++        unsafe { opt_bytes(self, (*self.raw).output_name) }
++    }
++
++    /// Gets the input device name.
++    ///
++    /// May return `None` if there is no input device.
++    pub fn input_name(&self) -> Option<&str> {
++        self.input_name_bytes().map(|b| str::from_utf8(b).unwrap())
++    }
++
++    fn input_name_bytes(&self) -> Option<&[u8]> {
++        unsafe { opt_bytes(self, (*self.raw).input_name) }
++    }
++}
++
++impl<'a> Binding for Device<'a> {
++    type Raw = *const ffi::cubeb_device;
++
++    unsafe fn from_raw(raw: *const ffi::cubeb_device) -> Device<'a> {
++        Device {
++            raw: raw,
++            _marker: marker::PhantomData
++        }
++    }
++    fn raw(&self) -> *const ffi::cubeb_device {
++        self.raw
++    }
++}
+diff --git a/media/cubeb-rs/cubeb-api/src/frame.rs b/media/cubeb-rs/cubeb-api/src/frame.rs
+new file mode 100644
+index 0000000..dd38b21
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-api/src/frame.rs
+@@ -0,0 +1,37 @@
++//! Frame utilities
++
++use ChannelLayout;
++
++/// A `Frame` is a collection of samples which have a a specific
++/// layout represented by `ChannelLayout`
++pub trait Frame {
++    fn layout() -> ChannelLayout;
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++/// A monaural frame.
++pub struct MonoFrame<T> {
++    /// Mono channel
++    pub m: T
++}
++
++impl<T> Frame for MonoFrame<T> {
++    fn layout() -> ChannelLayout {
++        ChannelLayout::Mono
++    }
++}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++/// A stereo frame.
++pub struct StereoFrame<T> {
++    /// Left channel
++    pub l: T,
++    /// Right channel
++    pub r: T
++}
++
++impl<T> Frame for StereoFrame<T> {
++    fn layout() -> ChannelLayout {
++        ChannelLayout::Stereo
++    }
++}
+diff --git a/media/cubeb-rs/cubeb-api/src/lib.rs b/media/cubeb-rs/cubeb-api/src/lib.rs
+new file mode 100644
+index 0000000..a79f441
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-api/src/lib.rs
+@@ -0,0 +1,46 @@
++//! # libcubeb bindings for rust
++//!
++//! This library contains bindings to the [cubeb][1] C library which
++//! is used to interact with system audio.  The library itself is a
++//! work in progress and is likely lacking documentation and test.
++//!
++//! [1]: https://github.com/kinetiknz/cubeb/
++//!
++//! The cubeb-rs library exposes the user API of libcubeb.  It doesn't
++//! expose the internal interfaces, so isn't suitable for extending
++//! libcubeb. See [cubeb-pulse-rs][2] for an example of extending
++//! libcubeb via implementing a cubeb backend in rust.
++
++extern crate cubeb_core;
++extern crate libcubeb_sys as sys;
++
++#[macro_use]
++mod call;
++mod context;
++mod dev_coll;
++mod frame;
++mod log;
++mod stream;
++mod util;
++
++pub use context::Context;
++// Re-export cubeb_core types
++pub use cubeb_core::{ChannelLayout, Device, DeviceFormat, DeviceId, DeviceInfo,
++                     DeviceState, DeviceType, Error, ErrorCode, LogLevel, Result,
++                     SampleFormat, State, StreamParams};
++pub use cubeb_core::{DEVICE_FMT_F32BE, DEVICE_FMT_F32LE, DEVICE_FMT_S16BE,
++                     DEVICE_FMT_S16LE};
++pub use cubeb_core::{DEVICE_PREF_ALL, DEVICE_PREF_MULTIMEDIA, DEVICE_PREF_NONE,
++                     DEVICE_PREF_NOTIFICATION, DEVICE_PREF_VOICE};
++pub use cubeb_core::{DEVICE_TYPE_INPUT, DEVICE_TYPE_OUTPUT, DEVICE_TYPE_UNKNOWN};
++
++use cubeb_core::binding::Binding;
++use cubeb_core::ffi;
++pub use dev_coll::DeviceCollection;
++pub use frame::{Frame, MonoFrame, StereoFrame};
++pub use log::*;
++pub use stream::{SampleType, Stream, StreamCallback, StreamInitOptions,
++                 StreamInitOptionsBuilder, StreamParamsBuilder};
++
++pub type DeviceChangedCb<'a> = FnMut() + 'a;
++pub type DeviceCollectionChangedCb<'a> = FnMut(Context) + 'a;
+diff --git a/media/cubeb-rs/cubeb-api/src/log.rs b/media/cubeb-rs/cubeb-api/src/log.rs
+new file mode 100644
+index 0000000..bc933ab
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-api/src/log.rs
+@@ -0,0 +1,71 @@
++// Copyright © 2017 Mozilla Foundation
++//
++// This program is made available under an ISC-style license.  See the
++// accompanying file LICENSE for details.
++
++use LogLevel;
++use sys;
++
++#[macro_export]
++macro_rules! log_internal {
++    ($level: expr, $msg: expr) => {
++        #[allow(unused_unsafe)]
++        unsafe {
++            if $level as i32 <= $crate::sys::g_cubeb_log_level {
++                if let Some(log_callback) = $crate::sys::g_cubeb_log_callback {
++                    let cstr = ::std::ffi::CString::new(concat!("%s:%d: ", $msg, "\n")).unwrap();
++                    log_callback(cstr.as_ptr(), file!(), line!());
++                }
++            }
++        }
++    };
++    ($level: expr, $fmt: expr, $($arg:tt)+) => {
++        #[allow(unused_unsafe)]
++        unsafe {
++            if $level as i32 <= $crate::sys::g_cubeb_log_level {
++                if let Some(log_callback) = $crate::sys::g_cubeb_log_callback {
++                    let cstr = ::std::ffi::CString::new(concat!("%s:%d: ", $fmt, "\n")).unwrap();
++                    log_callback(cstr.as_ptr(), file!(), line!(), $($arg)+);
++                }
++            }
++        }
++    }
++}
++
++#[macro_export]
++macro_rules! logv {
++    ($msg: expr) => (log_internal!($crate::LogLevel::Verbose, $msg));
++    ($fmt: expr, $($arg: tt)+) => (log_internal!($crate::LogLevel::Verbose, $fmt, $($arg)*));
++}
++
++#[macro_export]
++macro_rules! log {
++    ($msg: expr) => (log_internal!($crate::LogLevel::Normal, $msg));
++    ($fmt: expr, $($arg: tt)+) => (log_internal!($crate::LogLevel::Normal, $fmt, $($arg)*));
++}
++
++pub fn log_enabled() -> bool {
++    unsafe { sys::g_cubeb_log_level != LogLevel::Disabled as _ }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++#[test]
++fn test_normal_logging() {
++    log!("This is log at normal level");
++    log!("Formatted log %d", 1);
++}
++
++#[test]
++fn test_verbose_logging() {
++    logv!("This is a log at verbose level");
++    logv!("Formatted log %d", 1);
++}
++
++#[test]
++fn test_logging_disabled_by_default() {
++    assert!(!log_enabled());
++}
++}
+diff --git a/media/cubeb-rs/cubeb-api/src/stream.rs b/media/cubeb-rs/cubeb-api/src/stream.rs
+new file mode 100644
+index 0000000..978960c
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-api/src/stream.rs
+@@ -0,0 +1,636 @@
++//! Stream Functions
++//!
++//! # Example
++//! ```no_run
++//! extern crate cubeb;
++//! use std::time::Duration;
++//! use std::thread;
++//!
++//! struct SquareWave {
++//!     phase_inc: f32,
++//!     phase: f32,
++//!     volume: f32
++//! }
++//!
++//! impl cubeb::StreamCallback for SquareWave {
++//!    type Frame = cubeb::MonoFrame<f32>;
++//!
++//!    fn data_callback(&mut self, _: &[cubeb::MonoFrame<f32>], output: &mut [cubeb::MonoFrame<f32>]) -> isize {
++//!        // Generate a square wave
++//!        for x in output.iter_mut() {
++//!            x.m = if self.phase < 0.5 {
++//!                self.volume
++//!            } else {
++//!                -self.volume
++//!            };
++//!            self.phase = (self.phase + self.phase_inc) % 1.0;
++//!        }
++//!
++//!        output.len() as isize
++//!    }
++//!
++//!    fn state_callback(&mut self, state: cubeb::State) { println!("stream {:?}", state); }
++//! }
++//!
++//! fn main() {
++//!     let ctx = cubeb::Context::init("Cubeb tone example", None).unwrap();
++//!
++//!     let params = cubeb::StreamParamsBuilder::new()
++//!         .format(cubeb::SampleFormat::Float32LE)
++//!         .rate(44100)
++//!         .channels(1)
++//!         .layout(cubeb::ChannelLayout::Mono)
++//!         .take();
++//!
++//!     let stream_init_opts = cubeb::StreamInitOptionsBuilder::new()
++//!         .stream_name("Cubeb Square Wave")
++//!         .output_stream_param(&params)
++//!         .latency(4096)
++//!         .take();
++//!
++//!     let stream = ctx.stream_init(
++//!         &stream_init_opts,
++//!         SquareWave {
++//!             phase_inc: 440.0 / 44100.0,
++//!             phase: 0.0,
++//!             volume: 0.25
++//!         }).unwrap();
++//!
++//!     // Start playback
++//!     stream.start().unwrap();
++//!
++//!     // Play for 1/2 second
++//!     thread::sleep(Duration::from_millis(500));
++//!
++//!     // Shutdown
++//!     stream.stop().unwrap();
++//! }
++//! ```
++
++use {Binding, ChannelLayout, Context, Device, DeviceId, Error, Result,
++     SampleFormat, State, StreamParams};
++use ffi;
++use std::{marker, ptr, str};
++use std::ffi::CString;
++use std::os::raw::{c_long, c_void};
++use sys;
++use util::IntoCString;
++
++/// An extension trait which allows the implementation of converting
++/// void* buffers from libcubeb-sys into rust slices of the appropriate
++/// type.
++pub trait SampleType: Send + Copy {
++    /// Type of the sample
++    fn format() -> SampleFormat;
++    /// Map f32 in range [-1,1] to sample type
++    fn from_float(f32) -> Self;
++}
++
++impl SampleType for i16 {
++    fn format() -> SampleFormat {
++        SampleFormat::S16NE
++    }
++    fn from_float(x: f32) -> i16 {
++        (x * i16::max_value() as f32) as i16
++    }
++}
++
++impl SampleType for f32 {
++    fn format() -> SampleFormat {
++        SampleFormat::Float32NE
++    }
++    fn from_float(x: f32) -> f32 {
++        x
++    }
++}
++
++pub trait StreamCallback: Send + 'static
++{
++    type Frame;
++
++    // This should return a Result<usize,Error>
++    fn data_callback(&mut self, &[Self::Frame], &mut [Self::Frame]) -> isize;
++    fn state_callback(&mut self, state: State);
++}
++
++///
++pub struct StreamParamsBuilder {
++    format: SampleFormat,
++    rate: u32,
++    channels: u32,
++    layout: ChannelLayout
++}
++
++impl Default for StreamParamsBuilder {
++    fn default() -> Self {
++        Self::new()
++    }
++}
++
++impl StreamParamsBuilder {
++    pub fn new() -> Self {
++        Self {
++            format: SampleFormat::S16NE,
++            rate: 0,
++            channels: 0,
++            layout: ChannelLayout::Undefined
++        }
++    }
++
++    pub fn format(&mut self, format: SampleFormat) -> &mut Self {
++        self.format = format;
++        self
++    }
++
++    pub fn rate(&mut self, rate: u32) -> &mut Self {
++        self.rate = rate;
++        self
++    }
++
++    pub fn channels(&mut self, channels: u32) -> &mut Self {
++        self.channels = channels;
++        self
++    }
++
++    pub fn layout(&mut self, layout: ChannelLayout) -> &mut Self {
++        self.layout = layout;
++        self
++    }
++
++    pub fn take(&self) -> StreamParams {
++        // Convert native endian types to matching format
++        let raw_sample_format = match self.format {
++            SampleFormat::S16LE => ffi::CUBEB_SAMPLE_S16LE,
++            SampleFormat::S16BE => ffi::CUBEB_SAMPLE_S16BE,
++            SampleFormat::S16NE => ffi::CUBEB_SAMPLE_S16NE,
++            SampleFormat::Float32LE => ffi::CUBEB_SAMPLE_FLOAT32LE,
++            SampleFormat::Float32BE => ffi::CUBEB_SAMPLE_FLOAT32BE,
++            SampleFormat::Float32NE => ffi::CUBEB_SAMPLE_FLOAT32NE,
++        };
++        unsafe {
++            Binding::from_raw(&ffi::cubeb_stream_params {
++                format: raw_sample_format,
++                rate: self.rate,
++                channels: self.channels,
++                layout: self.layout as ffi::cubeb_channel_layout
++            } as *const _)
++        }
++    }
++}
++
++///
++pub struct Stream<'ctx, CB>
++where
++    CB: StreamCallback,
++{
++    raw: *mut ffi::cubeb_stream,
++    cbs: Box<CB>,
++    _marker: marker::PhantomData<&'ctx Context>
++}
++
++impl<'ctx, CB> Stream<'ctx, CB>
++where
++    CB: StreamCallback,
++{
++    fn init(context: &'ctx Context, opts: &StreamInitOptions, cb: CB) -> Result<Stream<'ctx, CB>> {
++        let mut stream: *mut ffi::cubeb_stream = ptr::null_mut();
++
++        let cbs = Box::new(cb);
++
++        unsafe {
++            let input_stream_params = opts.input_stream_params
++                .as_ref()
++                .map(|s| s.raw())
++                .unwrap_or(ptr::null());
++
++            let output_stream_params = opts.output_stream_params
++                .as_ref()
++                .map(|s| s.raw())
++                .unwrap_or(ptr::null());
++
++            let user_ptr: *mut c_void = &*cbs as *const _ as *mut _;
++
++            try_call!(sys::cubeb_stream_init(
++                context.raw(),
++                &mut stream,
++                opts.stream_name,
++                opts.input_device.raw(),
++                input_stream_params,
++                opts.output_device.raw(),
++                output_stream_params,
++                opts.latency_frames,
++                Stream::<CB>::data_cb_c,
++                Stream::<CB>::state_cb_c,
++                user_ptr
++            ));
++        }
++
++        Ok(Stream {
++            raw: stream,
++            cbs: cbs,
++            _marker: marker::PhantomData
++        })
++    }
++
++    // start playback.
++    pub fn start(&self) -> Result<()> {
++        unsafe {
++            try_call!(sys::cubeb_stream_start(self.raw));
++        }
++        Ok(())
++    }
++
++    // Stop playback.
++    pub fn stop(&self) -> Result<()> {
++        unsafe {
++            try_call!(sys::cubeb_stream_stop(self.raw));
++        }
++        Ok(())
++    }
++
++    // Get the current stream playback position.
++    pub fn position(&self) -> Result<u64> {
++        let mut position: u64 = 0;
++        unsafe {
++            try_call!(sys::cubeb_stream_get_position(self.raw, &mut position));
++        }
++        Ok(position)
++    }
++
++    pub fn latency(&self) -> Result<u32> {
++        let mut latency: u32 = 0;
++        unsafe {
++            try_call!(sys::cubeb_stream_get_latency(self.raw, &mut latency));
++        }
++        Ok(latency)
++    }
++
++    pub fn set_volume(&self, volume: f32) -> Result<()> {
++        unsafe {
++            try_call!(sys::cubeb_stream_set_volume(self.raw, volume));
++        }
++        Ok(())
++    }
++
++    pub fn set_panning(&self, panning: f32) -> Result<()> {
++        unsafe {
++            try_call!(sys::cubeb_stream_set_panning(self.raw, panning));
++        }
++        Ok(())
++    }
++
++    pub fn current_device(&self) -> Result<Device> {
++        let mut device_ptr: *const ffi::cubeb_device = ptr::null();
++        unsafe {
++            try_call!(sys::cubeb_stream_get_current_device(
++                self.raw,
++                &mut device_ptr
++            ));
++            Binding::from_raw_opt(device_ptr).ok_or(Error::from_raw(ffi::CUBEB_ERROR))
++        }
++    }
++
++    pub fn destroy_device(&self, device: Device) -> Result<()> {
++        unsafe {
++            try_call!(sys::cubeb_stream_device_destroy(self.raw, device.raw()));
++        }
++        Ok(())
++    }
++
++    /*
++    pub fn register_device_changed_callback(&self, device_changed_cb: &mut DeviceChangedCb) -> Result<(), Error> {
++        unsafe { try_call!(sys::cubeb_stream_register_device_changed_callback(self.raw, ...)); }
++        Ok(())
++    }
++*/
++
++    // C callable callbacks
++    extern "C" fn data_cb_c(
++        _: *mut ffi::cubeb_stream,
++        user_ptr: *mut c_void,
++        input_buffer: *const c_void,
++        output_buffer: *mut c_void,
++        nframes: c_long,
++    ) -> c_long {
++        use std::slice::{from_raw_parts, from_raw_parts_mut};
++
++        unsafe {
++            let cbs = &mut *(user_ptr as *mut CB);
++            let input: &[CB::Frame] = if input_buffer.is_null() {
++                &[]
++            } else {
++                from_raw_parts(input_buffer as *const _, nframes as usize)
++            };
++            let mut output: &mut [CB::Frame] = if output_buffer.is_null() {
++                &mut []
++            } else {
++                from_raw_parts_mut(output_buffer as *mut _, nframes as usize)
++            };
++            cbs.data_callback(input, output) as c_long
++        }
++    }
++
++    extern "C" fn state_cb_c(_: *mut ffi::cubeb_stream, user_ptr: *mut c_void, state: ffi::cubeb_state) {
++        let state = match state {
++            ffi::CUBEB_STATE_STARTED => State::Started,
++            ffi::CUBEB_STATE_STOPPED => State::Stopped,
++            ffi::CUBEB_STATE_DRAINED => State::Drained,
++            ffi::CUBEB_STATE_ERROR => State::Error,
++            n => panic!("unknown state: {}", n),
++        };
++        unsafe {
++            let cbs = &mut *(user_ptr as *mut CB);
++            cbs.state_callback(state);
++        };
++    }
++}
++
++impl<'ctx, CB> Drop for Stream<'ctx, CB>
++where
++    CB: StreamCallback,
++{
++    fn drop(&mut self) {
++        unsafe {
++            sys::cubeb_stream_destroy(self.raw);
++        }
++    }
++}
++
++#[doc(hidden)]
++pub fn stream_init<'ctx, CB>(context: &'ctx Context, opts: &StreamInitOptions, cb: CB) -> Result<Stream<'ctx, CB>>
++where
++    CB: StreamCallback,
++{
++    Stream::init(context, opts, cb)
++}
++
++pub struct StreamInitOptions {
++    pub stream_name: Option<CString>,
++    pub input_device: DeviceId,
++    pub input_stream_params: Option<StreamParams>,
++    pub output_device: DeviceId,
++    pub output_stream_params: Option<StreamParams>,
++    pub latency_frames: u32
++}
++
++impl StreamInitOptions {
++    pub fn new() -> Self {
++        StreamInitOptions {
++            stream_name: None,
++            input_device: DeviceId::default(),
++            input_stream_params: None,
++            output_device: DeviceId::default(),
++            output_stream_params: None,
++            latency_frames: 0
++        }
++    }
++}
++
++impl Default for StreamInitOptions {
++    fn default() -> Self {
++        Self::new()
++    }
++}
++
++/// Structure describing options about how stream should be initialized.
++pub struct StreamInitOptionsBuilder {
++    opts: StreamInitOptions
++}
++
++impl Default for StreamInitOptionsBuilder {
++    fn default() -> Self {
++        Self::new()
++    }
++}
++
++impl StreamInitOptionsBuilder {
++    pub fn new() -> Self {
++        StreamInitOptionsBuilder {
++            opts: Default::default()
++        }
++    }
++
++    pub fn stream_name<S>(&mut self, name: S) -> &mut Self
++    where
++        S: IntoCString,
++    {
++        self.opts.stream_name = Some(name.into_c_string().unwrap());
++        self
++    }
++
++    pub fn input_device(&mut self, id: DeviceId) -> &mut Self {
++        self.opts.input_device = id;
++        self
++    }
++
++    pub fn input_stream_param(&mut self, param: &StreamParams) -> &mut Self {
++        self.opts.input_stream_params = Some(*param);
++        self
++    }
++
++    pub fn output_device(&mut self, id: DeviceId) -> &mut Self {
++        self.opts.output_device = id;
++        self
++    }
++
++    pub fn output_stream_param(&mut self, param: &StreamParams) -> &mut Self {
++        self.opts.output_stream_params = Some(*param);
++        self
++    }
++
++    pub fn latency(&mut self, latency: u32) -> &mut Self {
++        self.opts.latency_frames = latency;
++        self
++    }
++
++    pub fn take(&mut self) -> StreamInitOptions {
++        use std::mem::replace;
++        replace(&mut self.opts, Default::default())
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use {StreamParamsBuilder, ffi};
++    use cubeb_core::binding::Binding;
++
++    #[test]
++    fn stream_params_builder_channels() {
++        let params = StreamParamsBuilder::new().channels(2).take();
++        assert_eq!(params.channels(), 2);
++    }
++
++    #[test]
++    fn stream_params_builder_format() {
++        macro_rules! check(
++            ($($real:ident),*) => (
++                $(let params = StreamParamsBuilder::new()
++                  .format(super::SampleFormat::$real)
++                  .take();
++                assert_eq!(params.format(), super::SampleFormat::$real);
++                )*
++            ) );
++
++        check!(S16LE, S16BE, Float32LE, Float32BE);
++    }
++
++    #[test]
++    fn stream_params_builder_format_native_endian() {
++        let params = StreamParamsBuilder::new()
++            .format(super::SampleFormat::S16NE)
++            .take();
++        assert_eq!(
++            params.format(),
++            if cfg!(target_endian = "little") {
++                super::SampleFormat::S16LE
++            } else {
++                super::SampleFormat::S16BE
++            }
++        );
++
++        let params = StreamParamsBuilder::new()
++            .format(super::SampleFormat::Float32NE)
++            .take();
++        assert_eq!(
++            params.format(),
++            if cfg!(target_endian = "little") {
++                super::SampleFormat::Float32LE
++            } else {
++                super::SampleFormat::Float32BE
++            }
++        );
++    }
++
++    #[test]
++    fn stream_params_builder_layout() {
++        macro_rules! check(
++            ($($real:ident),*) => (
++                $(let params = StreamParamsBuilder::new()
++                  .layout(super::ChannelLayout::$real)
++                  .take();
++                assert_eq!(params.layout(), super::ChannelLayout::$real);
++                )*
++            ) );
++
++        check!(
++            Undefined,
++            DualMono,
++            DualMonoLfe,
++            Mono,
++            MonoLfe,
++            Stereo,
++            StereoLfe,
++            Layout3F,
++            Layout3FLfe,
++            Layout2F1,
++            Layout2F1Lfe,
++            Layout3F1,
++            Layout3F1Lfe,
++            Layout2F2,
++            Layout2F2Lfe,
++            Layout3F2,
++            Layout3F3RLfe,
++            Layout3F4Lfe
++        );
++    }
++
++    #[test]
++    fn stream_params_builder_rate() {
++        let params = StreamParamsBuilder::new().rate(44100).take();
++        assert_eq!(params.rate(), 44100);
++    }
++
++    #[test]
++    fn stream_params_builder_to_raw_channels() {
++        let params = StreamParamsBuilder::new().channels(2).take();
++        let raw = unsafe { &*params.raw() };
++        assert_eq!(raw.channels, 2);
++    }
++
++    #[test]
++    fn stream_params_builder_to_raw_format() {
++        macro_rules! check(
++            ($($real:ident => $raw:ident),*) => (
++                $(let params = super::StreamParamsBuilder::new()
++                  .format(super::SampleFormat::$real)
++                  .take();
++                  let raw = unsafe { &*params.raw() };
++                  assert_eq!(raw.format, ffi::$raw);
++                )*
++            ) );
++
++        check!(S16LE => CUBEB_SAMPLE_S16LE,
++               S16BE => CUBEB_SAMPLE_S16BE,
++               Float32LE => CUBEB_SAMPLE_FLOAT32LE,
++               Float32BE => CUBEB_SAMPLE_FLOAT32BE);
++    }
++
++    #[test]
++    fn stream_params_builder_format_to_raw_native_endian() {
++        let params = StreamParamsBuilder::new()
++            .format(super::SampleFormat::S16NE)
++            .take();
++        let raw = unsafe { &*params.raw() };
++        assert_eq!(
++            raw.format,
++            if cfg!(target_endian = "little") {
++                ffi::CUBEB_SAMPLE_S16LE
++            } else {
++                ffi::CUBEB_SAMPLE_S16BE
++            }
++        );
++
++        let params = StreamParamsBuilder::new()
++            .format(super::SampleFormat::Float32NE)
++            .take();
++        let raw = unsafe { &*params.raw() };
++        assert_eq!(
++            raw.format,
++            if cfg!(target_endian = "little") {
++                ffi::CUBEB_SAMPLE_FLOAT32LE
++            } else {
++                ffi::CUBEB_SAMPLE_FLOAT32BE
++            }
++        );
++    }
++
++    #[test]
++    fn stream_params_builder_to_raw_layout() {
++        macro_rules! check(
++            ($($real:ident => $raw:ident),*) => (
++                $(let params = super::StreamParamsBuilder::new()
++                  .layout(super::ChannelLayout::$real)
++                  .take();
++                  let raw = unsafe { &*params.raw() };
++                  assert_eq!(raw.layout, ffi::$raw);
++                )*
++            ) );
++
++        check!(Undefined => CUBEB_LAYOUT_UNDEFINED,
++               DualMono => CUBEB_LAYOUT_DUAL_MONO,
++               DualMonoLfe => CUBEB_LAYOUT_DUAL_MONO_LFE,
++               Mono => CUBEB_LAYOUT_MONO,
++               MonoLfe => CUBEB_LAYOUT_MONO_LFE,
++               Stereo => CUBEB_LAYOUT_STEREO,
++               StereoLfe => CUBEB_LAYOUT_STEREO_LFE,
++               Layout3F => CUBEB_LAYOUT_3F,
++               Layout3FLfe => CUBEB_LAYOUT_3F_LFE,
++               Layout2F1 => CUBEB_LAYOUT_2F1,
++               Layout2F1Lfe => CUBEB_LAYOUT_2F1_LFE,
++               Layout3F1 => CUBEB_LAYOUT_3F1,
++               Layout3F1Lfe => CUBEB_LAYOUT_3F1_LFE,
++               Layout2F2 => CUBEB_LAYOUT_2F2,
++               Layout2F2Lfe => CUBEB_LAYOUT_2F2_LFE,
++               Layout3F2 => CUBEB_LAYOUT_3F2,
++               Layout3F2Lfe => CUBEB_LAYOUT_3F2_LFE,
++               Layout3F3RLfe => CUBEB_LAYOUT_3F3R_LFE,
++               Layout3F4Lfe => CUBEB_LAYOUT_3F4_LFE);
++    }
++
++    #[test]
++    fn stream_params_builder_to_raw_rate() {
++        let params = StreamParamsBuilder::new().rate(44100).take();
++        let raw = unsafe { &*params.raw() };
++        assert_eq!(raw.rate, 44100);
++    }
++}
+diff --git a/media/cubeb-rs/cubeb-api/src/util.rs b/media/cubeb-rs/cubeb-api/src/util.rs
+new file mode 100644
+index 0000000..65ca7cd
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-api/src/util.rs
+@@ -0,0 +1,72 @@
++// Copyright © 2017 Mozilla Foundation
++//
++// This program is made available under an ISC-style license.  See the
++// accompanying file LICENSE for details.
++
++use cubeb_core::Error;
++use ffi;
++use std::ffi::{CStr, CString};
++use std::os::raw::c_char;
++
++/// A class of types that can be converted to C strings.
++///
++/// These types are represented internally as byte slices and it is quite rare
++/// for them to contain an interior 0 byte.
++pub trait IntoCString {
++    /// Consume this container, converting it into a CString
++    fn into_c_string(self) -> Result<CString, Error>;
++}
++
++impl<'a, T: IntoCString + Clone> IntoCString for &'a T {
++    fn into_c_string(self) -> Result<CString, Error> {
++        self.clone().into_c_string()
++    }
++}
++
++impl<'a> IntoCString for &'a str {
++    fn into_c_string(self) -> Result<CString, Error> {
++        match CString::new(self) {
++            Ok(s) => Ok(s),
++            Err(_) => Err(unsafe { Error::from_raw(ffi::CUBEB_ERROR) }),
++        }
++    }
++}
++
++impl IntoCString for String {
++    fn into_c_string(self) -> Result<CString, Error> {
++        match CString::new(self.into_bytes()) {
++            Ok(s) => Ok(s),
++            Err(_) => Err(unsafe { Error::from_raw(ffi::CUBEB_ERROR) }),
++        }
++    }
++}
++
++impl IntoCString for CString {
++    fn into_c_string(self) -> Result<CString, Error> {
++        Ok(self)
++    }
++}
++
++impl IntoCString for Vec<u8> {
++    fn into_c_string(self) -> Result<CString, Error> {
++        Ok(try!(CString::new(self)))
++    }
++}
++
++pub unsafe fn opt_bytes<T>(_anchor: &T, c: *const c_char) -> Option<&[u8]> {
++    if c.is_null() {
++        None
++    } else {
++        Some(CStr::from_ptr(c).to_bytes())
++    }
++}
++
++pub fn opt_cstr<T>(o: Option<T>) -> Result<Option<CString>, Error>
++where
++    T: IntoCString,
++{
++    match o {
++        Some(s) => s.into_c_string().map(Some),
++        None => Ok(None),
++    }
++}
+diff --git a/media/cubeb-rs/cubeb-backend/Cargo.toml b/media/cubeb-rs/cubeb-backend/Cargo.toml
+new file mode 100644
+index 0000000..9bb84c8
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-backend/Cargo.toml
+@@ -0,0 +1,20 @@
++[package]
++
++name = "cubeb-backend"
++version = "0.2.0"
++authors = ["Dan Glastonbury <dglastonbury@mozilla.com>"]
++license = "ISC"
++keywords = ["cubeb"]
++repository = "https://github.com/djg/cubeb-rs"
++homepage = "https://github.com/djg/cubeb-rs"
++description = """
++Bindings to libcubeb internals to facilitate implementing cubeb backends in rust.
++"""
++categories = ["api-bindings"]
++
++[badges]
++travis-ci = { repository = "djg/cubeb-rs" }
++appveyor = { repository = "djg/cubeb-rs" }
++
++[dependencies]
++cubeb-core = { path = "../cubeb-core" }
+diff --git a/media/cubeb-rs/cubeb-backend/src/capi.rs b/media/cubeb-rs/cubeb-backend/src/capi.rs
+new file mode 100644
+index 0000000..da8d49b
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-backend/src/capi.rs
+@@ -0,0 +1,297 @@
++// Copyright © 2017 Mozilla Foundation
++//
++// This program is made available under an ISC-style license.  See the
++// accompanying file LICENSE for details
++
++use {Context, Stream};
++use cubeb_core::{DeviceId, DeviceType, StreamParams, ffi};
++use cubeb_core::binding::Binding;
++use std::ffi::CStr;
++use std::os::raw::{c_char, c_int, c_void};
++
++// Helper macro for unwrapping `Result` values from rust-api calls
++// while returning early with a c-api error code if the value of the
++// expression is `Err`.
++macro_rules! _try(
++    ($e:expr) => (match $e {
++        Ok(e) => e,
++        Err(e) => return e.raw_code()
++    })
++);
++
++#[macro_export]
++macro_rules! capi_new(
++    ($ctx:ident, $stm:ident) => (
++        Ops {
++            init: Some($crate::capi::capi_init::<$ctx>),
++            get_backend_id: Some($crate::capi::capi_get_backend_id::<$ctx>),
++            get_max_channel_count: Some($crate::capi::capi_get_max_channel_count::<$ctx>),
++            get_min_latency: Some($crate::capi::capi_get_min_latency::<$ctx>),
++            get_preferred_sample_rate: Some($crate::capi::capi_get_preferred_sample_rate::<$ctx>),
++            get_preferred_channel_layout: Some($crate::capi::capi_get_preferred_channel_layout::<$ctx>),
++            enumerate_devices: Some($crate::capi::capi_enumerate_devices::<$ctx>),
++            device_collection_destroy: Some($crate::capi::capi_device_collection_destroy::<$ctx>),
++            destroy: Some($crate::capi::capi_destroy::<$ctx>),
++            stream_init: Some($crate::capi::capi_stream_init::<$ctx>),
++            stream_destroy: Some($crate::capi::capi_stream_destroy::<$stm>),
++            stream_start: Some($crate::capi::capi_stream_start::<$stm>),
++            stream_stop: Some($crate::capi::capi_stream_stop::<$stm>),
++            stream_reset_default_device: Some($crate::capi::capi_stream_reset_default_device::<$stm>),
++            stream_get_position: Some($crate::capi::capi_stream_get_position::<$stm>),
++            stream_get_latency: Some($crate::capi::capi_stream_get_latency::<$stm>),
++            stream_set_volume: Some($crate::capi::capi_stream_set_volume::<$stm>),
++            stream_set_panning: Some($crate::capi::capi_stream_set_panning::<$stm>),
++            stream_get_current_device: Some($crate::capi::capi_stream_get_current_device::<$stm>),
++            stream_device_destroy: Some($crate::capi::capi_stream_device_destroy::<$stm>),
++            stream_register_device_changed_callback: None,
++            register_device_collection_changed: Some($crate::capi::capi_register_device_collection_changed::<$ctx>)
++        }));
++
++pub unsafe extern "C" fn capi_init<CTX: Context>(
++    c: *mut *mut ffi::cubeb,
++    context_name: *const c_char,
++) -> c_int {
++    let anchor = &();
++    let context_name = opt_cstr(anchor, context_name);
++    *c = _try!(CTX::init(context_name));
++    ffi::CUBEB_OK
++}
++
++pub unsafe extern "C" fn capi_get_backend_id<CTX: Context>(
++    c: *mut ffi::cubeb,
++) -> *const c_char {
++    let ctx = &mut *(c as *mut CTX);
++    ctx.backend_id().as_ptr()
++}
++
++pub unsafe extern "C" fn capi_get_max_channel_count<CTX: Context>(
++    c: *mut ffi::cubeb,
++    max_channels: *mut u32,
++) -> c_int {
++    let ctx = &mut *(c as *mut CTX);
++
++    *max_channels = _try!(ctx.max_channel_count());
++    ffi::CUBEB_OK
++}
++
++pub unsafe extern "C" fn capi_get_min_latency<CTX: Context>(
++    c: *mut ffi::cubeb,
++    param: ffi::cubeb_stream_params,
++    latency_frames: *mut u32,
++) -> c_int {
++    let ctx = &mut *(c as *mut CTX);
++    let param = StreamParams::from_raw(&param);
++    *latency_frames = _try!(ctx.min_latency(&param));
++    ffi::CUBEB_OK
++}
++
++pub unsafe extern "C" fn capi_get_preferred_sample_rate<CTX: Context>(
++    c: *mut ffi::cubeb,
++    rate: *mut u32,
++) -> c_int {
++    let ctx = &mut *(c as *mut CTX);
++
++    *rate = _try!(ctx.preferred_sample_rate());
++    ffi::CUBEB_OK
++}
++
++pub unsafe extern "C" fn capi_get_preferred_channel_layout<CTX: Context>(
++    c: *mut ffi::cubeb,
++    layout: *mut ffi::cubeb_channel_layout,
++) -> c_int {
++    let ctx = &mut *(c as *mut CTX);
++
++    *layout = _try!(ctx.preferred_channel_layout()) as _;
++    ffi::CUBEB_OK
++}
++
++pub unsafe extern "C" fn capi_enumerate_devices<CTX: Context>(
++    c: *mut ffi::cubeb,
++    devtype: ffi::cubeb_device_type,
++    collection: *mut ffi::cubeb_device_collection,
++) -> c_int {
++    let ctx = &mut *(c as *mut CTX);
++    let devtype = DeviceType::from_bits_truncate(devtype);
++    *collection = _try!(ctx.enumerate_devices(devtype));
++    ffi::CUBEB_OK
++}
++
++pub unsafe extern "C" fn capi_device_collection_destroy<CTX: Context>(
++    c: *mut ffi::cubeb,
++    collection: *mut ffi::cubeb_device_collection,
++) -> c_int {
++    let ctx = &mut *(c as *mut CTX);
++
++    ctx.device_collection_destroy(collection);
++    ffi::CUBEB_OK
++}
++
++pub unsafe extern "C" fn capi_destroy<CTX>(c: *mut ffi::cubeb) {
++    let _: Box<CTX> = Box::from_raw(c as *mut _);
++}
++
++pub unsafe extern "C" fn capi_stream_init<CTX: Context>(
++    c: *mut ffi::cubeb,
++    s: *mut *mut ffi::cubeb_stream,
++    stream_name: *const c_char,
++    input_device: ffi::cubeb_devid,
++    input_stream_params: *const ffi::cubeb_stream_params,
++    output_device: ffi::cubeb_devid,
++    output_stream_params: *const ffi::cubeb_stream_params,
++    latency_frames: u32,
++    data_callback: ffi::cubeb_data_callback,
++    state_callback: ffi::cubeb_state_callback,
++    user_ptr: *mut c_void,
++) -> c_int {
++    let ctx = &*(c as *const CTX);
++    let anchor = &(); // for lifetime of stream_name as CStr
++
++    let input_device = DeviceId::from_raw(input_device);
++    let input_stream_params = input_stream_params.as_opt_ref();
++    let output_device = DeviceId::from_raw(output_device);
++    let output_stream_params = output_stream_params.as_opt_ref();
++
++    *s = _try!(ctx.stream_init(
++        opt_cstr(anchor, stream_name),
++        input_device,
++        input_stream_params,
++        output_device,
++        output_stream_params,
++        latency_frames,
++        data_callback,
++        state_callback,
++        user_ptr
++    ));
++    ffi::CUBEB_OK
++}
++
++pub unsafe extern "C" fn capi_stream_destroy<STM>(s: *mut ffi::cubeb_stream) {
++    let _ = Box::from_raw(s as *mut STM);
++}
++
++pub unsafe extern "C" fn capi_stream_start<STM: Stream>(
++    s: *mut ffi::cubeb_stream,
++) -> c_int {
++    let stm = &*(s as *const STM);
++
++    let _ = _try!(stm.start());
++    ffi::CUBEB_OK
++}
++
++pub unsafe extern "C" fn capi_stream_stop<STM: Stream>(
++    s: *mut ffi::cubeb_stream,
++) -> c_int {
++    let stm = &*(s as *const STM);
++
++    let _ = _try!(stm.stop());
++    ffi::CUBEB_OK
++}
++
++pub unsafe extern "C" fn capi_stream_reset_default_device<STM: Stream>(
++    s: *mut ffi::cubeb_stream,
++) -> c_int {
++    let stm = &mut *(s as *mut STM);
++
++    let _ = _try!(stm.reset_default_device());
++    ffi::CUBEB_OK
++}
++
++pub unsafe extern "C" fn capi_stream_get_position<STM: Stream>(
++    s: *mut ffi::cubeb_stream,
++    position: *mut u64,
++) -> c_int {
++    let stm = &mut *(s as *mut STM);
++
++    *position = _try!(stm.position());
++    ffi::CUBEB_OK
++}
++
++pub unsafe extern "C" fn capi_stream_get_latency<STM: Stream>(
++    s: *mut ffi::cubeb_stream,
++    latency: *mut u32,
++) -> c_int {
++    let stm = &mut *(s as *mut STM);
++
++    *latency = _try!(stm.latency());
++    ffi::CUBEB_OK
++}
++
++pub unsafe extern "C" fn capi_stream_set_volume<STM: Stream>(
++    s: *mut ffi::cubeb_stream,
++    volume: f32,
++) -> c_int {
++    let stm = &mut *(s as *mut STM);
++
++    let _ = _try!(stm.set_volume(volume));
++    ffi::CUBEB_OK
++}
++
++pub unsafe extern "C" fn capi_stream_set_panning<STM: Stream>(
++    s: *mut ffi::cubeb_stream,
++    panning: f32,
++) -> c_int {
++    let stm = &mut *(s as *mut STM);
++
++    let _ = _try!(stm.set_panning(panning));
++    ffi::CUBEB_OK
++}
++
++pub unsafe extern "C" fn capi_stream_get_current_device<STM: Stream>(
++    s: *mut ffi::cubeb_stream,
++    device: *mut *const ffi::cubeb_device,
++) -> i32 {
++    let stm = &mut *(s as *mut STM);
++
++    *device = _try!(stm.current_device());
++    ffi::CUBEB_OK
++}
++
++pub unsafe extern "C" fn capi_stream_device_destroy<STM: Stream>(
++    s: *mut ffi::cubeb_stream,
++    device: *const ffi::cubeb_device,
++) -> c_int {
++    let stm = &mut *(s as *mut STM);
++    let _ = stm.device_destroy(device);
++    ffi::CUBEB_OK
++}
++
++pub unsafe extern "C" fn capi_register_device_collection_changed<CTX: Context>(
++    c: *mut ffi::cubeb,
++    devtype: ffi::cubeb_device_type,
++    collection_changed_callback: ffi::cubeb_device_collection_changed_callback,
++    user_ptr: *mut c_void,
++) -> i32 {
++    let ctx = &*(c as *const CTX);
++    let devtype = DeviceType::from_bits_truncate(devtype);
++    let _ = _try!(ctx.register_device_collection_changed(
++        devtype,
++        collection_changed_callback,
++        user_ptr
++    ));
++    ffi::CUBEB_OK
++}
++
++trait AsOptRef<'a, T: 'a> {
++    fn as_opt_ref(self) -> Option<&'a T>;
++}
++
++impl<'a, T> AsOptRef<'a, T> for *const T
++where
++    T: 'a,
++{
++    fn as_opt_ref(self) -> Option<&'a T> {
++        if self.is_null() {
++            None
++        } else {
++            Some(unsafe { &*self })
++        }
++    }
++}
++
++fn opt_cstr<'a, T: 'a>(_anchor: &'a T, ptr: *const c_char) -> Option<&'a CStr> {
++    if ptr.is_null() {
++        None
++    } else {
++        Some(unsafe { CStr::from_ptr(ptr) })
++    }
++}
+diff --git a/media/cubeb-rs/cubeb-backend/src/ffi.rs b/media/cubeb-rs/cubeb-backend/src/ffi.rs
+new file mode 100644
+index 0000000..1e79192
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-backend/src/ffi.rs
+@@ -0,0 +1,211 @@
++// Copyright © 2017 Mozilla Foundation
++//
++// This program is made available under an ISC-style license.  See the
++// accompanying file LICENSE for details.
++
++#![allow(non_camel_case_types)]
++
++use cubeb_core::ffi;
++use std::fmt::{self, Debug};
++use std::os::raw::{c_char, c_int, c_long, c_uint, c_void};
++
++macro_rules! cubeb_enum {
++    (pub enum $name:ident { $($variants:tt)* }) => {
++        pub type $name = i32;
++        cubeb_enum!(gen, $name, 0, $($variants)*);
++    };
++    (pub enum $name:ident: $t:ty { $($variants:tt)* }) => {
++        pub type $name = $t;
++        cubeb_enum!(gen, $name, 0, $($variants)*);
++    };
++    (gen, $name:ident, $val:expr, $variant:ident, $($rest:tt)*) => {
++        pub const $variant: $name = $val;
++        cubeb_enum!(gen, $name, $val+1, $($rest)*);
++    };
++    (gen, $name:ident, $val:expr, $variant:ident = $e:expr, $($rest:tt)*) => {
++        pub const $variant: $name = $e;
++        cubeb_enum!(gen, $name, $e+1, $($rest)*);
++    };
++    (gen, $name:ident, $val:expr, ) => {}
++}
++
++// cubeb_internal.h
++#[repr(C)]
++pub struct cubeb_layout_map {
++    name: *const c_char,
++    channels: c_uint,
++    layout: ffi::cubeb_channel_layout
++}
++
++#[repr(C)]
++pub struct Ops {
++    pub init: Option<
++        unsafe extern fn(context: *mut *mut ffi::cubeb,
++                         context_name: *const c_char)
++                         -> c_int>,
++    pub get_backend_id: Option<
++        unsafe extern fn(context: *mut ffi::cubeb) -> *const c_char>,
++    pub get_max_channel_count: Option<
++        unsafe extern fn(context: *mut ffi::cubeb,
++                         max_channels: *mut u32)
++                         -> c_int>,
++    pub get_min_latency: Option<
++        unsafe extern fn(context: *mut ffi::cubeb,
++                         params: ffi::cubeb_stream_params,
++                         latency_ms: *mut u32)
++                         -> c_int>,
++    pub get_preferred_sample_rate: Option<
++        unsafe extern fn(context: *mut ffi::cubeb, rate: *mut u32) -> c_int>,
++    pub get_preferred_channel_layout: Option<
++        unsafe extern fn(context: *mut ffi::cubeb,
++                         layout: *mut ffi::cubeb_channel_layout)
++                         -> c_int>,
++    pub enumerate_devices: Option<
++        unsafe extern fn(context: *mut ffi::cubeb,
++                         devtype: ffi::cubeb_device_type,
++                         collection: *mut ffi::cubeb_device_collection)
++                         -> c_int>,
++    pub device_collection_destroy: Option<
++        unsafe extern fn(context: *mut ffi::cubeb,
++                         collection: *mut ffi::cubeb_device_collection)
++                         -> c_int>,
++    pub destroy: Option<unsafe extern "C" fn(context: *mut ffi::cubeb)>,
++    pub stream_init: Option<
++        unsafe extern fn(context: *mut ffi::cubeb,
++                         stream: *mut *mut ffi::cubeb_stream,
++                         stream_name: *const c_char,
++                         input_device: ffi::cubeb_devid,
++                         input_stream_params: *const ffi::cubeb_stream_params,
++                         output_device: ffi::cubeb_devid,
++                         output_stream_params: *const ffi::cubeb_stream_params,
++                         latency: u32,
++                         data_callback: ffi::cubeb_data_callback,
++                         state_callback: ffi::cubeb_state_callback,
++                         user_ptr: *mut c_void)
++                         -> c_int>,
++    pub stream_destroy: Option<unsafe extern "C" fn(stream: *mut ffi::cubeb_stream)>,
++    pub stream_start: Option<
++        unsafe extern fn(stream: *mut ffi::cubeb_stream) -> c_int>,
++    pub stream_stop: Option<
++            unsafe extern fn(stream: *mut ffi::cubeb_stream) -> c_int>,
++    pub stream_reset_default_device: Option<
++            unsafe extern fn(stream: *mut ffi::cubeb_stream) -> c_int>,
++    pub stream_get_position: Option<
++        unsafe extern fn(stream: *mut ffi::cubeb_stream,
++                         position: *mut u64)
++                         -> c_int>,
++    pub stream_get_latency: Option<
++        unsafe extern fn(stream: *mut ffi::cubeb_stream,
++                         latency: *mut u32)
++                         -> c_int>,
++    pub stream_set_volume: Option<
++        unsafe extern fn(stream: *mut ffi::cubeb_stream, volumes: f32)
++                         -> c_int>,
++    pub stream_set_panning: Option<
++        unsafe extern fn(stream: *mut ffi::cubeb_stream, panning: f32)
++                         -> c_int>,
++    pub stream_get_current_device: Option<
++        unsafe extern fn(stream: *mut ffi::cubeb_stream,
++                         device: *mut *const ffi::cubeb_device)
++                         -> c_int>,
++    pub stream_device_destroy: Option<
++        unsafe extern fn(stream: *mut ffi::cubeb_stream,
++                         device: *const ffi::cubeb_device)
++                         -> c_int>,
++    pub stream_register_device_changed_callback: Option<
++        unsafe extern fn(stream: *mut ffi::cubeb_stream,
++                         device_changed_callback:
++                         ffi::cubeb_device_changed_callback)
++                         -> c_int>,
++    pub register_device_collection_changed: Option<
++        unsafe extern fn(context: *mut ffi::cubeb,
++                         devtype: ffi::cubeb_device_type,
++                         callback: ffi::cubeb_device_collection_changed_callback,
++                         user_ptr: *mut c_void)
++                             -> c_int>
++}
++
++#[repr(C)]
++#[derive(Clone, Copy, Debug)]
++pub struct LayoutMap {
++    pub name: *const c_char,
++    pub channels: u32,
++    pub layout: ffi::cubeb_channel_layout
++}
++
++// cubeb_mixer.h
++cubeb_enum! {
++    pub enum cubeb_channel {
++        // These need to match cubeb_channel
++        CHANNEL_INVALID = -1,
++        CHANNEL_MONO = 0,
++        CHANNEL_LEFT,
++        CHANNEL_RIGHT,
++        CHANNEL_CENTER,
++        CHANNEL_LS,
++        CHANNEL_RS,
++        CHANNEL_RLS,
++        CHANNEL_RCENTER,
++        CHANNEL_RRS,
++        CHANNEL_LFE,
++        CHANNEL_UNMAPPED,
++        CHANNEL_MAX = 256,
++    }
++}
++
++#[repr(C)]
++#[derive(Copy)]
++pub struct cubeb_channel_map {
++    pub channels: c_uint,
++    pub map: [cubeb_channel; CHANNEL_MAX as usize]
++}
++
++impl Clone for cubeb_channel_map {
++    /// Returns a deep copy of the value.
++    #[inline]
++    fn clone(&self) -> Self {
++        *self
++    }
++}
++
++impl Debug for cubeb_channel_map {
++    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
++        fmt.debug_struct("cubeb_channel_map")
++            .field("channels", &self.channels)
++            .field("map", &self.map.iter().take(self.channels as usize))
++            .finish()
++    }
++}
++
++extern "C" {
++    pub fn cubeb_channel_map_to_layout(
++        channel_map: *const cubeb_channel_map,
++    ) -> ffi::cubeb_channel_layout;
++    pub fn cubeb_should_upmix(
++        stream: *const ffi::cubeb_stream_params,
++        mixer: *const ffi::cubeb_stream_params,
++    ) -> bool;
++    pub fn cubeb_should_downmix(
++        stream: *const ffi::cubeb_stream_params,
++        mixer: *const ffi::cubeb_stream_params,
++    ) -> bool;
++    pub fn cubeb_downmix_float(
++        input: *const f32,
++        inframes: c_long,
++        output: *mut f32,
++        in_channels: u32,
++        out_channels: u32,
++        in_layout: ffi::cubeb_channel_layout,
++        out_layout: ffi::cubeb_channel_layout,
++    );
++    pub fn cubeb_upmix_float(
++        input: *const f32,
++        inframes: c_long,
++        output: *mut f32,
++        in_channels: u32,
++        out_channels: u32,
++    );
++
++    pub static CHANNEL_INDEX_TO_ORDER: [[cubeb_channel; CHANNEL_MAX as usize];
++                                           ffi::CUBEB_LAYOUT_MAX as usize];
++}
+diff --git a/media/cubeb-rs/cubeb-backend/src/lib.rs b/media/cubeb-rs/cubeb-backend/src/lib.rs
+new file mode 100644
+index 0000000..5e0b1fd
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-backend/src/lib.rs
+@@ -0,0 +1,13 @@
++// Copyright © 2017 Mozilla Foundation
++//
++// This program is made available under an ISC-style license.  See the
++// accompanying file LICENSE for details.
++
++extern crate cubeb_core;
++
++pub mod ffi;
++pub mod capi;
++mod traits;
++
++pub use ffi::Ops;
++pub use traits::{Context, Stream};
+diff --git a/media/cubeb-rs/cubeb-backend/src/traits.rs b/media/cubeb-rs/cubeb-backend/src/traits.rs
+new file mode 100644
+index 0000000..6059ce4
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-backend/src/traits.rs
+@@ -0,0 +1,60 @@
++// Copyright © 2017 Mozilla Foundation
++//
++// This program is made available under an ISC-style license.  See the
++// accompanying file LICENSE for details.
++
++use cubeb_core::{DeviceId, DeviceType, Result, StreamParams};
++use cubeb_core::ffi;
++use std::ffi::CStr;
++use std::os::raw::c_void;
++
++pub trait Context {
++    fn init(context_name: Option<&CStr>) -> Result<*mut ffi::cubeb>;
++    fn backend_id(&self) -> &'static CStr;
++    fn max_channel_count(&self) -> Result<u32>;
++    fn min_latency(&self, params: &StreamParams) -> Result<u32>;
++    fn preferred_sample_rate(&self) -> Result<u32>;
++    fn preferred_channel_layout(&self) -> Result<ffi::cubeb_channel_layout>;
++    fn enumerate_devices(
++        &self,
++        devtype: DeviceType,
++    ) -> Result<ffi::cubeb_device_collection>;
++    fn device_collection_destroy(
++        &self,
++        collection: *mut ffi::cubeb_device_collection,
++    );
++    fn stream_init(
++        &self,
++        stream_name: Option<&CStr>,
++        input_device: DeviceId,
++        input_stream_params: Option<&ffi::cubeb_stream_params>,
++        output_device: DeviceId,
++        output_stream_params: Option<&ffi::cubeb_stream_params>,
++        latency_frames: u32,
++        data_callback: ffi::cubeb_data_callback,
++        state_callback: ffi::cubeb_state_callback,
++        user_ptr: *mut c_void,
++    ) -> Result<*mut ffi::cubeb_stream>;
++    fn register_device_collection_changed(
++        &self,
++        devtype: DeviceType,
++        cb: ffi::cubeb_device_collection_changed_callback,
++        user_ptr: *mut c_void,
++    ) -> Result<()>;
++}
++
++pub trait Stream {
++    fn start(&self) -> Result<()>;
++    fn stop(&self) -> Result<()>;
++    fn reset_default_device(&self) -> Result<()>;
++    fn position(&self) -> Result<u64>;
++    fn latency(&self) -> Result<u32>;
++    fn set_volume(&self, volume: f32) -> Result<()>;
++    fn set_panning(&self, panning: f32) -> Result<()>;
++    fn current_device(&self) -> Result<*const ffi::cubeb_device>;
++    fn device_destroy(&self, device: *const ffi::cubeb_device) -> Result<()>;
++    fn register_device_changed_callback(
++        &self,
++        device_changed_callback: ffi::cubeb_device_changed_callback,
++    ) -> Result<()>;
++}
+diff --git a/media/cubeb-rs/cubeb-backend/tests/test_capi.rs b/media/cubeb-rs/cubeb-backend/tests/test_capi.rs
+new file mode 100644
+index 0000000..5f00308
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-backend/tests/test_capi.rs
+@@ -0,0 +1,268 @@
++// Copyright © 2017 Mozilla Foundation
++//
++// This program is made available under an ISC-style license.  See the
++// accompanying file LICENSE for details
++
++#[macro_use]
++extern crate cubeb_backend;
++extern crate cubeb_core;
++
++use cubeb_backend::{Context, Ops, Stream};
++use cubeb_core::{ChannelLayout, DeviceId, DeviceType, Result, StreamParams, ffi};
++use std::ffi::CStr;
++use std::os::raw::c_void;
++use std::ptr;
++
++pub const OPS: Ops = capi_new!(TestContext, TestStream);
++
++struct TestContext {
++    pub ops: *const Ops
++}
++
++impl Context for TestContext {
++    fn init(_context_name: Option<&CStr>) -> Result<*mut ffi::cubeb> {
++        let ctx = Box::new(TestContext {
++            ops: &OPS as *const _
++        });
++        Ok(Box::into_raw(ctx) as *mut _)
++    }
++
++    fn backend_id(&self) -> &'static CStr {
++        unsafe { CStr::from_ptr(b"remote\0".as_ptr() as *const _) }
++    }
++    fn max_channel_count(&self) -> Result<u32> {
++        Ok(0u32)
++    }
++    fn min_latency(&self, _params: &StreamParams) -> Result<u32> {
++        Ok(0u32)
++    }
++    fn preferred_sample_rate(&self) -> Result<u32> {
++        Ok(0u32)
++    }
++    fn preferred_channel_layout(&self) -> Result<ffi::cubeb_channel_layout> {
++        Ok(ChannelLayout::Mono as _)
++    }
++    fn enumerate_devices(
++        &self,
++        _devtype: DeviceType,
++    ) -> Result<ffi::cubeb_device_collection> {
++        Ok(ffi::cubeb_device_collection {
++            device: 0xDEADBEEF as *const _,
++            count: usize::max_value()
++        })
++    }
++    fn device_collection_destroy(
++        &self,
++        collection: *mut ffi::cubeb_device_collection,
++    ) {
++        let mut coll = unsafe { &mut *collection };
++        assert_eq!(coll.device, 0xDEADBEEF as *const _);
++        assert_eq!(coll.count, usize::max_value());
++        coll.device = ptr::null_mut();
++        coll.count = 0;
++    }
++    fn stream_init(
++        &self,
++        _stream_name: Option<&CStr>,
++        _input_device: DeviceId,
++        _input_stream_params: Option<&ffi::cubeb_stream_params>,
++        _output_device: DeviceId,
++        _output_stream_params: Option<&ffi::cubeb_stream_params>,
++        _latency_frame: u32,
++        _data_callback: ffi::cubeb_data_callback,
++        _state_callback: ffi::cubeb_state_callback,
++        _user_ptr: *mut c_void,
++    ) -> Result<*mut ffi::cubeb_stream> {
++        Ok(ptr::null_mut())
++    }
++    fn register_device_collection_changed(
++        &self,
++        _dev_type: DeviceType,
++        _collection_changed_callback: ffi::cubeb_device_collection_changed_callback,
++        _user_ptr: *mut c_void,
++    ) -> Result<()> {
++        Ok(())
++    }
++}
++
++struct TestStream {}
++
++impl Stream for TestStream {
++    fn start(&self) -> Result<()> {
++        Ok(())
++    }
++    fn stop(&self) -> Result<()> {
++        Ok(())
++    }
++    fn reset_default_device(&self) -> Result<()> {
++        Ok(())
++    }
++    fn position(&self) -> Result<u64> {
++        Ok(0u64)
++    }
++    fn latency(&self) -> Result<u32> {
++        Ok(0u32)
++    }
++    fn set_volume(&self, volume: f32) -> Result<()> {
++        assert_eq!(volume, 0.5);
++        Ok(())
++    }
++    fn set_panning(&self, panning: f32) -> Result<()> {
++        assert_eq!(panning, 0.5);
++        Ok(())
++    }
++    fn current_device(&self) -> Result<*const ffi::cubeb_device> {
++        Ok(0xDEADBEEF as *const _)
++    }
++    fn device_destroy(&self, device: *const ffi::cubeb_device) -> Result<()> {
++        assert_eq!(device, 0xDEADBEEF as *const _);
++        Ok(())
++    }
++    fn register_device_changed_callback(
++        &self,
++        _: ffi::cubeb_device_changed_callback,
++    ) -> Result<()> {
++        Ok(())
++    }
++}
++
++#[test]
++fn test_ops_context_init() {
++    let mut c: *mut ffi::cubeb = ptr::null_mut();
++    assert_eq!(
++        unsafe { OPS.init.unwrap()(&mut c, ptr::null()) },
++        ffi::CUBEB_OK
++    );
++}
++
++#[test]
++fn test_ops_context_max_channel_count() {
++    let c: *mut ffi::cubeb = ptr::null_mut();
++    let mut max_channel_count = u32::max_value();
++    assert_eq!(
++        unsafe { OPS.get_max_channel_count.unwrap()(c, &mut max_channel_count) },
++        ffi::CUBEB_OK
++    );
++    assert_eq!(max_channel_count, 0);
++}
++
++#[test]
++fn test_ops_context_min_latency() {
++    let c: *mut ffi::cubeb = ptr::null_mut();
++    let params: ffi::cubeb_stream_params = unsafe { ::std::mem::zeroed() };
++    let mut latency = u32::max_value();
++    assert_eq!(
++        unsafe { OPS.get_min_latency.unwrap()(c, params, &mut latency) },
++        ffi::CUBEB_OK
++    );
++    assert_eq!(latency, 0);
++}
++
++#[test]
++fn test_ops_context_preferred_sample_rate() {
++    let c: *mut ffi::cubeb = ptr::null_mut();
++    let mut rate = u32::max_value();
++    assert_eq!(
++        unsafe { OPS.get_preferred_sample_rate.unwrap()(c, &mut rate) },
++        ffi::CUBEB_OK
++    );
++    assert_eq!(rate, 0);
++}
++
++#[test]
++fn test_ops_context_preferred_channel_layout() {
++    let c: *mut ffi::cubeb = ptr::null_mut();
++    let mut layout = ChannelLayout::Undefined;
++    assert_eq!(
++        unsafe {
++            OPS.get_preferred_channel_layout.unwrap()(
++                c,
++                &mut layout as *mut _ as *mut _
++            )
++        },
++        ffi::CUBEB_OK
++    );
++    assert_eq!(layout, ChannelLayout::Mono);
++}
++
++#[test]
++fn test_ops_context_enumerate_devices() {
++    let c: *mut ffi::cubeb = ptr::null_mut();
++    let mut coll = ffi::cubeb_device_collection {
++        device: ptr::null(),
++        count: 0
++    };
++    assert_eq!(
++        unsafe { OPS.enumerate_devices.unwrap()(c, 0, &mut coll) },
++        ffi::CUBEB_OK
++    );
++    assert_eq!(coll.device, 0xDEADBEEF as *const _);
++    assert_eq!(coll.count, usize::max_value())
++}
++
++#[test]
++fn test_ops_context_device_collection_destroy() {
++    let c: *mut ffi::cubeb = ptr::null_mut();
++    let mut coll = ffi::cubeb_device_collection {
++        device: 0xDEADBEEF as *const _,
++        count: usize::max_value()
++    };
++    assert_eq!(
++        unsafe { OPS.device_collection_destroy.unwrap()(c, &mut coll) },
++        ffi::CUBEB_OK
++    );
++    assert_eq!(coll.device, ptr::null_mut());
++    assert_eq!(coll.count, 0);
++}
++
++// stream_init: Some($crate::capi::capi_stream_init::<$ctx>),
++// stream_destroy: Some($crate::capi::capi_stream_destroy::<$stm>),
++// stream_start: Some($crate::capi::capi_stream_start::<$stm>),
++// stream_stop: Some($crate::capi::capi_stream_stop::<$stm>),
++// stream_get_position: Some($crate::capi::capi_stream_get_position::<$stm>),
++
++#[test]
++fn test_ops_stream_latency() {
++    let s: *mut ffi::cubeb_stream = ptr::null_mut();
++    let mut latency = u32::max_value();
++    assert_eq!(
++        unsafe { OPS.stream_get_latency.unwrap()(s, &mut latency) },
++        ffi::CUBEB_OK
++    );
++    assert_eq!(latency, 0);
++}
++
++#[test]
++fn test_ops_stream_set_volume() {
++    let s: *mut ffi::cubeb_stream = ptr::null_mut();
++    unsafe {
++        OPS.stream_set_volume.unwrap()(s, 0.5);
++    }
++}
++
++#[test]
++fn test_ops_stream_set_panning() {
++    let s: *mut ffi::cubeb_stream = ptr::null_mut();
++    unsafe {
++        OPS.stream_set_panning.unwrap()(s, 0.5);
++    }
++}
++
++#[test]
++fn test_ops_stream_current_device() {
++    let s: *mut ffi::cubeb_stream = ptr::null_mut();
++    let mut device: *const ffi::cubeb_device = ptr::null();
++    assert_eq!(
++        unsafe { OPS.stream_get_current_device.unwrap()(s, &mut device) },
++        ffi::CUBEB_OK
++    );
++    assert_eq!(device, 0xDEADBEEF as *const _);
++}
++
++#[test]
++fn test_ops_stream_device_destroy() {
++    let s: *mut ffi::cubeb_stream = ptr::null_mut();
++    unsafe {
++        OPS.stream_device_destroy.unwrap()(s, 0xDEADBEEF as *const _);
++    }
++}
+diff --git a/media/cubeb-rs/cubeb-core/Cargo.toml b/media/cubeb-rs/cubeb-core/Cargo.toml
+new file mode 100644
+index 0000000..bdd7552
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-core/Cargo.toml
+@@ -0,0 +1,15 @@
++[package]
++name = "cubeb-core"
++version = "0.1.0"
++authors = ["Dan Glastonbury <dglastonbury@mozilla.com>"]
++license = "ISC"
++keywords = ["cubeb"]
++repository = "https://github.com/djg/cubeb-rs"
++homepage = "https://github.com/djg/cubeb-rs"
++description = """
++Common types and definitions for cubeb rust and C bindings.
++"""
++categories = ["api-bindings"]
++
++[dependencies]
++bitflags = "0.9"
+diff --git a/media/cubeb-rs/cubeb-core/src/binding.rs b/media/cubeb-rs/cubeb-core/src/binding.rs
+new file mode 100644
+index 0000000..f0593d7
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-core/src/binding.rs
+@@ -0,0 +1,41 @@
++// Copyright © 2017 Mozilla Foundation
++//
++// This program is made available under an ISC-style license.  See the
++// accompanying file LICENSE for details.
++
++#[doc(hidden)]
++pub trait IsNullPtr {
++    fn is_ptr_null(&self) -> bool;
++}
++
++impl<T> IsNullPtr for *const T {
++    fn is_ptr_null(&self) -> bool {
++        self.is_null()
++    }
++}
++
++impl<T> IsNullPtr for *mut T {
++    fn is_ptr_null(&self) -> bool {
++        self.is_null()
++    }
++}
++
++#[doc(hidden)]
++pub trait Binding: Sized {
++    type Raw;
++
++    unsafe fn from_raw(raw: Self::Raw) -> Self;
++    fn raw(&self) -> Self::Raw;
++
++    unsafe fn from_raw_opt<T>(raw: T) -> Option<Self>
++    where
++        T: Copy + IsNullPtr,
++        Self: Binding<Raw = T>,
++    {
++        if raw.is_ptr_null() {
++            None
++        } else {
++            Some(Binding::from_raw(raw))
++        }
++    }
++}
+diff --git a/media/cubeb-rs/cubeb-core/src/error.rs b/media/cubeb-rs/cubeb-core/src/error.rs
+new file mode 100644
+index 0000000..154eead
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-core/src/error.rs
+@@ -0,0 +1,132 @@
++use ErrorCode;
++use ffi;
++use std::error;
++use std::ffi::NulError;
++use std::fmt;
++
++#[derive(Clone, Copy, Debug, PartialEq)]
++pub struct Error {
++    code: ErrorCode
++}
++
++impl Error {
++    pub fn new() -> Error {
++        Error {
++            code: ErrorCode::Error
++        }
++    }
++
++    pub unsafe fn from_raw(code: ffi::cubeb_error_code) -> Error {
++        let code = match code {
++            ffi::CUBEB_ERROR => ErrorCode::Error,
++            ffi::CUBEB_ERROR_INVALID_FORMAT => ErrorCode::InvalidFormat,
++            ffi::CUBEB_ERROR_INVALID_PARAMETER => ErrorCode::InvalidParameter,
++            ffi::CUBEB_ERROR_NOT_SUPPORTED => ErrorCode::NotSupported,
++            ffi::CUBEB_ERROR_DEVICE_UNAVAILABLE => ErrorCode::DeviceUnavailable,
++            _ => ErrorCode::Error,
++        };
++
++        Error {
++            code: code
++        }
++    }
++
++    pub fn code(&self) -> ErrorCode {
++        self.code
++    }
++
++
++    pub fn raw_code(&self) -> ffi::cubeb_error_code {
++        match self.code {
++            ErrorCode::Error => ffi::CUBEB_ERROR,
++            ErrorCode::InvalidFormat => ffi::CUBEB_ERROR_INVALID_FORMAT,
++            ErrorCode::InvalidParameter => ffi::CUBEB_ERROR_INVALID_PARAMETER,
++            ErrorCode::NotSupported => ffi::CUBEB_ERROR_NOT_SUPPORTED,
++            ErrorCode::DeviceUnavailable => ffi::CUBEB_ERROR_DEVICE_UNAVAILABLE,
++        }
++    }
++}
++
++impl Default for Error {
++    fn default() -> Self {
++        Error::new()
++    }
++}
++
++impl error::Error for Error {
++    fn description(&self) -> &str {
++        match self.code {
++            ErrorCode::Error => "Error",
++            ErrorCode::InvalidFormat => "Invalid format",
++            ErrorCode::InvalidParameter => "Invalid parameter",
++            ErrorCode::NotSupported => "Not supported",
++            ErrorCode::DeviceUnavailable => "Device unavailable",
++        }
++    }
++}
++
++impl fmt::Display for Error {
++    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
++        use std::error::Error;
++        write!(f, "{}", self.description())
++    }
++}
++
++impl From<ErrorCode> for Error {
++    fn from(code: ErrorCode) -> Error {
++        Error {
++            code: code
++        }
++    }
++}
++
++impl From<NulError> for Error {
++    fn from(_: NulError) -> Error {
++        unsafe { Error::from_raw(ffi::CUBEB_ERROR) }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use ffi;
++
++    #[test]
++    fn test_from_raw() {
++        macro_rules! test {
++            ( $($raw:ident => $err:ident),* ) => {{
++                $(
++                    let e = unsafe { Error::from_raw(ffi::$raw) };
++                    assert_eq!(e.raw_code(), ffi::$raw);
++                    assert_eq!(e.code(), ErrorCode::$err);
++                )*
++            }};
++        }
++        test!(CUBEB_ERROR => Error,
++              CUBEB_ERROR_INVALID_FORMAT => InvalidFormat,
++              CUBEB_ERROR_INVALID_PARAMETER => InvalidParameter,
++              CUBEB_ERROR_NOT_SUPPORTED => NotSupported,
++              CUBEB_ERROR_DEVICE_UNAVAILABLE => DeviceUnavailable
++        );
++    }
++
++    #[test]
++    fn test_from_error_code() {
++        macro_rules! test {
++            ( $($raw:ident => $err:ident),* ) => {{
++                $(
++                    let e = Error::from(ErrorCode::$err);
++                    assert_eq!(e.raw_code(), ffi::$raw);
++                    assert_eq!(e.code(), ErrorCode::$err);
++                )*
++            }};
++        }
++        test!(CUBEB_ERROR => Error,
++              CUBEB_ERROR_INVALID_FORMAT => InvalidFormat,
++              CUBEB_ERROR_INVALID_PARAMETER => InvalidParameter,
++              CUBEB_ERROR_NOT_SUPPORTED => NotSupported,
++              CUBEB_ERROR_DEVICE_UNAVAILABLE => DeviceUnavailable
++        );
++
++    }
++}
+diff --git a/media/cubeb-rs/cubeb-core/src/ffi.rs b/media/cubeb-rs/cubeb-core/src/ffi.rs
+new file mode 100644
+index 0000000..a7b4bf9
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-core/src/ffi.rs
+@@ -0,0 +1,520 @@
++// Copyright © 2017 Mozilla Foundation
++//
++// This program is made available under an ISC-style license.  See the
++// accompanying file LICENSE for details.
++
++#![allow(non_camel_case_types)]
++
++use std::os::raw::{c_char, c_int, c_long, c_uint, c_void};
++
++macro_rules! cubeb_enum {
++    (pub enum $name:ident { $($variants:tt)* }) => {
++        #[cfg(target_env = "msvc")]
++        pub type $name = i32;
++        #[cfg(not(target_env = "msvc"))]
++        pub type $name = u32;
++        cubeb_enum!(gen, $name, 0, $($variants)*);
++    };
++    (pub enum $name:ident: $t:ty { $($variants:tt)* }) => {
++        pub type $name = $t;
++        cubeb_enum!(gen, $name, 0, $($variants)*);
++    };
++    (gen, $name:ident, $val:expr, $variant:ident, $($rest:tt)*) => {
++        pub const $variant: $name = $val;
++        cubeb_enum!(gen, $name, $val+1, $($rest)*);
++    };
++    (gen, $name:ident, $val:expr, $variant:ident = $e:expr, $($rest:tt)*) => {
++        pub const $variant: $name = $e;
++        cubeb_enum!(gen, $name, $e+1, $($rest)*);
++    };
++    (gen, $name:ident, $val:expr, ) => {}
++}
++
++pub enum cubeb {}
++pub enum cubeb_stream {}
++
++cubeb_enum! {
++    pub enum cubeb_sample_format {
++        CUBEB_SAMPLE_S16LE,
++        CUBEB_SAMPLE_S16BE,
++        CUBEB_SAMPLE_FLOAT32LE,
++        CUBEB_SAMPLE_FLOAT32BE,
++    }
++}
++
++#[cfg(target_endian = "big")]
++pub const CUBEB_SAMPLE_S16NE: cubeb_sample_format = CUBEB_SAMPLE_S16BE;
++#[cfg(target_endian = "big")]
++pub const CUBEB_SAMPLE_FLOAT32NE: cubeb_sample_format = CUBEB_SAMPLE_FLOAT32BE;
++#[cfg(target_endian = "little")]
++pub const CUBEB_SAMPLE_S16NE: cubeb_sample_format = CUBEB_SAMPLE_S16LE;
++#[cfg(target_endian = "little")]
++pub const CUBEB_SAMPLE_FLOAT32NE: cubeb_sample_format = CUBEB_SAMPLE_FLOAT32LE;
++
++pub type cubeb_devid = *const c_void;
++
++cubeb_enum! {
++    pub enum cubeb_log_level: c_int {
++        CUBEB_LOG_DISABLED = 0,
++        CUBEB_LOG_NORMAL = 1,
++        CUBEB_LOG_VERBOSE = 2,
++    }
++}
++
++
++cubeb_enum! {
++    pub enum cubeb_channel_layout: c_int {
++        CUBEB_LAYOUT_UNDEFINED,
++        CUBEB_LAYOUT_DUAL_MONO,
++        CUBEB_LAYOUT_DUAL_MONO_LFE,
++        CUBEB_LAYOUT_MONO,
++        CUBEB_LAYOUT_MONO_LFE,
++        CUBEB_LAYOUT_STEREO,
++        CUBEB_LAYOUT_STEREO_LFE,
++        CUBEB_LAYOUT_3F,
++        CUBEB_LAYOUT_3F_LFE,
++        CUBEB_LAYOUT_2F1,
++        CUBEB_LAYOUT_2F1_LFE,
++        CUBEB_LAYOUT_3F1,
++        CUBEB_LAYOUT_3F1_LFE,
++        CUBEB_LAYOUT_2F2,
++        CUBEB_LAYOUT_2F2_LFE,
++        CUBEB_LAYOUT_3F2,
++        CUBEB_LAYOUT_3F2_LFE,
++        CUBEB_LAYOUT_3F3R_LFE,
++        CUBEB_LAYOUT_3F4_LFE,
++        CUBEB_LAYOUT_MAX,
++    }
++}
++
++#[repr(C)]
++#[derive(Clone, Copy, Debug)]
++pub struct cubeb_stream_params {
++    pub format: cubeb_sample_format,
++    pub rate: c_uint,
++    pub channels: c_uint,
++    pub layout: cubeb_channel_layout
++}
++
++#[repr(C)]
++#[derive(Debug)]
++pub struct cubeb_device {
++    pub output_name: *const c_char,
++    pub input_name: *const c_char
++}
++
++cubeb_enum! {
++    pub enum cubeb_state: c_int {
++        CUBEB_STATE_STARTED,
++        CUBEB_STATE_STOPPED,
++        CUBEB_STATE_DRAINED,
++        CUBEB_STATE_ERROR,
++    }
++}
++
++cubeb_enum! {
++    pub enum cubeb_error_code: c_int {
++        CUBEB_OK = 0,
++        CUBEB_ERROR = -1,
++        CUBEB_ERROR_INVALID_FORMAT = -2,
++        CUBEB_ERROR_INVALID_PARAMETER = -3,
++        CUBEB_ERROR_NOT_SUPPORTED = -4,
++        CUBEB_ERROR_DEVICE_UNAVAILABLE = -5,
++    }
++}
++
++cubeb_enum! {
++    pub enum cubeb_device_type {
++        CUBEB_DEVICE_TYPE_UNKNOWN,
++        CUBEB_DEVICE_TYPE_INPUT,
++        CUBEB_DEVICE_TYPE_OUTPUT,
++    }
++}
++
++cubeb_enum! {
++    pub enum cubeb_device_state {
++        CUBEB_DEVICE_STATE_DISABLED,
++        CUBEB_DEVICE_STATE_UNPLUGGED,
++        CUBEB_DEVICE_STATE_ENABLED,
++    }
++}
++
++cubeb_enum! {
++    pub enum cubeb_device_fmt {
++        CUBEB_DEVICE_FMT_S16LE          = 0x0010,
++        CUBEB_DEVICE_FMT_S16BE          = 0x0020,
++        CUBEB_DEVICE_FMT_F32LE          = 0x1000,
++        CUBEB_DEVICE_FMT_F32BE          = 0x2000,
++    }
++}
++
++#[cfg(target_endian = "big")]
++pub const CUBEB_DEVICE_FMT_S16NE: cubeb_device_fmt = CUBEB_DEVICE_FMT_S16BE;
++#[cfg(target_endian = "big")]
++pub const CUBEB_DEVICE_FMT_F32NE: cubeb_device_fmt = CUBEB_DEVICE_FMT_F32BE;
++#[cfg(target_endian = "little")]
++pub const CUBEB_DEVICE_FMT_S16NE: cubeb_device_fmt = CUBEB_DEVICE_FMT_S16LE;
++#[cfg(target_endian = "little")]
++pub const CUBEB_DEVICE_FMT_F32NE: cubeb_device_fmt = CUBEB_DEVICE_FMT_F32LE;
++
++pub const CUBEB_DEVICE_FMT_S16_MASK: cubeb_device_fmt = (CUBEB_DEVICE_FMT_S16LE | CUBEB_DEVICE_FMT_S16BE);
++pub const CUBEB_DEVICE_FMT_F32_MASK: cubeb_device_fmt = (CUBEB_DEVICE_FMT_F32LE | CUBEB_DEVICE_FMT_F32BE);
++pub const CUBEB_DEVICE_FMT_ALL: cubeb_device_fmt = (CUBEB_DEVICE_FMT_S16_MASK | CUBEB_DEVICE_FMT_F32_MASK);
++
++cubeb_enum! {
++    pub enum cubeb_device_pref  {
++        CUBEB_DEVICE_PREF_NONE          = 0x00,
++        CUBEB_DEVICE_PREF_MULTIMEDIA    = 0x01,
++        CUBEB_DEVICE_PREF_VOICE         = 0x02,
++        CUBEB_DEVICE_PREF_NOTIFICATION  = 0x04,
++        CUBEB_DEVICE_PREF_ALL           = 0x0F,
++    }
++}
++
++#[repr(C)]
++#[derive(Debug)]
++pub struct cubeb_device_info {
++    pub devid: cubeb_devid,
++    pub device_id: *const c_char,
++    pub friendly_name: *const c_char,
++    pub group_id: *const c_char,
++    pub vendor_name: *const c_char,
++
++    pub device_type: cubeb_device_type,
++    pub state: cubeb_device_state,
++    pub preferred: cubeb_device_pref,
++
++    pub format: cubeb_device_fmt,
++    pub default_format: cubeb_device_fmt,
++    pub max_channels: c_uint,
++    pub default_rate: c_uint,
++    pub max_rate: c_uint,
++    pub min_rate: c_uint,
++
++    pub latency_lo: c_uint,
++    pub latency_hi: c_uint
++}
++
++#[repr(C)]
++#[derive(Debug)]
++pub struct cubeb_device_collection {
++    pub device: *const cubeb_device_info,
++    pub count: usize
++}
++
++pub type cubeb_data_callback = extern "C" fn(*mut cubeb_stream,
++                                             *mut c_void,
++                                             *const c_void,
++                                             *mut c_void,
++                                             c_long)
++                                             -> c_long;
++
++pub type cubeb_state_callback = extern "C" fn(*mut cubeb_stream, *mut c_void, cubeb_state);
++pub type cubeb_device_changed_callback = extern "C" fn(*mut c_void);
++pub type cubeb_device_collection_changed_callback = extern "C" fn(*mut cubeb, *mut c_void);
++pub type cubeb_log_callback = extern "C" fn(*const c_char, ...);
++
++#[cfg(test)]
++mod test {
++    use std::mem::{align_of, size_of};
++    #[test]
++    fn test_layout_cubeb_stream_params() {
++        use super::cubeb_stream_params;
++        assert_eq!(
++            size_of::<cubeb_stream_params>(),
++            16usize,
++            concat!("Size of: ", stringify!(cubeb_stream_params))
++        );
++        assert_eq!(
++            align_of::<cubeb_stream_params>(),
++            4usize,
++            concat!("Alignment of ", stringify!(cubeb_stream_params))
++        );
++        assert_eq!(
++            unsafe { &(*(0 as *const cubeb_stream_params)).format as *const _ as usize },
++            0usize,
++            concat!(
++                "Alignment of field: ",
++                stringify!(cubeb_stream_params),
++                "::",
++                stringify!(format)
++            )
++        );
++        assert_eq!(
++            unsafe { &(*(0 as *const cubeb_stream_params)).rate as *const _ as usize },
++            4usize,
++            concat!(
++                "Alignment of field: ",
++                stringify!(cubeb_stream_params),
++                "::",
++                stringify!(rate)
++            )
++        );
++        assert_eq!(
++            unsafe { &(*(0 as *const cubeb_stream_params)).channels as *const _ as usize },
++            8usize,
++            concat!(
++                "Alignment of field: ",
++                stringify!(cubeb_stream_params),
++                "::",
++                stringify!(channels)
++            )
++        );
++        assert_eq!(
++            unsafe { &(*(0 as *const cubeb_stream_params)).layout as *const _ as usize },
++            12usize,
++            concat!(
++                "Alignment of field: ",
++                stringify!(cubeb_stream_params),
++                "::",
++                stringify!(layout)
++            )
++        );
++    }
++
++    #[test]
++    fn test_layout_cubeb_device() {
++        use super::cubeb_device;
++        assert_eq!(
++            size_of::<cubeb_device>(),
++            2 * size_of::<usize>(),
++            concat!("Size of: ", stringify!(cubeb_device))
++        );
++        assert_eq!(
++            align_of::<cubeb_device>(),
++            align_of::<usize>(),
++            concat!("Alignment of ", stringify!(cubeb_device))
++        );
++        assert_eq!(
++            unsafe { &(*(0 as *const cubeb_device)).output_name as *const _ as usize },
++            0usize,
++            concat!(
++                "Alignment of field: ",
++                stringify!(cubeb_device),
++                "::",
++                stringify!(output_name)
++            )
++        );
++        assert_eq!(
++            unsafe { &(*(0 as *const cubeb_device)).input_name as *const _ as usize },
++            size_of::<usize>(),
++            concat!(
++                "Alignment of field: ",
++                stringify!(cubeb_device),
++                "::",
++                stringify!(input_name)
++            )
++        );
++    }
++
++    #[test]
++    fn test_layout_cubeb_device_info() {
++        use super::cubeb_device_info;
++        let psize: usize = size_of::<usize>();
++        assert_eq!(
++            size_of::<cubeb_device_info>(),
++            (5 * psize + 44 + psize - 1) / psize * psize,
++            concat!("Size of: ", stringify!(cubeb_device_info))
++        );
++        assert_eq!(
++            align_of::<cubeb_device_info>(),
++            align_of::<usize>(),
++            concat!("Alignment of ", stringify!(cubeb_device_info))
++        );
++        assert_eq!(
++            unsafe { &(*(0 as *const cubeb_device_info)).devid as *const _ as usize },
++            0usize,
++            concat!(
++                "Alignment of field: ",
++                stringify!(cubeb_device_info),
++                "::",
++                stringify!(devid)
++            )
++        );
++        assert_eq!(
++            unsafe { &(*(0 as *const cubeb_device_info)).device_id as *const _ as usize },
++            size_of::<usize>(),
++            concat!(
++                "Alignment of field: ",
++                stringify!(cubeb_device_info),
++                "::",
++                stringify!(device_id)
++            )
++        );
++        assert_eq!(
++            unsafe { &(*(0 as *const cubeb_device_info)).friendly_name as *const _ as usize },
++            2 * size_of::<usize>(),
++            concat!(
++                "Alignment of field: ",
++                stringify!(cubeb_device_info),
++                "::",
++                stringify!(friendly_name)
++            )
++        );
++        assert_eq!(
++            unsafe { &(*(0 as *const cubeb_device_info)).group_id as *const _ as usize },
++            3 * size_of::<usize>(),
++            concat!(
++                "Alignment of field: ",
++                stringify!(cubeb_device_info),
++                "::",
++                stringify!(group_id)
++            )
++        );
++        assert_eq!(
++            unsafe { &(*(0 as *const cubeb_device_info)).vendor_name as *const _ as usize },
++            4 * size_of::<usize>(),
++            concat!(
++                "Alignment of field: ",
++                stringify!(cubeb_device_info),
++                "::",
++                stringify!(vendor_name)
++            )
++        );
++        assert_eq!(
++            unsafe { &(*(0 as *const cubeb_device_info)).device_type as *const _ as usize },
++            5 * size_of::<usize>() + 0,
++            concat!(
++                "Alignment of field: ",
++                stringify!(cubeb_device_info),
++                "::",
++                stringify!(type_)
++            )
++        );
++        assert_eq!(
++            unsafe { &(*(0 as *const cubeb_device_info)).state as *const _ as usize },
++            5 * size_of::<usize>() + 4,
++            concat!(
++                "Alignment of field: ",
++                stringify!(cubeb_device_info),
++                "::",
++                stringify!(state)
++            )
++        );
++        assert_eq!(
++            unsafe { &(*(0 as *const cubeb_device_info)).preferred as *const _ as usize },
++            5 * size_of::<usize>() + 8,
++            concat!(
++                "Alignment of field: ",
++                stringify!(cubeb_device_info),
++                "::",
++                stringify!(preferred)
++            )
++        );
++        assert_eq!(
++            unsafe { &(*(0 as *const cubeb_device_info)).format as *const _ as usize },
++            5 * size_of::<usize>() + 12,
++            concat!(
++                "Alignment of field: ",
++                stringify!(cubeb_device_info),
++                "::",
++                stringify!(format)
++            )
++        );
++        assert_eq!(
++            unsafe { &(*(0 as *const cubeb_device_info)).default_format as *const _ as usize },
++            5 * size_of::<usize>() + 16,
++            concat!(
++                "Alignment of field: ",
++                stringify!(cubeb_device_info),
++                "::",
++                stringify!(default_format)
++            )
++        );
++        assert_eq!(
++            unsafe { &(*(0 as *const cubeb_device_info)).max_channels as *const _ as usize },
++            5 * size_of::<usize>() + 20,
++            concat!(
++                "Alignment of field: ",
++                stringify!(cubeb_device_info),
++                "::",
++                stringify!(max_channels)
++            )
++        );
++        assert_eq!(
++            unsafe { &(*(0 as *const cubeb_device_info)).default_rate as *const _ as usize },
++            5 * size_of::<usize>() + 24,
++            concat!(
++                "Alignment of field: ",
++                stringify!(cubeb_device_info),
++                "::",
++                stringify!(default_rate)
++            )
++        );
++        assert_eq!(
++            unsafe { &(*(0 as *const cubeb_device_info)).max_rate as *const _ as usize },
++            5 * size_of::<usize>() + 28,
++            concat!(
++                "Alignment of field: ",
++                stringify!(cubeb_device_info),
++                "::",
++                stringify!(max_rate)
++            )
++        );
++        assert_eq!(
++            unsafe { &(*(0 as *const cubeb_device_info)).min_rate as *const _ as usize },
++            5 * size_of::<usize>() + 32,
++            concat!(
++                "Alignment of field: ",
++                stringify!(cubeb_device_info),
++                "::",
++                stringify!(min_rate)
++            )
++        );
++        assert_eq!(
++            unsafe { &(*(0 as *const cubeb_device_info)).latency_lo as *const _ as usize },
++            5 * size_of::<usize>() + 36,
++            concat!(
++                "Alignment of field: ",
++                stringify!(cubeb_device_info),
++                "::",
++                stringify!(latency_lo)
++            )
++        );
++        assert_eq!(
++            unsafe { &(*(0 as *const cubeb_device_info)).latency_hi as *const _ as usize },
++            5 * size_of::<usize>() + 40,
++            concat!(
++                "Alignment of field: ",
++                stringify!(cubeb_device_info),
++                "::",
++                stringify!(latency_hi)
++            )
++        );
++    }
++
++    #[test]
++    fn test_layout_cubeb_device_collection() {
++        use super::cubeb_device_collection;
++        assert_eq!(
++            size_of::<cubeb_device_collection>(),
++            2 * size_of::<usize>(),
++            concat!("Size of: ", stringify!(cubeb_device_collection))
++        );
++        assert_eq!(
++            align_of::<cubeb_device_collection>(),
++            align_of::<usize>(),
++            concat!("Alignment of ", stringify!(cubeb_device_collection))
++        );
++        assert_eq!(
++            unsafe { &(*(0 as *const cubeb_device_collection)).device as *const _ as usize },
++            0usize,
++            concat!(
++                "Alignment of field: ",
++                stringify!(cubeb_device_collection),
++                "::",
++                stringify!(device)
++            )
++        );
++        assert_eq!(
++            unsafe { &(*(0 as *const cubeb_device_collection)).count as *const _ as usize },
++            size_of::<usize>(),
++            concat!(
++                "Alignment of field: ",
++                stringify!(cubeb_device_collection),
++                "::",
++                stringify!(count)
++            )
++        );
++    }
++}
+diff --git a/media/cubeb-rs/cubeb-core/src/lib.rs b/media/cubeb-rs/cubeb-core/src/lib.rs
+new file mode 100644
+index 0000000..6fae194
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-core/src/lib.rs
+@@ -0,0 +1,597 @@
++// Copyright © 2017 Mozilla Foundation
++//
++// This program is made available under an ISC-style license.  See the
++// accompanying file LICENSE for details.
++
++#[macro_use]
++extern crate bitflags;
++
++pub mod ffi;
++pub mod binding;
++mod error;
++mod util;
++
++use binding::Binding;
++pub use error::Error;
++use std::{marker, ptr, str};
++use util::opt_bytes;
++
++#[derive(PartialEq, Eq, Clone, Debug, Copy)]
++pub enum SampleFormat {
++    S16LE,
++    S16BE,
++    S16NE,
++    Float32LE,
++    Float32BE,
++    Float32NE
++}
++
++impl From<ffi::cubeb_sample_format> for SampleFormat {
++    fn from(x: ffi::cubeb_sample_format) -> SampleFormat {
++        match x {
++            ffi::CUBEB_SAMPLE_S16LE => SampleFormat::S16LE,
++            ffi::CUBEB_SAMPLE_S16BE => SampleFormat::S16BE,
++            ffi::CUBEB_SAMPLE_FLOAT32LE => SampleFormat::Float32LE,
++            ffi::CUBEB_SAMPLE_FLOAT32BE => SampleFormat::Float32BE,
++            // TODO: Implement TryFrom
++            _ => SampleFormat::S16NE,
++        }
++    }
++}
++
++/// An opaque handle used to refer to a particular input or output device
++/// across calls.
++#[derive(PartialEq, Eq, Clone, Debug, Copy)]
++pub struct DeviceId {
++    raw: ffi::cubeb_devid
++}
++
++impl Binding for DeviceId {
++    type Raw = ffi::cubeb_devid;
++
++    unsafe fn from_raw(raw: Self::Raw) -> DeviceId {
++        DeviceId {
++            raw: raw
++        }
++    }
++    fn raw(&self) -> Self::Raw {
++        self.raw
++    }
++}
++
++impl Default for DeviceId {
++    fn default() -> Self {
++        DeviceId {
++            raw: ptr::null()
++        }
++    }
++}
++
++/// Level (verbosity) of logging for a particular cubeb context.
++#[derive(PartialEq, Eq, Clone, Debug, Copy, PartialOrd, Ord)]
++pub enum LogLevel {
++    /// Logging disabled
++    Disabled,
++    /// Logging lifetime operation (creation/destruction).
++    Normal,
++    /// Verbose logging of callbacks, can have performance implications.
++    Verbose
++}
++
++/// SMPTE channel layout (also known as wave order)
++///
++/// ---------------------------------------------------
++/// Name          | Channels
++/// ---------------------------------------------------
++/// DUAL-MONO     | L   R
++/// DUAL-MONO-LFE | L   R   LFE
++/// MONO          | M
++/// MONO-LFE      | M   LFE
++/// STEREO        | L   R
++/// STEREO-LFE    | L   R   LFE
++/// 3F            | L   R   C
++/// 3F-LFE        | L   R   C    LFE
++/// 2F1           | L   R   S
++/// 2F1-LFE       | L   R   LFE  S
++/// 3F1           | L   R   C    S
++/// 3F1-LFE       | L   R   C    LFE S
++/// 2F2           | L   R   LS   RS
++/// 2F2-LFE       | L   R   LFE  LS   RS
++/// 3F2           | L   R   C    LS   RS
++/// 3F2-LFE       | L   R   C    LFE  LS   RS
++/// 3F3R-LFE      | L   R   C    LFE  RC   LS   RS
++/// 3F4-LFE       | L   R   C    LFE  RLS  RRS  LS   RS
++/// ---------------------------------------------------
++///
++/// The abbreviation of channel name is defined in following table:
++/// ---------------------------
++/// Abbr | Channel name
++/// ---------------------------
++/// M    | Mono
++/// L    | Left
++/// R    | Right
++/// C    | Center
++/// LS   | Left Surround
++/// RS   | Right Surround
++/// RLS  | Rear Left Surround
++/// RC   | Rear Center
++/// RRS  | Rear Right Surround
++/// LFE  | Low Frequency Effects
++/// ---------------------------
++#[derive(PartialEq, Eq, Clone, Debug, Copy)]
++pub enum ChannelLayout {
++    /// Indicate the speaker's layout is undefined.
++    Undefined,
++    DualMono,
++    DualMonoLfe,
++    Mono,
++    MonoLfe,
++    Stereo,
++    StereoLfe,
++    Layout3F,
++    Layout3FLfe,
++    Layout2F1,
++    Layout2F1Lfe,
++    Layout3F1,
++    Layout3F1Lfe,
++    Layout2F2,
++    Layout2F2Lfe,
++    Layout3F2,
++    Layout3F2Lfe,
++    Layout3F3RLfe,
++    Layout3F4Lfe
++}
++
++impl From<ffi::cubeb_channel_layout> for ChannelLayout {
++    fn from(x: ffi::cubeb_channel_layout) -> ChannelLayout {
++        match x {
++            ffi::CUBEB_LAYOUT_UNDEFINED => ChannelLayout::Undefined,
++            ffi::CUBEB_LAYOUT_DUAL_MONO => ChannelLayout::DualMono,
++            ffi::CUBEB_LAYOUT_DUAL_MONO_LFE => ChannelLayout::DualMonoLfe,
++            ffi::CUBEB_LAYOUT_MONO => ChannelLayout::Mono,
++            ffi::CUBEB_LAYOUT_MONO_LFE => ChannelLayout::MonoLfe,
++            ffi::CUBEB_LAYOUT_STEREO => ChannelLayout::Stereo,
++            ffi::CUBEB_LAYOUT_STEREO_LFE => ChannelLayout::StereoLfe,
++            ffi::CUBEB_LAYOUT_3F => ChannelLayout::Layout3F,
++            ffi::CUBEB_LAYOUT_3F_LFE => ChannelLayout::Layout3FLfe,
++            ffi::CUBEB_LAYOUT_2F1 => ChannelLayout::Layout2F1,
++            ffi::CUBEB_LAYOUT_2F1_LFE => ChannelLayout::Layout2F1Lfe,
++            ffi::CUBEB_LAYOUT_3F1 => ChannelLayout::Layout3F1,
++            ffi::CUBEB_LAYOUT_3F1_LFE => ChannelLayout::Layout3F1Lfe,
++            ffi::CUBEB_LAYOUT_2F2 => ChannelLayout::Layout2F2,
++            ffi::CUBEB_LAYOUT_2F2_LFE => ChannelLayout::Layout2F2Lfe,
++            ffi::CUBEB_LAYOUT_3F2 => ChannelLayout::Layout3F2,
++            ffi::CUBEB_LAYOUT_3F2_LFE => ChannelLayout::Layout3F2Lfe,
++            ffi::CUBEB_LAYOUT_3F3R_LFE => ChannelLayout::Layout3F3RLfe,
++            ffi::CUBEB_LAYOUT_3F4_LFE => ChannelLayout::Layout3F4Lfe,
++            // TODO: Implement TryFrom
++            _ => ChannelLayout::Undefined,
++        }
++    }
++}
++
++/// Stream format initialization parameters.
++#[derive(Clone, Copy)]
++pub struct StreamParams {
++    raw: ffi::cubeb_stream_params
++}
++
++impl StreamParams {
++    pub fn format(&self) -> SampleFormat {
++        macro_rules! check( ($($raw:ident => $real:ident),*) => (
++            $(if self.raw.format == ffi::$raw {
++                SampleFormat::$real
++            }) else *
++            else {
++                panic!("unknown sample format: {}", self.raw.format)
++            }
++        ) );
++
++        check!(
++            CUBEB_SAMPLE_S16LE => S16LE,
++            CUBEB_SAMPLE_S16BE => S16BE,
++            CUBEB_SAMPLE_FLOAT32LE => Float32LE,
++            CUBEB_SAMPLE_FLOAT32BE => Float32BE
++        )
++    }
++
++    pub fn rate(&self) -> u32 {
++        self.raw.rate as u32
++    }
++
++    pub fn channels(&self) -> u32 {
++        self.raw.channels as u32
++    }
++
++    pub fn layout(&self) -> ChannelLayout {
++        macro_rules! check( ($($raw:ident => $real:ident),*) => (
++            $(if self.raw.layout == ffi::$raw {
++                ChannelLayout::$real
++            }) else *
++            else {
++                panic!("unknown channel layout: {}", self.raw.layout)
++            }
++        ) );
++
++        check!(CUBEB_LAYOUT_UNDEFINED => Undefined,
++               CUBEB_LAYOUT_DUAL_MONO => DualMono,
++               CUBEB_LAYOUT_DUAL_MONO_LFE => DualMonoLfe,
++               CUBEB_LAYOUT_MONO => Mono,
++               CUBEB_LAYOUT_MONO_LFE => MonoLfe,
++               CUBEB_LAYOUT_STEREO => Stereo,
++               CUBEB_LAYOUT_STEREO_LFE => StereoLfe,
++               CUBEB_LAYOUT_3F => Layout3F,
++               CUBEB_LAYOUT_3F_LFE => Layout3FLfe,
++               CUBEB_LAYOUT_2F1 => Layout2F1,
++               CUBEB_LAYOUT_2F1_LFE => Layout2F1Lfe,
++               CUBEB_LAYOUT_3F1 => Layout3F1,
++               CUBEB_LAYOUT_3F1_LFE => Layout3F1Lfe,
++               CUBEB_LAYOUT_2F2 => Layout2F2,
++               CUBEB_LAYOUT_2F2_LFE => Layout2F2Lfe,
++               CUBEB_LAYOUT_3F2 => Layout3F2,
++               CUBEB_LAYOUT_3F2_LFE => Layout3F2Lfe,
++               CUBEB_LAYOUT_3F3R_LFE => Layout3F3RLfe,
++               CUBEB_LAYOUT_3F4_LFE => Layout3F4Lfe)
++    }
++}
++
++impl Binding for StreamParams {
++    type Raw = *const ffi::cubeb_stream_params;
++    unsafe fn from_raw(raw: *const ffi::cubeb_stream_params) -> Self {
++        Self {
++            raw: *raw
++        }
++    }
++    fn raw(&self) -> Self::Raw {
++        &self.raw as Self::Raw
++    }
++}
++
++/// Audio device description
++#[derive(Copy, Clone, Debug)]
++pub struct Device<'a> {
++    raw: *const ffi::cubeb_device,
++    _marker: marker::PhantomData<&'a ffi::cubeb_device>
++}
++
++impl<'a> Device<'a> {
++    /// Gets the output device name.
++    ///
++    /// May return `None` if there is no output device.
++    pub fn output_name(&self) -> Option<&str> {
++        self.output_name_bytes().map(|b| str::from_utf8(b).unwrap())
++    }
++
++    pub fn output_name_bytes(&self) -> Option<&[u8]> {
++        unsafe { opt_bytes(self, (*self.raw).output_name) }
++    }
++
++    /// Gets the input device name.
++    ///
++    /// May return `None` if there is no input device.
++    pub fn input_name(&self) -> Option<&str> {
++        self.input_name_bytes().map(|b| str::from_utf8(b).unwrap())
++    }
++
++    pub fn input_name_bytes(&self) -> Option<&[u8]> {
++        unsafe { opt_bytes(self, (*self.raw).input_name) }
++    }
++}
++
++impl<'a> Binding for Device<'a> {
++    type Raw = *const ffi::cubeb_device;
++
++    unsafe fn from_raw(raw: *const ffi::cubeb_device) -> Device<'a> {
++        Device {
++            raw: raw,
++            _marker: marker::PhantomData
++        }
++    }
++    fn raw(&self) -> *const ffi::cubeb_device {
++        self.raw
++    }
++}
++
++/// Stream states signaled via state_callback.
++#[derive(PartialEq, Eq, Clone, Debug, Copy)]
++pub enum State {
++    /// Stream started.
++    Started,
++    /// Stream stopped.
++    Stopped,
++    /// Stream drained.
++    Drained,
++    /// Stream disabled due to error.
++    Error
++}
++
++/// An enumeration of possible errors that can happen when working with cubeb.
++#[derive(PartialEq, Eq, Clone, Debug, Copy)]
++pub enum ErrorCode {
++    /// GenericError
++    Error,
++    /// Requested format is invalid
++    InvalidFormat,
++    /// Requested parameter is invalid
++    InvalidParameter,
++    /// Requested operation is not supported
++    NotSupported,
++    /// Requested device is unavailable
++    DeviceUnavailable
++}
++
++/// Whether a particular device is an input device (e.g. a microphone), or an
++/// output device (e.g. headphones).
++bitflags! {
++    pub struct DeviceType: ffi::cubeb_device_type {
++        const DEVICE_TYPE_UNKNOWN = ffi::CUBEB_DEVICE_TYPE_UNKNOWN as u32;
++        const DEVICE_TYPE_INPUT = ffi::CUBEB_DEVICE_TYPE_INPUT as u32;
++        const DEVICE_TYPE_OUTPUT = ffi::CUBEB_DEVICE_TYPE_OUTPUT as u32;
++    }
++}
++
++/// The state of a device.
++#[derive(PartialEq, Eq, Clone, Debug, Copy)]
++pub enum DeviceState {
++    /// The device has been disabled at the system level.
++    Disabled,
++    /// The device is enabled, but nothing is plugged into it.
++    Unplugged,
++    /// The device is enabled.
++    Enabled
++}
++
++/// Architecture specific sample type.
++bitflags! {
++    pub struct DeviceFormat: ffi::cubeb_device_fmt {
++        const DEVICE_FMT_S16LE = ffi::CUBEB_DEVICE_FMT_S16LE;
++        const DEVICE_FMT_S16BE = ffi::CUBEB_DEVICE_FMT_S16BE;
++        const DEVICE_FMT_F32LE = ffi::CUBEB_DEVICE_FMT_F32LE;
++        const DEVICE_FMT_F32BE = ffi::CUBEB_DEVICE_FMT_F32BE;
++    }
++}
++
++/// Channel type for a `cubeb_stream`. Depending on the backend and platform
++/// used, this can control inter-stream interruption, ducking, and volume
++/// control.
++bitflags! {
++    pub struct DevicePref: ffi::cubeb_device_pref {
++        const DEVICE_PREF_NONE = ffi::CUBEB_DEVICE_PREF_NONE;
++        const DEVICE_PREF_MULTIMEDIA = ffi::CUBEB_DEVICE_PREF_MULTIMEDIA;
++        const DEVICE_PREF_VOICE = ffi::CUBEB_DEVICE_PREF_VOICE;
++        const DEVICE_PREF_NOTIFICATION = ffi::CUBEB_DEVICE_PREF_NOTIFICATION;
++        const DEVICE_PREF_ALL = ffi::CUBEB_DEVICE_PREF_ALL;
++    }
++}
++
++/// This structure holds the characteristics of an input or output
++/// audio device. It is obtained using `enumerate_devices`, which
++/// returns these structures via `device_collection` and must be
++/// destroyed via `device_collection_destroy`.
++pub struct DeviceInfo {
++    raw: ffi::cubeb_device_info
++}
++
++impl DeviceInfo {
++    pub fn raw(&self) -> &ffi::cubeb_device_info {
++        &self.raw
++    }
++
++    /// Device identifier handle.
++    pub fn devid(&self) -> DeviceId {
++        unsafe { Binding::from_raw(self.raw.devid) }
++    }
++
++    /// Device identifier which might be presented in a UI.
++    pub fn device_id(&self) -> Option<&str> {
++        self.device_id_bytes().and_then(|s| str::from_utf8(s).ok())
++    }
++
++    pub fn device_id_bytes(&self) -> Option<&[u8]> {
++        unsafe { opt_bytes(self, self.raw.device_id) }
++    }
++
++    /// Friendly device name which might be presented in a UI.
++    pub fn friendly_name(&self) -> Option<&str> {
++        self.friendly_name_bytes().and_then(
++            |s| str::from_utf8(s).ok()
++        )
++    }
++
++    pub fn friendly_name_bytes(&self) -> Option<&[u8]> {
++        unsafe { opt_bytes(self, self.raw.friendly_name) }
++    }
++
++    /// Two devices have the same group identifier if they belong to
++    /// the same physical device; for example a headset and
++    /// microphone.
++    pub fn group_id(&self) -> Option<&str> {
++        self.group_id_bytes().and_then(|s| str::from_utf8(s).ok())
++    }
++
++    pub fn group_id_bytes(&self) -> Option<&[u8]> {
++        unsafe { opt_bytes(self, self.raw.group_id) }
++    }
++
++    /// Optional vendor name, may be NULL.
++    pub fn vendor_name(&self) -> Option<&str> {
++        self.vendor_name_bytes().and_then(
++            |s| str::from_utf8(s).ok()
++        )
++    }
++
++    pub fn vendor_name_bytes(&self) -> Option<&[u8]> {
++        unsafe { opt_bytes(self, self.raw.vendor_name) }
++    }
++
++    /// Type of device (Input/Output).
++    pub fn device_type(&self) -> DeviceType {
++        DeviceType::from_bits_truncate(self.raw.device_type)
++    }
++
++    /// State of device disabled/enabled/unplugged.
++    pub fn state(&self) -> DeviceState {
++        let state = self.raw.state;
++        macro_rules! check( ($($raw:ident => $real:ident),*) => (
++            $(if state == ffi::$raw {
++                DeviceState::$real
++            }) else *
++            else {
++                panic!("unknown device state: {}", state)
++            }
++        ));
++
++        check!(CUBEB_DEVICE_STATE_DISABLED => Disabled,
++               CUBEB_DEVICE_STATE_UNPLUGGED => Unplugged,
++               CUBEB_DEVICE_STATE_ENABLED => Enabled)
++    }
++
++    /// Preferred device.
++    pub fn preferred(&self) -> DevicePref {
++        DevicePref::from_bits(self.raw.preferred).unwrap()
++    }
++
++    /// Sample format supported.
++    pub fn format(&self) -> DeviceFormat {
++        DeviceFormat::from_bits(self.raw.format).unwrap()
++    }
++
++    /// The default sample format for this device.
++    pub fn default_format(&self) -> DeviceFormat {
++        DeviceFormat::from_bits(self.raw.default_format).unwrap()
++    }
++
++    /// Channels.
++    pub fn max_channels(&self) -> u32 {
++        self.raw.max_channels
++    }
++
++    /// Default/Preferred sample rate.
++    pub fn default_rate(&self) -> u32 {
++        self.raw.default_rate
++    }
++
++    /// Maximum sample rate supported.
++    pub fn max_rate(&self) -> u32 {
++        self.raw.max_rate
++    }
++
++    /// Minimum sample rate supported.
++    pub fn min_rate(&self) -> u32 {
++        self.raw.min_rate
++    }
++
++    /// Lowest possible latency in frames.
++    pub fn latency_lo(&self) -> u32 {
++        self.raw.latency_lo
++    }
++
++    /// Higest possible latency in frames.
++    pub fn latency_hi(&self) -> u32 {
++        self.raw.latency_hi
++    }
++}
++
++pub type Result<T> = ::std::result::Result<T, Error>;
++
++#[cfg(test)]
++mod tests {
++    use binding::Binding;
++    use std::mem;
++
++    #[test]
++    fn stream_params_raw_channels() {
++        let mut raw: super::ffi::cubeb_stream_params = unsafe { mem::zeroed() };
++        raw.channels = 2;
++        let params = unsafe { super::StreamParams::from_raw(&raw as *const _) };
++        assert_eq!(params.channels(), 2);
++    }
++
++    #[test]
++    fn stream_params_raw_format() {
++        let mut raw: super::ffi::cubeb_stream_params = unsafe { mem::zeroed() };
++        macro_rules! check(
++            ($($raw:ident => $real:ident),*) => (
++                $(raw.format = super::ffi::$raw;
++                  let params = unsafe {
++                      super::StreamParams::from_raw(&raw as *const _)
++                  };
++                  assert_eq!(params.format(), super::SampleFormat::$real);
++                )*
++            ) );
++
++        check!(CUBEB_SAMPLE_S16LE => S16LE,
++               CUBEB_SAMPLE_S16BE => S16BE,
++               CUBEB_SAMPLE_FLOAT32LE => Float32LE,
++               CUBEB_SAMPLE_FLOAT32BE => Float32BE);
++    }
++
++    #[test]
++    fn stream_params_raw_format_native_endian() {
++        let mut raw: super::ffi::cubeb_stream_params = unsafe { mem::zeroed() };
++        raw.format = super::ffi::CUBEB_SAMPLE_S16NE;
++        let params = unsafe { super::StreamParams::from_raw(&raw as *const _) };
++        assert_eq!(
++            params.format(),
++            if cfg!(target_endian = "little") {
++                super::SampleFormat::S16LE
++            } else {
++                super::SampleFormat::S16BE
++            }
++        );
++
++        raw.format = super::ffi::CUBEB_SAMPLE_FLOAT32NE;
++        let params = unsafe { super::StreamParams::from_raw(&raw as *const _) };
++        assert_eq!(
++            params.format(),
++            if cfg!(target_endian = "little") {
++                super::SampleFormat::Float32LE
++            } else {
++                super::SampleFormat::Float32BE
++            }
++        );
++    }
++
++    #[test]
++    fn stream_params_raw_layout() {
++        let mut raw: super::ffi::cubeb_stream_params = unsafe { mem::zeroed() };
++        macro_rules! check(
++            ($($raw:ident => $real:ident),*) => (
++                $(raw.layout = super::ffi::$raw;
++                  let params = unsafe {
++                      super::StreamParams::from_raw(&raw as *const _)
++                  };
++                  assert_eq!(params.layout(), super::ChannelLayout::$real);
++                )*
++            ) );
++
++        check!(CUBEB_LAYOUT_UNDEFINED => Undefined,
++               CUBEB_LAYOUT_DUAL_MONO => DualMono,
++               CUBEB_LAYOUT_DUAL_MONO_LFE => DualMonoLfe,
++               CUBEB_LAYOUT_MONO => Mono,
++               CUBEB_LAYOUT_MONO_LFE => MonoLfe,
++               CUBEB_LAYOUT_STEREO => Stereo,
++               CUBEB_LAYOUT_STEREO_LFE => StereoLfe,
++               CUBEB_LAYOUT_3F => Layout3F,
++               CUBEB_LAYOUT_3F_LFE => Layout3FLfe,
++               CUBEB_LAYOUT_2F1 => Layout2F1,
++               CUBEB_LAYOUT_2F1_LFE => Layout2F1Lfe,
++               CUBEB_LAYOUT_3F1 => Layout3F1,
++               CUBEB_LAYOUT_3F1_LFE => Layout3F1Lfe,
++               CUBEB_LAYOUT_2F2 => Layout2F2,
++               CUBEB_LAYOUT_2F2_LFE => Layout2F2Lfe,
++               CUBEB_LAYOUT_3F2 => Layout3F2,
++               CUBEB_LAYOUT_3F2_LFE => Layout3F2Lfe,
++               CUBEB_LAYOUT_3F3R_LFE => Layout3F3RLfe,
++               CUBEB_LAYOUT_3F4_LFE => Layout3F4Lfe);
++    }
++
++    #[test]
++    fn stream_params_raw_rate() {
++        let mut raw: super::ffi::cubeb_stream_params = unsafe { mem::zeroed() };
++        raw.rate = 44100;
++        let params = unsafe { super::StreamParams::from_raw(&raw as *const _) };
++        assert_eq!(params.rate(), 44100);
++    }
++
++}
+diff --git a/media/cubeb-rs/cubeb-core/src/util.rs b/media/cubeb-rs/cubeb-core/src/util.rs
+new file mode 100644
+index 0000000..049e8cc
+--- /dev/null
++++ b/media/cubeb-rs/cubeb-core/src/util.rs
+@@ -0,0 +1,15 @@
++// Copyright © 2017 Mozilla Foundation
++//
++// This program is made available under an ISC-style license.  See the
++// accompanying file LICENSE for details.
++
++use std::ffi::CStr;
++use std::os::raw::c_char;
++
++pub unsafe fn opt_bytes<T>(_anchor: &T, c: *const c_char) -> Option<&[u8]> {
++    if c.is_null() {
++        None
++    } else {
++        Some(CStr::from_ptr(c).to_bytes())
++    }
++}
+-- 
+2.10.2
+

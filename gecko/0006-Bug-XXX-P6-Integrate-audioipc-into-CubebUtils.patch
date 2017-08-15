@@ -1,0 +1,174 @@
+From bf8d01a4daaf75777870086f6f879b8771f5653b Mon Sep 17 00:00:00 2001
+From: Dan Glastonbury <dan.glastonbury@gmail.com>
+Date: Thu, 27 Jul 2017 18:12:07 +1000
+Subject: Bug XXX - P6: Integrate audioipc into CubebUtils.
+
+Enable client/server using: media.cubeb.sandbox = true
+
+This pref is only read at start up, so requires restarting firefox for
+a change in value to take effect.
+
+MozReview-Commit-ID: 36L4vR5QEDJ
+
+diff --git a/dom/ipc/ContentPrefs.cpp b/dom/ipc/ContentPrefs.cpp
+index 78ecd55..e6fdea3 100644
+--- a/dom/ipc/ContentPrefs.cpp
++++ b/dom/ipc/ContentPrefs.cpp
+@@ -122,6 +122,7 @@ const char* mozilla::dom::ContentPrefs::gInitPrefs[] = {
+   "media.apple.forcevda",
+   "media.clearkey.persistent-license.enabled",
+   "media.cubeb.backend",
++  "media.cubeb.sandbox",
+   "media.cubeb_latency_msg_frames",
+   "media.cubeb_latency_playback_ms",
+   "media.decoder-doctor.wmf-disabled-is-failure",
+diff --git a/dom/media/CubebUtils.cpp b/dom/media/CubebUtils.cpp
+index c2d1a22d..e7c09cd 100644
+--- a/dom/media/CubebUtils.cpp
++++ b/dom/media/CubebUtils.cpp
+@@ -7,6 +7,7 @@
+ #include "CubebUtils.h"
+ 
+ #include "MediaInfo.h"
++#include "MediaPrefs.h"
+ #include "mozilla/AbstractThread.h"
+ #include "mozilla/Logging.h"
+ #include "mozilla/Preferences.h"
+@@ -29,6 +30,7 @@
+ #define PREF_CUBEB_LATENCY_PLAYBACK "media.cubeb_latency_playback_ms"
+ #define PREF_CUBEB_LATENCY_MSG "media.cubeb_latency_msg_frames"
+ #define PREF_CUBEB_LOGGING_LEVEL "media.cubeb.logging_level"
++#define PREF_CUBEB_SANDBOX "media.cubeb.sandbox"
+ 
+ #define MASK_MONO       (1 << AudioConfig::CHANNEL_MONO)
+ #define MASK_MONO_LFE   (MASK_MONO | (1 << AudioConfig::CHANNEL_LFE))
+@@ -47,10 +49,41 @@
+ #define MASK_3F3R_LFE   (MASK_3F2_LFE | (1 << AudioConfig::CHANNEL_RCENTER))
+ #define MASK_3F4_LFE    (MASK_3F2_LFE | (1 << AudioConfig::CHANNEL_RLS) | (1 << AudioConfig::CHANNEL_RRS))
+ 
++extern "C" {
++// These functions are provided by audioipc-server crate
++extern void* audioipc_server_start();
++extern void audioipc_server_stop(void*);
++// These functions are provided by audioipc-client crate
++extern int audioipc_client_init(cubeb**, const char*);
++}
++
+ namespace mozilla {
+ 
+ namespace {
+ 
++////////////////////////////////////////////////////////////////////////////////
++// Cubeb Sound Server Thread
++void* sServerHandle = nullptr;
++
++static bool
++StartSoundServer()
++{
++  sServerHandle = audioipc_server_start();
++  return sServerHandle != nullptr;
++}
++
++static void
++ShutdownSoundServer()
++{
++  if (!sServerHandle)
++    return;
++
++  audioipc_server_stop(sServerHandle);
++  sServerHandle = nullptr;
++}
++
++////////////////////////////////////////////////////////////////////////////////
++
+ LazyLogModule gCubebLog("cubeb");
+ 
+ void CubebLogCallback(const char* aFmt, ...)
+@@ -212,6 +245,15 @@ void PrefChanged(const char* aPref, void* aClosure)
+       PodCopy(sCubebBackendName.get(), value.get(), value.Length());
+       sCubebBackendName[value.Length()] = 0;
+     }
++  } else if (strcmp(aPref, PREF_CUBEB_SANDBOX) == 0) {
++    bool cubebSandbox = false;
++    Preferences::GetBool(PREF_CUBEB_SANDBOX, &cubebSandbox);
++    MOZ_LOG(gCubebLog, LogLevel::Verbose, ("%s: %s", PREF_CUBEB_SANDBOX, cubebSandbox ? "true" : "false"));
++
++    if (cubebSandbox && !sServerHandle && XRE_IsParentProcess()) {
++      MOZ_LOG(gCubebLog, LogLevel::Debug, ("Starting cubeb server..."));
++      StartSoundServer();
++    }
+   }
+ }
+ 
+@@ -265,7 +307,8 @@ uint32_t PreferredSampleRate()
+   return sPreferredSampleRate;
+ }
+ 
+-bool InitPreferredChannelLayout()
++bool
++InitPreferredChannelLayout()
+ {
+   {
+     StaticMutexAutoLock lock(sMutex);
+@@ -343,9 +386,15 @@ cubeb* GetCubebContextUnlocked()
+       sBrandName, "Did not initialize sbrandName, and not on the main thread?");
+   }
+ 
+-  int rv = cubeb_init(&sCubebContext, sBrandName, sCubebBackendName.get());
++  bool cubebSandbox = MediaPrefs::CubebSandbox();
++  MOZ_LOG(gCubebLog, LogLevel::Info, ("%s: %s", PREF_CUBEB_SANDBOX, cubebSandbox ? "true" : "false"));
++
++  int rv = (cubebSandbox)
++    ? audioipc_client_init(&sCubebContext, sBrandName)
++    : cubeb_init(&sCubebContext, sBrandName, sCubebBackendName.get());
+   NS_WARNING_ASSERTION(rv == CUBEB_OK, "Could not get a cubeb context.");
+-  sCubebState = (rv == CUBEB_OK) ? CubebState::Initialized : CubebState::Uninitialized;
++  sCubebState =
++    (rv == CUBEB_OK) ? CubebState::Initialized : CubebState::Uninitialized;
+ 
+   if (MOZ_LOG_TEST(gCubebLog, LogLevel::Verbose)) {
+     cubeb_set_log_callback(CUBEB_LOG_VERBOSE, CubebLogCallback);
+@@ -423,6 +472,7 @@ void InitLibrary()
+   Preferences::RegisterCallbackAndCall(PrefChanged, PREF_CUBEB_LATENCY_PLAYBACK);
+   Preferences::RegisterCallbackAndCall(PrefChanged, PREF_CUBEB_LATENCY_MSG);
+   Preferences::RegisterCallbackAndCall(PrefChanged, PREF_CUBEB_BACKEND);
++  Preferences::RegisterCallbackAndCall(PrefChanged, PREF_CUBEB_SANDBOX);
+   // We don't want to call the callback on startup, because the pref is the
+   // empty string by default ("", which means "logging disabled"). Because the
+   // logging can be enabled via environment variables (MOZ_LOG="module:5"),
+@@ -437,6 +487,7 @@ void InitLibrary()
+ void ShutdownLibrary()
+ {
+   Preferences::UnregisterCallback(PrefChanged, PREF_VOLUME_SCALE);
++  Preferences::UnregisterCallback(PrefChanged, PREF_CUBEB_SANDBOX);
+   Preferences::UnregisterCallback(PrefChanged, PREF_CUBEB_BACKEND);
+   Preferences::UnregisterCallback(PrefChanged, PREF_CUBEB_LATENCY_PLAYBACK);
+   Preferences::UnregisterCallback(PrefChanged, PREF_CUBEB_LATENCY_MSG);
+@@ -451,6 +502,8 @@ void ShutdownLibrary()
+   sCubebBackendName = nullptr;
+   // This will ensure we don't try to re-create a context.
+   sCubebState = CubebState::Shutdown;
++
++  ShutdownSoundServer();
+ }
+ 
+ uint32_t MaxNumberOfChannels()
+diff --git a/dom/media/MediaPrefs.h b/dom/media/MediaPrefs.h
+index cea0cb7..10d33e8 100644
+--- a/dom/media/MediaPrefs.h
++++ b/dom/media/MediaPrefs.h
+@@ -210,6 +210,11 @@ private:
+ 
+   // resume background video decoding when the cursor is hovering over the tab.
+   DECL_MEDIA_PREF("media.resume-bkgnd-video-on-tabhover",     ResumeVideoDecodingOnTabHover, bool, false);
++
++#ifdef MOZ_CUBEB_REMOTING
++  DECL_MEDIA_PREF("media.cubeb.sandbox",                      CubebSandbox, bool, false);
++#endif // MOZ_CUBEB_REMOTING
++
+ public:
+   // Manage the singleton:
+   static MediaPrefs& GetSingleton();
+-- 
+2.10.2
+

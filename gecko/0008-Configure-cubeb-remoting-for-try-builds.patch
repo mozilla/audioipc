@@ -1,0 +1,21 @@
+From f74bac1158d835b9e5c43d8a0924dd9a65c7ebea Mon Sep 17 00:00:00 2001
+From: Dan Glastonbury <dan.glastonbury@gmail.com>
+Date: Thu, 10 Aug 2017 09:54:30 +1000
+Subject: Configure cubeb remoting for try builds.
+
+MozReview-Commit-ID: IGsykrjiKi4
+
+diff --git a/build/mozconfig.common.override b/build/mozconfig.common.override
+index 7285aa9..1447b3e 100644
+--- a/build/mozconfig.common.override
++++ b/build/mozconfig.common.override
+@@ -9,3 +9,5 @@
+ # to override anything done previously.
+ #
+ # The common expected usage is for try builds with nondefault options.
++
++ac_add_options --enable-cubeb-remoting
+\ No newline at end of file
+-- 
+2.10.2
+
