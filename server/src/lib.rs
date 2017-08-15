@@ -13,6 +13,7 @@ extern crate mio_uds;
 extern crate slab;
 
 use audioipc::messages::{ClientMessage, DeviceInfo, ServerMessage, StreamParams};
+use audioipc::shm::{SharedMemReader, SharedMemWriter};
 use cubeb_core::binding::Binding;
 use cubeb_core::ffi;
 use mio::Token;
@@ -39,13 +40,18 @@ pub mod errors {
 
 use errors::*;
 
+// TODO: Remove and let caller allocate based on cubeb backend requirements.
+const SHM_AREA_SIZE: usize = 2 * 1024 * 1024;
+
 // TODO: this should forward to the client.
 struct Callback {
     /// Size of input frame in bytes
     input_frame_size: u16,
     /// Size of output frame in bytes
     output_frame_size: u16,
-    connection: audioipc::Connection
+    connection: audioipc::Connection,
+    input_shm: SharedMemWriter,
+    output_shm: SharedMemReader,
 }
 
 impl cubeb::StreamCallback for Callback {
@@ -65,9 +71,10 @@ impl cubeb::StreamCallback for Callback {
             slice::from_raw_parts_mut(output.as_mut_ptr(), size_bytes)
         };
 
+        self.input_shm.write(&real_input).unwrap();
+
         self.connection
             .send(ClientMessage::StreamDataCallback(
-                real_input.to_vec(),
                 output.len() as isize,
                 self.output_frame_size as usize
             ))
@@ -75,13 +82,18 @@ impl cubeb::StreamCallback for Callback {
 
         let r = self.connection.receive();
         match r {
-            Ok(ServerMessage::StreamDataCallback(v)) => {
-                let nbytes = v.len();
-                real_output[..nbytes].copy_from_slice(&v);
-                return nbytes as isize / self.output_frame_size as isize;
+            Ok(ServerMessage::StreamDataCallback(cb_result)) => {
+                if cb_result >= 0 {
+                    let len = cb_result as usize * self.output_frame_size as usize;
+                    self.output_shm.read(&mut real_output[..len]).unwrap();
+                    cb_result
+                } else {
+                    cb_result
+                }
             },
             _ => {
-                return 0;
+                debug!("Unexpected message {:?} during callback", r);
+                -1
             },
         }
     }
@@ -303,12 +315,19 @@ impl<'ctx> ServerConn<'ctx> {
                 let (conn1, conn2) = audioipc::Connection::pair()?;
                 info!("Created connection pair: {:?}-{:?}", conn1, conn2);
 
+                let (input_shm, input_file) =
+                    SharedMemWriter::new(&audioipc::get_shm_path("input"), SHM_AREA_SIZE)?;
+                let (output_shm, output_file) =
+                    SharedMemReader::new(&audioipc::get_shm_path("output"), SHM_AREA_SIZE)?;
+
                 match context.stream_init(
                     &params,
                     Callback {
                         input_frame_size: input_frame_size,
                         output_frame_size: output_frame_size,
-                        connection: conn2
+                        connection: conn2,
+                        input_shm: input_shm,
+                        output_shm: output_shm,
                     }
                 ) {
                     Ok(stream) => {
@@ -328,7 +347,16 @@ impl<'ctx> ServerConn<'ctx> {
                         };
 
                         self.connection
-                            .send_with_fd(ClientMessage::StreamCreated(stm_tok), conn1)
+                            .send_with_fd(ClientMessage::StreamCreated(stm_tok), Some(conn1))
+                            .unwrap();
+                        // TODO: It'd be nicer to send these as part of
+                        // StreamCreated, but that requires changing
+                        // sendmsg/recvmsg to support multiple fds.
+                        self.connection
+                            .send_with_fd(ClientMessage::StreamCreatedInputShm, Some(input_file))
+                            .unwrap();
+                        self.connection
+                            .send_with_fd(ClientMessage::StreamCreatedOutputShm, Some(output_file))
                             .unwrap();
                     },
                     Err(e) => {

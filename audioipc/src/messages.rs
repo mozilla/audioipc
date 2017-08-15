@@ -209,7 +209,7 @@ pub enum ServerMessage {
     StreamSetPanning(usize, f32),
     StreamGetCurrentDevice(usize),
 
-    StreamDataCallback(Vec<u8>)
+    StreamDataCallback(isize)
 }
 
 // Server -> Client messages.
@@ -227,6 +227,8 @@ pub enum ClientMessage {
     ContextEnumeratedDevices(Vec<DeviceInfo>),
 
     StreamCreated(usize), /*(RawFd)*/
+    StreamCreatedInputShm, /*(RawFd)*/
+    StreamCreatedOutputShm, /*(RawFd)*/
     StreamDestroyed,
 
     StreamStarted,
@@ -238,7 +240,7 @@ pub enum ClientMessage {
     StreamPanningSet,
     StreamCurrentDevice(Device),
 
-    StreamDataCallback(Vec<u8>, isize, usize),
+    StreamDataCallback(isize, usize),
     StreamStateCallback(ffi::cubeb_state),
 
     ContextError(ffi::cubeb_error_code),
