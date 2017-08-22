@@ -33,6 +33,7 @@ pub mod errors {
             AudioIPC(::audioipc::errors::Error, ::audioipc::errors::ErrorKind);
         }
         foreign_links {
+            Cubeb(::cubeb_core::Error);
             Io(::std::io::Error);
         }
     }
@@ -112,21 +113,21 @@ impl Drop for Callback {
 }
 
 type Slab<T> = slab::Slab<T, Token>;
-type StreamSlab<'ctx> = slab::Slab<cubeb::Stream<'ctx, Callback>, usize>;
+type StreamSlab = slab::Slab<cubeb::Stream<Callback>, usize>;
 
 // TODO: Server token must be outside range used by server.connections slab.
 // usize::MAX is already used internally in mio.
 const QUIT: Token = Token(std::usize::MAX - 2);
 const SERVER: Token = Token(std::usize::MAX - 1);
 
-struct ServerConn<'ctx> {
+struct ServerConn {
     connection: audioipc::Connection,
     token: Option<Token>,
-    streams: StreamSlab<'ctx>
+    streams: StreamSlab
 }
 
-impl<'ctx> ServerConn<'ctx> {
-    fn new<FD>(fd: FD) -> ServerConn<'ctx>
+impl ServerConn {
+    fn new<FD>(fd: FD) -> ServerConn
     where
         FD: IntoRawFd,
     {
@@ -138,19 +139,20 @@ impl<'ctx> ServerConn<'ctx> {
         }
     }
 
-    fn process<'c>(&mut self, poll: &mut mio::Poll, context: &'c cubeb::Context) -> Result<()>
-    where
-        'c: 'ctx,
-    {
+    fn process(&mut self, poll: &mut mio::Poll, context: &Result<Option<cubeb::Context>>) -> Result<()> {
         let r = self.connection.receive();
         info!("ServerConn::process: got {:?}", r);
 
-        // TODO: Might need a simple state machine to deal with
-        // create/use/destroy ordering, etc.
-        // TODO: receive() and all this handling should be moved out
-        // of this event loop code.
-        let msg = try!(r);
-        let _ = try!(self.process_msg(&msg, context));
+        if let &Ok(Some(ref ctx)) = context {
+            // TODO: Might need a simple state machine to deal with
+            // create/use/destroy ordering, etc.
+            // TODO: receive() and all this handling should be moved out
+            // of this event loop code.
+            let msg = try!(r);
+            let _ = try!(self.process_msg(&msg, ctx));
+        } else {
+            self.send_error(cubeb::Error::new());
+        }
 
         poll.reregister(
             &self.connection,
@@ -162,10 +164,7 @@ impl<'ctx> ServerConn<'ctx> {
         Ok(())
     }
 
-    fn process_msg<'c>(&mut self, msg: &ServerMessage, context: &'c cubeb::Context) -> Result<()>
-    where
-        'c: 'ctx,
-    {
+    fn process_msg(&mut self, msg: &ServerMessage, context: &cubeb::Context) -> Result<()> {
         match msg {
             &ServerMessage::ClientConnect => {
                 panic!("already connected");
@@ -443,15 +442,21 @@ impl<'ctx> ServerConn<'ctx> {
     }
 }
 
-pub struct Server<'ctx> {
+pub struct Server {
     socket: UnixListener,
-    conns: Slab<ServerConn<'ctx>>
+    // Ok(None)      - Server hasn't tried to create cubeb::Context.
+    // Ok(Some(ctx)) - Server has successfully created cubeb::Context.
+    // Err(_)        - Server has tried and failed to create cubeb::Context.
+    //                 Don't try again.
+    context: Result<Option<cubeb::Context>>,
+    conns: Slab<ServerConn>
 }
 
-impl<'ctx> Server<'ctx> {
-    pub fn new(socket: UnixListener) -> Server<'ctx> {
+impl Server {
+    pub fn new(socket: UnixListener) -> Server {
         Server {
             socket: socket,
+            context: Ok(None),
             conns: Slab::with_capacity(16)
         }
     }
@@ -492,13 +497,19 @@ impl<'ctx> Server<'ctx> {
         let r = self.conns[token].send(ClientMessage::ClientConnected);
         debug!("sent {:?} (ClientConnected)", r);
          */
+
+        // Since we have a connection try creating a cubeb context. If
+        // it fails, mark the failure with Err.
+        if let Ok(None) = self.context {
+            self.context = cubeb::Context::init("AudioIPC Server", None)
+                .and_then(|ctx| Ok(Some(ctx)))
+                .or_else(|err| Err(err.into()));
+        }
+
         Ok(())
     }
 
-    pub fn poll<'c>(&mut self, poll: &mut mio::Poll, ctx: &'c cubeb::Context) -> Result<()>
-    where
-        'c: 'ctx,
-    {
+    pub fn poll(&mut self, poll: &mut mio::Poll) -> Result<()> {
         let mut events = mio::Events::with_capacity(16);
 
         match poll.poll(&mut events, None) {
@@ -523,7 +534,7 @@ impl<'ctx> Server<'ctx> {
                 token => {
                     debug!("token {:?} ready", token);
 
-                    let r = self.conns[token].process(poll, ctx);
+                    let r = self.conns[token].process(poll, &self.context);
 
                     debug!("got {:?}", r);
 
@@ -561,8 +572,6 @@ pub fn run(running: Arc<AtomicBool>) -> Result<()> {
     let _ = std::fs::remove_file(audioipc::get_uds_path());
 
     // TODO: Use a SEQPACKET, wrap it in UnixStream?
-    let context = cubeb::Context::init("AudioIPC Server", None).expect("Failed to create cubeb context");
-    let ctx = &context;
     let mut poll = mio::Poll::new()?;
     let mut server = Server::new(UnixListener::bind(audioipc::get_uds_path())?);
 
@@ -578,7 +587,7 @@ pub fn run(running: Arc<AtomicBool>) -> Result<()> {
             bail!("server quit due to ctrl-c");
         }
 
-        let _ = try!(server.poll(&mut poll, ctx));
+        let _ = try!(server.poll(&mut poll));
     }
 
     //poll.deregister(&server.socket).unwrap();
@@ -594,8 +603,6 @@ pub extern "C" fn audioipc_server_start() -> *mut c_void {
         let _ = std::fs::remove_file(audioipc::get_uds_path());
 
         // TODO: Use a SEQPACKET, wrap it in UnixStream?
-        let context = cubeb::Context::init("AudioIPC Server", None).expect("Failed to create cubeb context");
-        let ctx = &context;
         let mut poll = mio::Poll::new().unwrap();
         let mut server = Server::new(UnixListener::bind(audioipc::get_uds_path()).unwrap());
 
@@ -610,7 +617,7 @@ pub extern "C" fn audioipc_server_start() -> *mut c_void {
             .unwrap();
 
         loop {
-            match server.poll(&mut poll, ctx) {
+            match server.poll(&mut poll) {
                 Err(_) => {
                     return;
                 },
