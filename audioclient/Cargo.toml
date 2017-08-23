@@ -6,7 +6,7 @@ authors = ["Dan Glastonbury <dan.glastonbury@gmail.com>"]
 [dependencies]
 audioipc = { path = "../audioipc" }
 audioipc-client = { path = "../client" }
-cubeb = { git = "https://github.com/djg/cubeb-rs", version="^0.2"  }
+cubeb = { git = "https://github.com/djg/cubeb-rs", version="^0.3"  }
 cubeb-core = { git = "https://github.com/djg/cubeb-rs", version="^0.1" }
 env_logger = "0.4.3"
 error-chain = "0.10.0"
