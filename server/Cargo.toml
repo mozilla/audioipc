@@ -12,6 +12,6 @@ error-chain = "0.10.0"
 lazycell = "^0.4"
 log = "^0.3.6"
 mio = "0.6.7"
-mio-uds = "0.6.4"
+mini-mio-uds = { path = "../mini-mio-uds" }
 slab = "0.3.0"
 

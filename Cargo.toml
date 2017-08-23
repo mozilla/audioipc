@@ -1,2 +1,2 @@
 [workspace]
-members = ["audioipc", "client", "server", "audioclient", "audioserver"]
+members = ["audioipc", "client", "server", "audioclient", "audioserver", "mini-mio-uds"]

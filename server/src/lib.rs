@@ -9,7 +9,7 @@ extern crate cubeb;
 extern crate cubeb_core;
 extern crate lazycell;
 extern crate mio;
-extern crate mio_uds;
+extern crate mini_mio_uds;
 extern crate slab;
 
 use audioipc::messages::{ClientMessage, DeviceInfo, ServerMessage, StreamParams};
@@ -17,7 +17,7 @@ use audioipc::shm::{SharedMemReader, SharedMemWriter};
 use cubeb_core::binding::Binding;
 use cubeb_core::ffi;
 use mio::Token;
-use mio_uds::UnixListener;
+use mini_mio_uds::UnixListener;
 use std::{slice, thread};
 use std::convert::From;
 use std::os::raw::c_void;
