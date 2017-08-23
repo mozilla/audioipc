@@ -1,0 +1,21 @@
+[package]
+name = "mini-mio-uds"
+version = "0.1.0"
+authors = [
+    "Alex Crichton <alex@alexcrichton.com>",
+    "Dan Glastonbury <dglastonbury@gmail.com>"
+]
+license = "MIT/Apache-2.0"
+readme = "README.md"
+documentation = "https://docs.rs/mio-uds"
+description = """
+A cut-down version of unix domain socket bindings for mio.  See https://github.com/alexcrichton/mio-uds
+"""
+categories = ["asynchronous"]
+
+[target."cfg(unix)".dependencies]
+libc = "0.2"
+mio = "0.6.5"
+
+[dev-dependencies]
+tempdir = "0.3"
