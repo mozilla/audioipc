@@ -9,9 +9,9 @@ audioipc = { path = "../audioipc" }
 cubeb = { git = "https://github.com/djg/cubeb-rs", version="^0.3" }
 cubeb-core = { git = "https://github.com/djg/cubeb-rs", version="^0.1" }
 error-chain = "0.10.0"
-lazycell = "^0.4"
-log = "^0.3.6"
-mio = "0.6.7"
-mio-uds = "0.6.4"
+lazycell = "0.4"
+log = "0.3.6"
+mio = "=0.6.9"
+mio-uds = "=0.6.4"
 slab = "0.3.0"
 
