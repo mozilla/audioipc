@@ -33,7 +33,7 @@ pub const CLIENT_OPS: Ops = capi_new!(ClientContext, ClientStream);
 
 impl ClientContext {
     #[doc(hidden)]
-    pub fn conn(&self) -> MutexGuard<Connection> {
+    pub fn connection(&self) -> MutexGuard<Connection> {
         self.connection.lock().unwrap()
     }
 }
@@ -54,25 +54,30 @@ impl Context for ClientContext {
     }
 
     fn max_channel_count(&self) -> Result<u32> {
-        send_recv!(self.conn(), ContextGetMaxChannelCount => ContextMaxChannelCount())
+        let mut conn = self.connection();
+        send_recv!(conn, ContextGetMaxChannelCount => ContextMaxChannelCount())
     }
 
     fn min_latency(&self, params: &StreamParams) -> Result<u32> {
         let params = messages::StreamParams::from(unsafe { &*params.raw() });
-        send_recv!(self.conn(), ContextGetMinLatency(params) => ContextMinLatency())
+        let mut conn = self.connection();
+        send_recv!(conn, ContextGetMinLatency(params) => ContextMinLatency())
     }
 
     fn preferred_sample_rate(&self) -> Result<u32> {
-        send_recv!(self.conn(), ContextGetPreferredSampleRate => ContextPreferredSampleRate())
+        let mut conn = self.connection();
+        send_recv!(conn, ContextGetPreferredSampleRate => ContextPreferredSampleRate())
     }
 
     fn preferred_channel_layout(&self) -> Result<ffi::cubeb_channel_layout> {
-        send_recv!(self.conn(), ContextGetPreferredChannelLayout => ContextPreferredChannelLayout())
+        let mut conn = self.connection();
+        send_recv!(conn, ContextGetPreferredChannelLayout => ContextPreferredChannelLayout())
     }
 
     fn enumerate_devices(&self, devtype: DeviceType) -> Result<ffi::cubeb_device_collection> {
+        let mut conn = self.connection();
         let v: Vec<ffi::cubeb_device_info> =
-            match send_recv!(self.conn(), ContextGetDeviceEnumeration(devtype.bits()) => ContextEnumeratedDevices()) {
+            match send_recv!(conn, ContextGetDeviceEnumeration(devtype.bits()) => ContextEnumeratedDevices()) {
                 Ok(mut v) => v.drain(..).map(|i| i.into()).collect(),
                 Err(e) => return Err(e),
             };
@@ -164,7 +169,8 @@ impl Context for ClientContext {
 
 impl Drop for ClientContext {
     fn drop(&mut self) {
+        let mut conn = self.connection();
         info!("ClientContext drop...");
-        let _: Result<()> = send_recv!(self.conn(), ClientDisconnect => ClientDisconnected);
+        let _: Result<()> = send_recv!(conn, ClientDisconnect => ClientDisconnected);
     }
 }
