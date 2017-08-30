@@ -84,17 +84,16 @@ impl<'ctx> ClientStream<'ctx> {
         state_callback: ffi::cubeb_state_callback,
         user_ptr: *mut c_void,
     ) -> Result<*mut ffi::cubeb_stream> {
+        let mut conn = ctx.connection();
 
-        ctx.conn()
-            .send(ServerMessage::StreamInit(init_params))
-            .unwrap();
+        conn.send(ServerMessage::StreamInit(init_params)).unwrap();
 
-        let r = match ctx.conn().receive_with_fd::<ClientMessage>() {
+        let r = match conn.receive_with_fd::<ClientMessage>() {
             Ok(r) => r,
             Err(_) => return Err(ErrorCode::Error.into()),
         };
 
-        let (token, conn) = match r {
+        let (token, conn2) = match r {
             (ClientMessage::StreamCreated(tok), Some(fd)) => (tok, unsafe {
                 Connection::from_raw_fd(fd)
             }),
@@ -111,7 +110,7 @@ impl<'ctx> ClientStream<'ctx> {
         // TODO: It'd be nicer to receive these two fds as part of
         // StreamCreated, but that requires changing sendmsg/recvmsg to
         // support multiple fds.
-        let r = match ctx.conn().receive_with_fd::<ClientMessage>() {
+        let r = match conn.receive_with_fd::<ClientMessage>() {
             Ok(r) => r,
             Err(_) => return Err(ErrorCode::Error.into()),
         };
@@ -129,7 +128,7 @@ impl<'ctx> ClientStream<'ctx> {
         let input_shm = SharedMemSlice::from(input_file,
                                              SHM_AREA_SIZE).unwrap();
 
-        let r = match ctx.conn().receive_with_fd::<ClientMessage>() {
+        let r = match conn.receive_with_fd::<ClientMessage>() {
             Ok(r) => r,
             Err(_) => return Err(ErrorCode::Error.into()),
         };
@@ -149,7 +148,7 @@ impl<'ctx> ClientStream<'ctx> {
 
         let user_data = user_ptr as usize;
         let join_handle = thread::spawn(move || {
-            stream_thread(conn, input_shm, output_shm, data_callback, state_callback, user_data)
+            stream_thread(conn2, input_shm, output_shm, data_callback, state_callback, user_data)
         });
 
         Ok(Box::into_raw(Box::new(ClientStream {
@@ -162,42 +161,51 @@ impl<'ctx> ClientStream<'ctx> {
 
 impl<'ctx> Drop for ClientStream<'ctx> {
     fn drop(&mut self) {
-        let _: Result<()> = send_recv!(self.context.conn(), StreamDestroy(self.token) => StreamDestroyed);
+        let mut conn = self.context.connection();
+        let _: Result<()> = send_recv!(conn, StreamDestroy(self.token) => StreamDestroyed);
         self.join_handle.take().unwrap().join().unwrap();
     }
 }
 
 impl<'ctx> Stream for ClientStream<'ctx> {
     fn start(&self) -> Result<()> {
-        send_recv!(self.context.conn(), StreamStart(self.token) => StreamStarted)
+        let mut conn = self.context.connection();
+        send_recv!(conn, StreamStart(self.token) => StreamStarted)
     }
 
     fn stop(&self) -> Result<()> {
-        send_recv!(self.context.conn(), StreamStop(self.token) => StreamStopped)
+        let mut conn = self.context.connection();
+        send_recv!(conn, StreamStop(self.token) => StreamStopped)
     }
 
     fn reset_default_device(&self) -> Result<()> {
-        send_recv!(self.context.conn(), StreamResetDefaultDevice(self.token) => StreamDefaultDeviceReset)
+        let mut conn = self.context.connection();
+        send_recv!(conn, StreamResetDefaultDevice(self.token) => StreamDefaultDeviceReset)
     }
 
     fn position(&self) -> Result<u64> {
-        send_recv!(self.context.conn(), StreamGetPosition(self.token) => StreamPosition())
+        let mut conn = self.context.connection();
+        send_recv!(conn, StreamGetPosition(self.token) => StreamPosition())
     }
 
     fn latency(&self) -> Result<u32> {
-        send_recv!(self.context.conn(), StreamGetLatency(self.token) => StreamLatency())
+        let mut conn = self.context.connection();
+        send_recv!(conn, StreamGetLatency(self.token) => StreamLatency())
     }
 
     fn set_volume(&self, volume: f32) -> Result<()> {
-        send_recv!(self.context.conn(), StreamSetVolume(self.token, volume) => StreamVolumeSet)
+        let mut conn = self.context.connection();
+        send_recv!(conn, StreamSetVolume(self.token, volume) => StreamVolumeSet)
     }
 
     fn set_panning(&self, panning: f32) -> Result<()> {
-        send_recv!(self.context.conn(), StreamSetPanning(self.token, panning) => StreamPanningSet)
+        let mut conn = self.context.connection();
+        send_recv!(conn, StreamSetPanning(self.token, panning) => StreamPanningSet)
     }
 
     fn current_device(&self) -> Result<*const ffi::cubeb_device> {
-        match send_recv!(self.context.conn(), StreamGetCurrentDevice(self.token) => StreamCurrentDevice()) {
+        let mut conn = self.context.connection();
+        match send_recv!(conn, StreamGetCurrentDevice(self.token) => StreamCurrentDevice()) {
             Ok(d) => Ok(Box::into_raw(Box::new(d.into()))),
             Err(e) => Err(e),
         }
