@@ -23,6 +23,7 @@ extern crate mio;
 extern crate serde;
 
 pub mod async;
+pub mod codec;
 mod connection;
 pub mod errors;
 pub mod messages;
