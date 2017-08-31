@@ -13,18 +13,16 @@ extern crate log;
 
 #[macro_use]
 extern crate serde_derive;
-extern crate serde;
+
 extern crate bincode;
-
-extern crate mio;
-
+extern crate bytes;
 extern crate cubeb_core;
-
 extern crate libc;
-extern crate byteorder;
-
 extern crate memmap;
+extern crate mio;
+extern crate serde;
 
+pub mod async;
 mod connection;
 pub mod errors;
 pub mod messages;
