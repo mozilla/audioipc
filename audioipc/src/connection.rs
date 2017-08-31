@@ -1,6 +1,6 @@
+use {RecvFd, SendFd};
 use bincode::{self, deserialize, serialize};
 use errors::*;
-use msg;
 use mio::{Poll, PollOpt, Ready, Token};
 use mio::event::Evented;
 use mio::unix::EventedFd;
@@ -11,16 +11,6 @@ use std::io::{self, Read};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::os::unix::net;
 use std::os::unix::prelude::*;
-use libc;
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-
-pub trait RecvFd {
-    fn recv_fd(&mut self, bytes: &mut [u8]) -> io::Result<(usize, Option<RawFd>)>;
-}
-
-pub trait SendFd {
-    fn send_fd<FD: IntoRawFd>(&mut self, bytes: &[u8], fd: Option<FD>) -> io::Result<(usize)>;
-}
 
 // Because of the trait implementation rules in Rust, this needs to be
 // a wrapper class to allow implementation of a trait from another
@@ -120,6 +110,7 @@ impl Connection {
     {
         let encoded: Vec<u8> = serialize(&msg, bincode::Infinite)?;
         info!("send_with_fd {:?}, {:?}", msg, fd_to_send);
+        let fd_to_send = fd_to_send.map(|fd| fd.into_raw_fd());
         self.stream.send_fd(&encoded, fd_to_send).chain_err(
             || "Failed to send message with fd"
         )
@@ -153,14 +144,6 @@ impl<'a> Read for &'a Connection {
     }
 }
 
-impl RecvFd for net::UnixStream {
-    fn recv_fd(&mut self, buf_to_recv: &mut [u8]) -> io::Result<(usize, Option<RawFd>)> {
-        let length = self.read_u32::<LittleEndian>()?;
-
-        msg::recvmsg(self.as_raw_fd(), &mut buf_to_recv[..length as usize])
-    }
-}
-
 impl RecvFd for Connection {
     fn recv_fd(&mut self, buf_to_recv: &mut [u8]) -> io::Result<(usize, Option<RawFd>)> {
         self.stream.recv_fd(buf_to_recv)
@@ -181,19 +164,8 @@ impl IntoRawFd for Connection {
     }
 }
 
-impl SendFd for net::UnixStream {
-    fn send_fd<FD: IntoRawFd>(&mut self, buf_to_send: &[u8], fd_to_send: Option<FD>) -> io::Result<usize> {
-        self.write_u32::<LittleEndian>(buf_to_send.len() as u32)?;
-
-        let fd_to_send = fd_to_send.map(|fd| fd.into_raw_fd());
-        let r = msg::sendmsg(self.as_raw_fd(), buf_to_send, fd_to_send);
-        fd_to_send.map(|fd| unsafe { libc::close(fd) });
-        r
-    }
-}
-
 impl SendFd for Connection {
-    fn send_fd<FD: IntoRawFd>(&mut self, buf_to_send: &[u8], fd_to_send: Option<FD>) -> io::Result<usize> {
+    fn send_fd(&mut self, buf_to_send: &[u8], fd_to_send: Option<RawFd>) -> io::Result<usize> {
         self.stream.send_fd(buf_to_send, fd_to_send)
     }
 }
