@@ -84,6 +84,9 @@ impl<'ctx> ClientStream<'ctx> {
         state_callback: ffi::cubeb_state_callback,
         user_ptr: *mut c_void,
     ) -> Result<*mut ffi::cubeb_stream> {
+        // Hold the connection lock for entire init scope so
+        // individual messages aren't interleaved with messages others
+        // streams.
         let mut conn = ctx.connection();
 
         conn.send(ServerMessage::StreamInit(init_params)).unwrap();
@@ -161,51 +164,42 @@ impl<'ctx> ClientStream<'ctx> {
 
 impl<'ctx> Drop for ClientStream<'ctx> {
     fn drop(&mut self) {
-        let mut conn = self.context.connection();
-        let _: Result<()> = send_recv!(conn, StreamDestroy(self.token) => StreamDestroyed);
+        let _: Result<()> = send_recv!(self.context.connection(), StreamDestroy(self.token) => StreamDestroyed);
         self.join_handle.take().unwrap().join().unwrap();
     }
 }
 
 impl<'ctx> Stream for ClientStream<'ctx> {
     fn start(&self) -> Result<()> {
-        let mut conn = self.context.connection();
-        send_recv!(conn, StreamStart(self.token) => StreamStarted)
+        send_recv!(self.context.connection(), StreamStart(self.token) => StreamStarted)
     }
 
     fn stop(&self) -> Result<()> {
-        let mut conn = self.context.connection();
-        send_recv!(conn, StreamStop(self.token) => StreamStopped)
+        send_recv!(self.context.connection(), StreamStop(self.token) => StreamStopped)
     }
 
     fn reset_default_device(&self) -> Result<()> {
-        let mut conn = self.context.connection();
-        send_recv!(conn, StreamResetDefaultDevice(self.token) => StreamDefaultDeviceReset)
+        send_recv!(self.context.connection(), StreamResetDefaultDevice(self.token) => StreamDefaultDeviceReset)
     }
 
     fn position(&self) -> Result<u64> {
-        let mut conn = self.context.connection();
-        send_recv!(conn, StreamGetPosition(self.token) => StreamPosition())
+        send_recv!(self.context.connection(), StreamGetPosition(self.token) => StreamPosition())
     }
 
     fn latency(&self) -> Result<u32> {
-        let mut conn = self.context.connection();
-        send_recv!(conn, StreamGetLatency(self.token) => StreamLatency())
+        send_recv!(self.context.connection(), StreamGetLatency(self.token) => StreamLatency())
     }
 
     fn set_volume(&self, volume: f32) -> Result<()> {
-        let mut conn = self.context.connection();
-        send_recv!(conn, StreamSetVolume(self.token, volume) => StreamVolumeSet)
+        send_recv!(self.context.connection(), StreamSetVolume(self.token, volume) => StreamVolumeSet)
     }
 
     fn set_panning(&self, panning: f32) -> Result<()> {
-        let mut conn = self.context.connection();
-        send_recv!(conn, StreamSetPanning(self.token, panning) => StreamPanningSet)
+        send_recv!(self.context.connection(), StreamSetPanning(self.token, panning) => StreamPanningSet)
     }
 
     fn current_device(&self) -> Result<*const ffi::cubeb_device> {
-        let mut conn = self.context.connection();
-        match send_recv!(conn, StreamGetCurrentDevice(self.token) => StreamCurrentDevice()) {
+        match send_recv!(self.context.connection(), StreamGetCurrentDevice(self.token) => StreamCurrentDevice()) {
             Ok(d) => Ok(Box::into_raw(Box::new(d.into()))),
             Err(e) => Err(e),
         }

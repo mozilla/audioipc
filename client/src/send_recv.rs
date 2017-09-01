@@ -1,20 +1,24 @@
 #[macro_export]
 macro_rules! send_recv {
     ($conn:expr, $smsg:ident => $rmsg:ident) => {{
-        send_recv!(__send $conn, $smsg);
-        send_recv!(__recv $conn, $rmsg)
+        let mut conn = $conn;
+        send_recv!(__send conn, $smsg);
+        send_recv!(__recv conn, $rmsg)
     }};
     ($conn:expr, $smsg:ident => $rmsg:ident()) => {{
-        send_recv!(__send $conn, $smsg);
-        send_recv!(__recv $conn, $rmsg __result)
+        let mut conn = $conn;
+        send_recv!(__send conn, $smsg);
+        send_recv!(__recv conn, $rmsg __result)
     }};
     ($conn:expr, $smsg:ident($($a:expr),*) => $rmsg:ident) => {{
-        send_recv!(__send $conn, $smsg, $($a),*);
-        send_recv!(__recv $conn, $rmsg)
+        let mut conn = $conn;
+        send_recv!(__send conn, $smsg, $($a),*);
+        send_recv!(__recv conn, $rmsg)
     }};
     ($conn:expr, $smsg:ident($($a:expr),*) => $rmsg:ident()) => {{
-        send_recv!(__send $conn, $smsg, $($a),*);
-        send_recv!(__recv $conn, $rmsg __result)
+        let mut conn = $conn;
+        send_recv!(__send conn, $smsg, $($a),*);
+        send_recv!(__recv conn, $rmsg __result)
     }};
     //
     (__send $conn:expr, $smsg:ident) => (

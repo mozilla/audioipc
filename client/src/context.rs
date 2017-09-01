@@ -54,30 +54,25 @@ impl Context for ClientContext {
     }
 
     fn max_channel_count(&self) -> Result<u32> {
-        let mut conn = self.connection();
-        send_recv!(conn, ContextGetMaxChannelCount => ContextMaxChannelCount())
+        send_recv!(self.connection(), ContextGetMaxChannelCount => ContextMaxChannelCount())
     }
 
     fn min_latency(&self, params: &StreamParams) -> Result<u32> {
         let params = messages::StreamParams::from(unsafe { &*params.raw() });
-        let mut conn = self.connection();
-        send_recv!(conn, ContextGetMinLatency(params) => ContextMinLatency())
+        send_recv!(self.connection(), ContextGetMinLatency(params) => ContextMinLatency())
     }
 
     fn preferred_sample_rate(&self) -> Result<u32> {
-        let mut conn = self.connection();
-        send_recv!(conn, ContextGetPreferredSampleRate => ContextPreferredSampleRate())
+        send_recv!(self.connection(), ContextGetPreferredSampleRate => ContextPreferredSampleRate())
     }
 
     fn preferred_channel_layout(&self) -> Result<ffi::cubeb_channel_layout> {
-        let mut conn = self.connection();
-        send_recv!(conn, ContextGetPreferredChannelLayout => ContextPreferredChannelLayout())
+        send_recv!(self.connection(), ContextGetPreferredChannelLayout => ContextPreferredChannelLayout())
     }
 
     fn enumerate_devices(&self, devtype: DeviceType) -> Result<ffi::cubeb_device_collection> {
-        let mut conn = self.connection();
         let v: Vec<ffi::cubeb_device_info> =
-            match send_recv!(conn, ContextGetDeviceEnumeration(devtype.bits()) => ContextEnumeratedDevices()) {
+            match send_recv!(self.connection(), ContextGetDeviceEnumeration(devtype.bits()) => ContextEnumeratedDevices()) {
                 Ok(mut v) => v.drain(..).map(|i| i.into()).collect(),
                 Err(e) => return Err(e),
             };
@@ -169,8 +164,7 @@ impl Context for ClientContext {
 
 impl Drop for ClientContext {
     fn drop(&mut self) {
-        let mut conn = self.connection();
         info!("ClientContext drop...");
-        let _: Result<()> = send_recv!(conn, ClientDisconnect => ClientDisconnected);
+        let _: Result<()> = send_recv!(self.connection(), ClientDisconnect => ClientDisconnected);
     }
 }
