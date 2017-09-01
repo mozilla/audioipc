@@ -1,5 +1,7 @@
 use {RecvFd, SendFd};
-use bincode::{self, deserialize, serialize};
+use async::{Async, AsyncRecvFd};
+use bytes::BytesMut;
+use codec::{Decoder, encode};
 use errors::*;
 use mio::{Poll, PollOpt, Ready, Token};
 use mio::event::Evented;
@@ -20,14 +22,21 @@ use std::os::unix::prelude::*;
 
 #[derive(Debug)]
 pub struct Connection {
-    stream: net::UnixStream
+    stream: net::UnixStream,
+    recv_buffer: BytesMut,
+    send_buffer: BytesMut,
+    decoder: Decoder
 }
 
 impl Connection {
     pub fn new(stream: net::UnixStream) -> Connection {
         info!("Create new connection");
+        stream.set_nonblocking(false).unwrap();
         Connection {
-            stream: stream
+            stream: stream,
+            recv_buffer: BytesMut::with_capacity(32 * 1024),
+            send_buffer: BytesMut::with_capacity(32 * 1024),
+            decoder: Decoder::new()
         }
     }
 
@@ -50,14 +59,7 @@ impl Connection {
     /// ```
     pub fn pair() -> io::Result<(Connection, Connection)> {
         let (s1, s2) = net::UnixStream::pair()?;
-        Ok((
-            Connection {
-                stream: s1
-            },
-            Connection {
-                stream: s2
-            }
-        ))
+        Ok((Connection::new(s1), Connection::new(s2)))
     }
 
     pub fn receive<RT>(&mut self) -> Result<RT>
@@ -75,21 +77,22 @@ impl Connection {
     where
         RT: DeserializeOwned + Debug,
     {
-        // TODO: Check deserialize_from and serialize_into.
-        let mut encoded = vec![0; 32 * 1024]; // TODO: Get max size from bincode, or at least assert.
+        self.recv_buffer.reserve(32 * 1024);
+
         // TODO: Read until block, EOF, or error.
         // TODO: Switch back to recv_fd.
-        match self.stream.recv_fd(&mut encoded) {
-            Ok((0, _)) => Err(ErrorKind::Disconnected.into()),
+        match self.stream.recv_buf_fd(&mut self.recv_buffer) {
+            Ok(Async::Ready((0, _))) => Err(ErrorKind::Disconnected.into()),
             // TODO: Handle partial read?
-            Ok((n, fd)) => {
-                let r = deserialize(&encoded[..n]);
+            Ok(Async::Ready((_, fd))) => {
+                let r = self.decoder.decode(&mut self.recv_buffer);
                 debug!("receive {:?}", r);
                 match r {
-                    Ok(r) => Ok((r, fd)),
+                    Ok(r) => Ok((r.unwrap(), fd)),
                     Err(e) => Err(e).chain_err(|| "Failed to deserialize message"),
                 }
             },
+            Ok(Async::NotReady) => bail!("Socket should be blocking."),
             // TODO: Handle dropped message.
             // Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => panic!("wouldblock"),
             _ => bail!("socket write"),
@@ -108,10 +111,11 @@ impl Connection {
         ST: Serialize + Debug,
         FD: IntoRawFd + Debug,
     {
-        let encoded: Vec<u8> = serialize(&msg, bincode::Infinite)?;
         info!("send_with_fd {:?}, {:?}", msg, fd_to_send);
+        try!(encode(&mut self.send_buffer, &msg));
         let fd_to_send = fd_to_send.map(|fd| fd.into_raw_fd());
-        self.stream.send_fd(&encoded, fd_to_send).chain_err(
+        let send = self.send_buffer.take().freeze();
+        self.stream.send_fd(send.as_ref(), fd_to_send).chain_err(
             || "Failed to send message with fd"
         )
     }
@@ -152,9 +156,7 @@ impl RecvFd for Connection {
 
 impl FromRawFd for Connection {
     unsafe fn from_raw_fd(fd: RawFd) -> Connection {
-        Connection {
-            stream: net::UnixStream::from_raw_fd(fd)
-        }
+        Connection::new(net::UnixStream::from_raw_fd(fd))
     }
 }
 
