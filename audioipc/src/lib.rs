@@ -77,6 +77,37 @@ impl SendFd for mio_uds::UnixStream {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+#[derive(Debug)]
+pub struct AutoCloseFd(RawFd);
+
+impl Drop for AutoCloseFd {
+    fn drop(&mut self) {
+        unsafe {
+            libc::close(self.0);
+        }
+    }
+}
+
+impl FromRawFd for AutoCloseFd {
+    unsafe fn from_raw_fd(fd: RawFd) -> Self {
+        AutoCloseFd(fd)
+    }
+}
+
+impl AsRawFd for AutoCloseFd {
+    fn as_raw_fd(&self) -> RawFd {
+        self.0
+    }
+}
+
+impl<'a> AsRawFd for &'a AutoCloseFd {
+    fn as_raw_fd(&self) -> RawFd {
+        self.0
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 fn get_temp_path(name: &str) -> PathBuf {
     let mut path = temp_dir();
     path.push(name);
