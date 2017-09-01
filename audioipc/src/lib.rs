@@ -20,6 +20,7 @@ extern crate cubeb_core;
 extern crate libc;
 extern crate memmap;
 extern crate mio;
+extern crate mio_uds;
 extern crate serde;
 
 pub mod async;
@@ -32,10 +33,11 @@ pub mod shm;
 
 pub use connection::*;
 pub use messages::{ClientMessage, ServerMessage};
+
 use std::env::temp_dir;
 use std::io;
-use std::os::unix::io::{AsRawFd, RawFd};
-use std::os::unix::net::UnixStream;
+use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
+use std::os::unix::net;
 use std::path::PathBuf;
 
 // Extend sys::os::unix::net::UnixStream to support sending and receiving a single file desc.
@@ -49,13 +51,25 @@ pub trait SendFd {
     fn send_fd(&mut self, bytes: &[u8], fd: Option<RawFd>) -> io::Result<(usize)>;
 }
 
-impl RecvFd for UnixStream {
+impl RecvFd for net::UnixStream {
     fn recv_fd(&mut self, buf_to_recv: &mut [u8]) -> io::Result<(usize, Option<RawFd>)> {
         msg::recvmsg(self.as_raw_fd(), buf_to_recv)
     }
 }
 
-impl SendFd for UnixStream {
+impl RecvFd for mio_uds::UnixStream {
+    fn recv_fd(&mut self, buf_to_recv: &mut [u8]) -> io::Result<(usize, Option<RawFd>)> {
+        msg::recvmsg(self.as_raw_fd(), buf_to_recv)
+    }
+}
+
+impl SendFd for net::UnixStream {
+    fn send_fd(&mut self, buf_to_send: &[u8], fd_to_send: Option<RawFd>) -> io::Result<usize> {
+        msg::sendmsg(self.as_raw_fd(), buf_to_send, fd_to_send)
+    }
+}
+
+impl SendFd for mio_uds::UnixStream {
     fn send_fd(&mut self, buf_to_send: &[u8], fd_to_send: Option<RawFd>) -> io::Result<usize> {
         msg::sendmsg(self.as_raw_fd(), buf_to_send, fd_to_send)
     }
