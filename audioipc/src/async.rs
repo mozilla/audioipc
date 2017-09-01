@@ -7,8 +7,10 @@
 
 use {RecvFd, SendFd};
 use bytes::{Buf, BufMut};
+use mio_uds;
 use std::io as std_io;
 use std::os::unix::io::RawFd;
+use std::os::unix::net;
 
 /// A convenience macro for working with `io::Result<T>` from the
 /// `std::io::Read` and `std::io::Write` traits.
@@ -110,6 +112,9 @@ pub trait AsyncRecvFd: RecvFd {
     }
 }
 
+impl AsyncRecvFd for net::UnixStream {}
+impl AsyncRecvFd for mio_uds::UnixStream {}
+
 /// A trait for writable objects which operated in an async fashion.
 ///
 /// This trait inherits from `std::io::Write` and indicates that an I/O object is
@@ -143,3 +148,6 @@ pub trait AsyncSendFd: SendFd {
         Ok(Async::Ready(n))
     }
 }
+
+impl AsyncSendFd for net::UnixStream {}
+impl AsyncSendFd for mio_uds::UnixStream {}
