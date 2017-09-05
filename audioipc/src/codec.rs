@@ -49,7 +49,7 @@ impl Decoder {
             // match endianess
             let n = src.get_uint::<LittleEndian>(head_size);
 
-            if n > u16::max_value() as u64 {
+            if n > u64::from(u16::max_value()) {
                 return Err(std_io::Error::new(
                     std_io::ErrorKind::InvalidData,
                     "frame size too big"
@@ -63,7 +63,7 @@ impl Decoder {
         // Consume the length field
         let _ = src.split_to(head_size);
 
-        return Ok(Some(n));
+        Ok(Some(n))
     }
 
     fn decode_data(&self, n: usize, src: &mut BytesMut) -> std_io::Result<Option<BytesMut>> {
@@ -117,11 +117,17 @@ impl Decoder {
     }
 }
 
+impl Default for Decoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn encode<ITEM: Serialize>(dst: &mut BytesMut, item: &ITEM) -> Result<(), bincode::Error> {
     let head_len = mem::size_of::<u16>() as u64;
     let item_len = serialized_size(item);
 
-    if head_len + item_len > u16::max_value() as u64 {
+    if head_len + item_len > u64::from(u16::max_value()) {
         return Err(Box::new(bincode::ErrorKind::IoError(std_io::Error::new(
             std_io::ErrorKind::InvalidInput,
             "frame too big"

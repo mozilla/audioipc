@@ -30,7 +30,8 @@ fn run() -> Result<()> {
     let running = Arc::new(AtomicBool::new(true));
 
     let r = running.clone();
-    if let Err(_) = ctrlc::set_handler(move || { r.store(false, Ordering::SeqCst); }) {
+    let r = ctrlc::set_handler(move || { r.store(false, Ordering::SeqCst); });
+    if r.is_err() {
         bail!("could not set ctrlc handler");
     }
 
