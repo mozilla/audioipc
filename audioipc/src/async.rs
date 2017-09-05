@@ -77,8 +77,8 @@ pub enum AsyncSend<T> {
 
 pub trait AsyncRecvFd: RecvFd {
     unsafe fn prepare_uninitialized_buffer(&self, bytes: &mut [u8]) -> bool {
-        for i in 0..bytes.len() {
-            bytes[i] = 0;
+        for byte in bytes.iter_mut() {
+            *byte = 0;
         }
 
         true

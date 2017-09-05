@@ -78,7 +78,7 @@ impl cubeb::StreamCallback for Callback {
             slice::from_raw_parts_mut(output.as_mut_ptr(), size_bytes)
         };
 
-        self.input_shm.write(&real_input).unwrap();
+        self.input_shm.write(real_input).unwrap();
 
         self.connection
             .send(ClientMessage::StreamDataCallback(
@@ -203,121 +203,126 @@ impl ServerConn {
 
     // Process a request coming from the client.
     fn process_msg(&mut self, msg: &ServerMessage, context: &Result<cubeb::Context>) -> Result<()> {
-        let resp: ClientMessage = if let &Ok(ref context) = context {
-            if let &ServerMessage::StreamInit(ref params) = msg {
+        let resp: ClientMessage = if let Ok(ref context) = *context {
+            if let ServerMessage::StreamInit(ref params) = *msg {
                 return self.process_stream_init(context, params);
             };
 
-            match msg {
-                &ServerMessage::ClientConnect => {
+            match *msg {
+                ServerMessage::ClientConnect => {
                     panic!("already connected");
                 },
 
-                &ServerMessage::ClientDisconnect => {
+                ServerMessage::ClientDisconnect => {
                     // TODO:
                     //self.connection.client_disconnect();
                     ClientMessage::ClientDisconnected
                 },
 
-                &ServerMessage::ContextGetBackendId => ClientMessage::ContextBackendId(),
+                ServerMessage::ContextGetBackendId => ClientMessage::ContextBackendId(),
 
-                &ServerMessage::ContextGetMaxChannelCount => {
+                ServerMessage::ContextGetMaxChannelCount => {
                     context
                         .max_channel_count()
                         .map(ClientMessage::ContextMaxChannelCount)
-                        .unwrap_or_else(|e| error(e))
+                        .unwrap_or_else(error)
                 },
 
-                &ServerMessage::ContextGetMinLatency(ref params) => {
+                ServerMessage::ContextGetMinLatency(ref params) => {
                     let format = cubeb::SampleFormat::from(params.format);
                     let layout = cubeb::ChannelLayout::from(params.layout);
 
                     let params = cubeb::StreamParamsBuilder::new()
                         .format(format)
-                        .rate(params.rate as _)
-                        .channels(params.channels as _)
+                        .rate(u32::from(params.rate))
+                        .channels(u32::from(params.channels))
                         .layout(layout)
                         .take();
 
                     context
                         .min_latency(&params)
                         .map(ClientMessage::ContextMinLatency)
-                        .unwrap_or_else(|e| error(e))
+                        .unwrap_or_else(error)
                 },
 
-                &ServerMessage::ContextGetPreferredSampleRate => {
+                ServerMessage::ContextGetPreferredSampleRate => {
                     context
                         .preferred_sample_rate()
                         .map(ClientMessage::ContextPreferredSampleRate)
-                        .unwrap_or_else(|e| error(e))
+                        .unwrap_or_else(error)
                 },
 
-                &ServerMessage::ContextGetPreferredChannelLayout => {
+                ServerMessage::ContextGetPreferredChannelLayout => {
                     context
                         .preferred_channel_layout()
                         .map(|l| ClientMessage::ContextPreferredChannelLayout(l as _))
-                        .unwrap_or_else(|e| error(e))
+                        .unwrap_or_else(error)
                 },
 
-                &ServerMessage::ContextGetDeviceEnumeration(device_type) => {
+                ServerMessage::ContextGetDeviceEnumeration(device_type) => {
                     context
                         .enumerate_devices(cubeb::DeviceType::from_bits_truncate(device_type))
                         .map(|devices| {
                             let v: Vec<DeviceInfo> = devices.iter().map(|i| i.raw().into()).collect();
                             ClientMessage::ContextEnumeratedDevices(v)
                         })
-                        .unwrap_or_else(|e| error(e))
+                        .unwrap_or_else(error)
                 },
 
-                &ServerMessage::StreamInit(_) => {
+                ServerMessage::StreamInit(_) => {
                     panic!("StreamInit should have already been handled.");
                 },
 
-                &ServerMessage::StreamDestroy(stm_tok) => {
+                ServerMessage::StreamDestroy(stm_tok) => {
                     self.streams.remove(stm_tok);
                     ClientMessage::StreamDestroyed
                 },
 
-                &ServerMessage::StreamStart(stm_tok) => {
+                ServerMessage::StreamStart(stm_tok) => {
                     let _ = self.streams[stm_tok].start();
                     ClientMessage::StreamStarted
                 },
 
-                &ServerMessage::StreamStop(stm_tok) => {
+                ServerMessage::StreamStop(stm_tok) => {
                     let _ = self.streams[stm_tok].stop();
                     ClientMessage::StreamStopped
                 },
 
-                &ServerMessage::StreamGetPosition(stm_tok) => {
+                ServerMessage::StreamGetPosition(stm_tok) => {
                     self.streams[stm_tok]
                         .position()
                         .map(ClientMessage::StreamPosition)
-                        .unwrap_or_else(|e| error(e))
+                        .unwrap_or_else(error)
                 },
-                &ServerMessage::StreamGetLatency(stm_tok) => {
+
+                ServerMessage::StreamGetLatency(stm_tok) => {
                     self.streams[stm_tok]
                         .latency()
                         .map(ClientMessage::StreamLatency)
-                        .unwrap_or_else(|e| error(e))
+                        .unwrap_or_else(error)
                 },
-                &ServerMessage::StreamSetVolume(stm_tok, volume) => {
+
+                ServerMessage::StreamSetVolume(stm_tok, volume) => {
                     self.streams[stm_tok]
                         .set_volume(volume)
                         .map(|_| ClientMessage::StreamVolumeSet)
-                        .unwrap_or_else(|e| error(e))
+                        .unwrap_or_else(error)
                 },
-                &ServerMessage::StreamSetPanning(stm_tok, panning) => {
+
+                ServerMessage::StreamSetPanning(stm_tok, panning) => {
                     self.streams[stm_tok]
                         .set_panning(panning)
                         .map(|_| ClientMessage::StreamPanningSet)
-                        .unwrap_or_else(|e| error(e))
+                        .unwrap_or_else(error)
                 },
-                &ServerMessage::StreamGetCurrentDevice(stm_tok) => {
+
+                ServerMessage::StreamGetCurrentDevice(stm_tok) => {
                     self.streams[stm_tok]
                         .current_device()
                         .map(|device| ClientMessage::StreamCurrentDevice(device.into()))
-                        .unwrap_or_else(|e| error(e))
+                        .unwrap_or_else(error)
                 },
+
                 _ => {
                     bail!("Unexpected Message");
                 },
@@ -341,18 +346,20 @@ impl ServerConn {
         }
 
         fn frame_size_in_bytes(params: Option<cubeb::StreamParams>) -> u16 {
-            params.map(|p| {
-                let sample_size = match p.format() {
-                    cubeb::SampleFormat::S16LE |
-                    cubeb::SampleFormat::S16BE |
-                    cubeb::SampleFormat::S16NE => 2,
-                    cubeb::SampleFormat::Float32LE |
-                    cubeb::SampleFormat::Float32BE |
-                    cubeb::SampleFormat::Float32NE => 4,
-                };
-                let channel_count = p.channels() as u16;
-                sample_size * channel_count
-            }).unwrap_or(0u16)
+            params
+                .map(|p| {
+                    let sample_size = match p.format() {
+                        cubeb::SampleFormat::S16LE |
+                        cubeb::SampleFormat::S16BE |
+                        cubeb::SampleFormat::S16NE => 2,
+                        cubeb::SampleFormat::Float32LE |
+                        cubeb::SampleFormat::Float32BE |
+                        cubeb::SampleFormat::Float32NE => 4,
+                    };
+                    let channel_count = p.channels() as u16;
+                    sample_size * channel_count
+                })
+                .unwrap_or(0u16)
         }
 
 
@@ -414,7 +421,7 @@ impl ServerConn {
                     },
                 };
 
-                let _ = try!(self.queue_init_messages(
+                try!(self.queue_init_messages(
                     stm_tok,
                     conn1,
                     input_file,
@@ -438,15 +445,15 @@ impl ServerConn {
         U: IntoRawFd,
         V: IntoRawFd,
     {
-        let _ = try!(self.queue_message_fd(
+        try!(self.queue_message_fd(
             ClientMessage::StreamCreated(stm_tok),
             conn
         ));
-        let _ = try!(self.queue_message_fd(
+        try!(self.queue_message_fd(
             ClientMessage::StreamCreatedInputShm,
             input_file
         ));
-        let _ = try!(self.queue_message_fd(
+        try!(self.queue_message_fd(
             ClientMessage::StreamCreatedOutputShm,
             output_file
         ));
@@ -466,7 +473,7 @@ impl ServerConn {
     fn queue_message_fd<FD: IntoRawFd>(&mut self, msg: ClientMessage, fd: FD) -> Result<()> {
         let fd = fd.into_raw_fd();
         debug!("queue_message_fd: {:?} {:?}", msg, fd);
-        let _ = try!(self.queue_message(msg));
+        try!(self.queue_message(msg));
         self.take_pending_send(Some(fd));
         Ok(())
     }
@@ -486,7 +493,7 @@ impl ServerConn {
     fn flush_pending_send(&mut self) -> Result<Ready> {
         debug!("flush_pending_send");
         // take any pending messages in the send buffer.
-        if self.send_buffer.len() > 0 {
+        if !self.send_buffer.is_empty() {
             self.take_pending_send(None);
         }
 
@@ -495,11 +502,11 @@ impl ServerConn {
         let mut result = Ready::readable();
         let mut processed = 0;
 
-        for &mut (ref buf, ref fd) in self.pending_send.iter_mut() {
+        for &mut (ref buf, ref fd) in &mut self.pending_send {
             let mut src = buf.into_buf();
-            let fd = match fd {
-                &Some(ref fd) => Some(fd.as_raw_fd()),
-                &None => None,
+            let fd = match *fd {
+                Some(ref fd) => Some(fd.as_raw_fd()),
+                None => None,
             };
             let r = try!(self.io.send_buf_fd(&mut src, fd));
             if r.is_ready() {
@@ -598,11 +605,8 @@ impl Server {
         for event in events.iter() {
             match event.token() {
                 SERVER => {
-                    match self.accept(poll) {
-                        Err(e) => {
-                            error!("server accept error: {}", e);
-                        },
-                        _ => {},
+                    if let Err(e) = self.accept(poll) {
+                        error!("server accept error: {}", e);
                     };
                 },
                 QUIT => {
@@ -683,7 +687,7 @@ pub fn run(running: Arc<AtomicBool>) -> Result<()> {
             bail!("server quit due to ctrl-c");
         }
 
-        let _ = try!(server.poll(&mut poll));
+        try!(server.poll(&mut poll));
     }
 
     //poll.deregister(&server.socket).unwrap();
@@ -713,11 +717,8 @@ pub extern "C" fn audioipc_server_start() -> *mut c_void {
             .unwrap();
 
         loop {
-            match server.poll(&mut poll) {
-                Err(_) => {
-                    return;
-                },
-                _ => (),
+            if server.poll(&mut poll).is_err() {
+                return;
             }
         }
     });

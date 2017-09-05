@@ -100,7 +100,7 @@ impl Context for ClientContext {
                 coll.count,
                 coll.count
             );
-            for dev in devices.iter_mut() {
+            for dev in &mut devices {
                 if !dev.device_id.is_null() {
                     let _ = CString::from_raw(dev.device_id as *mut _);
                 }
@@ -154,7 +154,7 @@ impl Context for ClientContext {
             output_stream_params: output_stream_params,
             latency_frames: latency_frame
         };
-        stream::init(&self, init_params, data_callback, state_callback, user_ptr)
+        stream::init(self, init_params, data_callback, state_callback, user_ptr)
     }
 
     fn register_device_collection_changed(

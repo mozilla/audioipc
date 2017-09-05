@@ -5,13 +5,13 @@
 
 use ClientContext;
 use audioipc::{ClientMessage, Connection, ServerMessage, messages};
-use audioipc::shm::{SharedMemSlice, SharedMemMutSlice};
+use audioipc::shm::{SharedMemMutSlice, SharedMemSlice};
 use cubeb_backend::Stream;
 use cubeb_core::{ErrorCode, Result, ffi};
 use std::ffi::CString;
+use std::fs::File;
 use std::os::raw::c_void;
 use std::os::unix::io::FromRawFd;
-use std::fs::File;
 use std::ptr;
 use std::thread;
 
@@ -27,7 +27,7 @@ pub struct ClientStream<'ctx> {
 
 fn stream_thread(
     mut conn: Connection,
-    input_shm: SharedMemSlice,
+    input_shm: &SharedMemSlice,
     mut output_shm: SharedMemMutSlice,
     data_cb: ffi::cubeb_data_callback,
     state_cb: ffi::cubeb_state_callback,
@@ -54,8 +54,14 @@ fn stream_thread(
                     frame_size
                 );
                 // TODO: This is proof-of-concept. Make it better.
-                let input_ptr: *const u8 = input_shm.get_slice(nframes as usize * frame_size).unwrap().as_ptr();
-                let output_ptr: *mut u8 = output_shm.get_mut_slice(nframes as usize * frame_size).unwrap().as_mut_ptr();
+                let input_ptr: *const u8 = input_shm
+                    .get_slice(nframes as usize * frame_size)
+                    .unwrap()
+                    .as_ptr();
+                let output_ptr: *mut u8 = output_shm
+                    .get_mut_slice(nframes as usize * frame_size)
+                    .unwrap()
+                    .as_mut_ptr();
                 let nframes = data_cb(
                     ptr::null_mut(),
                     user_ptr as *mut c_void,
@@ -63,7 +69,8 @@ fn stream_thread(
                     output_ptr as *mut _,
                     nframes as _
                 );
-                conn.send(ServerMessage::StreamDataCallback(nframes as isize)).unwrap();
+                conn.send(ServerMessage::StreamDataCallback(nframes as isize))
+                    .unwrap();
             },
             ClientMessage::StreamStateCallback(state) => {
                 info!("stream_thread: State Callback: {:?}", state);
@@ -94,9 +101,7 @@ impl<'ctx> ClientStream<'ctx> {
         };
 
         let (token, conn2) = match r {
-            (ClientMessage::StreamCreated(tok), Some(fd)) => (tok, unsafe {
-                Connection::from_raw_fd(fd)
-            }),
+            (ClientMessage::StreamCreated(tok), Some(fd)) => (tok, unsafe { Connection::from_raw_fd(fd) }),
             (ClientMessage::StreamCreated(_), None) => {
                 debug!("Missing fd!");
                 return Err(ErrorCode::Error.into());
@@ -116,17 +121,14 @@ impl<'ctx> ClientStream<'ctx> {
         };
 
         let input_file = match r {
-            (ClientMessage::StreamCreatedInputShm, Some(fd)) => unsafe {
-                File::from_raw_fd(fd)
-            },
+            (ClientMessage::StreamCreatedInputShm, Some(fd)) => unsafe { File::from_raw_fd(fd) },
             (m, _) => {
                 debug!("Unexpected message: {:?}", m);
                 return Err(ErrorCode::Error.into());
             },
         };
 
-        let input_shm = SharedMemSlice::from(input_file,
-                                             SHM_AREA_SIZE).unwrap();
+        let input_shm = SharedMemSlice::from(input_file, SHM_AREA_SIZE).unwrap();
 
         let r = match conn.receive_with_fd::<ClientMessage>() {
             Ok(r) => r,
@@ -134,21 +136,25 @@ impl<'ctx> ClientStream<'ctx> {
         };
 
         let output_file = match r {
-            (ClientMessage::StreamCreatedOutputShm, Some(fd)) => unsafe {
-                File::from_raw_fd(fd)
-            },
+            (ClientMessage::StreamCreatedOutputShm, Some(fd)) => unsafe { File::from_raw_fd(fd) },
             (m, _) => {
                 debug!("Unexpected message: {:?}", m);
                 return Err(ErrorCode::Error.into());
             },
         };
 
-        let output_shm = SharedMemMutSlice::from(output_file,
-                                                 SHM_AREA_SIZE).unwrap();
+        let output_shm = SharedMemMutSlice::from(output_file, SHM_AREA_SIZE).unwrap();
 
         let user_data = user_ptr as usize;
         let join_handle = thread::spawn(move || {
-            stream_thread(conn2, input_shm, output_shm, data_callback, state_callback, user_data)
+            stream_thread(
+                conn2,
+                &input_shm,
+                output_shm,
+                data_callback,
+                state_callback,
+                user_data
+            )
         });
 
         Ok(Box::into_raw(Box::new(ClientStream {
