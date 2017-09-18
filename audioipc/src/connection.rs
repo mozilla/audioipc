@@ -1,4 +1,4 @@
-use {RecvFd, SendFd};
+use {AutoCloseFd, RecvFd, SendFd};
 use async::{Async, AsyncRecvFd};
 use bytes::BytesMut;
 use codec::{Decoder, encode};
@@ -24,7 +24,7 @@ use std::os::unix::prelude::*;
 pub struct Connection {
     stream: net::UnixStream,
     recv_buffer: BytesMut,
-    recv_fd: Option<RawFd>,
+    recv_fd: Option<AutoCloseFd>,
     send_buffer: BytesMut,
     decoder: Decoder
 }
@@ -65,7 +65,7 @@ impl Connection {
     }
 
     pub fn take_fd(&mut self) -> Option<RawFd> {
-        self.recv_fd.take()
+        self.recv_fd.take().map(|fd| fd.into_raw_fd())
     }
 
     pub fn receive<RT>(&mut self) -> Result<RT>
@@ -109,7 +109,7 @@ impl Connection {
                         self.recv_buffer,
                         fd
                     );
-                    self.recv_fd = fd;
+                    self.recv_fd = fd.map(|fd| unsafe { AutoCloseFd::from_raw_fd(fd) });
                 },
                 Ok(Async::NotReady) => bail!("Socket should be blocking."),
                 // TODO: Handle dropped message.

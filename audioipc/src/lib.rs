@@ -36,7 +36,7 @@ pub use messages::{ClientMessage, ServerMessage};
 
 use std::env::temp_dir;
 use std::io;
-use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
+use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
 use std::os::unix::net;
 use std::path::PathBuf;
 
@@ -91,6 +91,14 @@ impl Drop for AutoCloseFd {
 impl FromRawFd for AutoCloseFd {
     unsafe fn from_raw_fd(fd: RawFd) -> Self {
         AutoCloseFd(fd)
+    }
+}
+
+impl IntoRawFd for AutoCloseFd {
+    fn into_raw_fd(self) -> RawFd {
+        let fd = self.0;
+        ::std::mem::forget(self);
+        fd
     }
 }
 
