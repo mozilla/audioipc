@@ -24,6 +24,7 @@ use std::os::unix::prelude::*;
 pub struct Connection {
     stream: net::UnixStream,
     recv_buffer: BytesMut,
+    recv_fd: Option<RawFd>,
     send_buffer: BytesMut,
     decoder: Decoder
 }
@@ -35,6 +36,7 @@ impl Connection {
         Connection {
             stream: stream,
             recv_buffer: BytesMut::with_capacity(32 * 1024),
+            recv_fd: None,
             send_buffer: BytesMut::with_capacity(32 * 1024),
             decoder: Decoder::new()
         }
@@ -62,40 +64,58 @@ impl Connection {
         Ok((Connection::new(s1), Connection::new(s2)))
     }
 
+    pub fn take_fd(&mut self) -> Option<RawFd> {
+        self.recv_fd.take()
+    }
+
     pub fn receive<RT>(&mut self) -> Result<RT>
     where
         RT: DeserializeOwned + Debug,
     {
-        match self.receive_with_fd() {
-            Ok((r, None)) => Ok(r),
-            Ok((_, Some(_))) => panic!("unexpected fd received"),
-            Err(e) => Err(e),
-        }
+        self.receive_with_fd()
     }
 
-    pub fn receive_with_fd<RT>(&mut self) -> Result<(RT, Option<RawFd>)>
+    pub fn receive_with_fd<RT>(&mut self) -> Result<RT>
     where
         RT: DeserializeOwned + Debug,
     {
-        self.recv_buffer.reserve(32 * 1024);
-
-        // TODO: Read until block, EOF, or error.
-        // TODO: Switch back to recv_fd.
-        match self.stream.recv_buf_fd(&mut self.recv_buffer) {
-            Ok(Async::Ready((0, _))) => Err(ErrorKind::Disconnected.into()),
-            // TODO: Handle partial read?
-            Ok(Async::Ready((_, fd))) => {
+        info!("received_with_fd...");
+        loop {
+            trace!("   recv_buffer = {:?}", self.recv_buffer);
+            if !self.recv_buffer.is_empty() {
                 let r = self.decoder.decode(&mut self.recv_buffer);
                 debug!("receive {:?}", r);
                 match r {
-                    Ok(r) => Ok((r.unwrap(), fd)),
-                    Err(e) => Err(e).chain_err(|| "Failed to deserialize message"),
+                    Ok(r) => return Ok(r.unwrap()),
+                    Err(e) => return Err(e).chain_err(|| "Failed to deserialize message"),
                 }
-            },
-            Ok(Async::NotReady) => bail!("Socket should be blocking."),
-            // TODO: Handle dropped message.
-            // Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => panic!("wouldblock"),
-            _ => bail!("socket write"),
+            }
+
+            // Otherwise, try to read more data and try again. Make sure we've
+            // got room for at least one byte to read to ensure that we don't
+            // get a spurious 0 that looks like EOF
+            self.recv_buffer.reserve(1);
+
+            assert!(self.recv_fd.is_none());
+
+            // TODO: Read until block, EOF, or error.
+            // TODO: Switch back to recv_fd.
+            match self.stream.recv_buf_fd(&mut self.recv_buffer) {
+                Ok(Async::Ready((0, _))) => return Err(ErrorKind::Disconnected.into()),
+                // TODO: Handle partial read?
+                Ok(Async::Ready((_, fd))) => {
+                    trace!(
+                        "   recv_buf_fd: recv_buffer: {:?}, fd: {:?}",
+                        self.recv_buffer,
+                        fd
+                    );
+                    self.recv_fd = fd;
+                },
+                Ok(Async::NotReady) => bail!("Socket should be blocking."),
+                // TODO: Handle dropped message.
+                // Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => panic!("wouldblock"),
+                _ => bail!("socket write"),
+            }
         }
     }
 

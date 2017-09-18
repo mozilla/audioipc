@@ -101,12 +101,15 @@ impl<'ctx> ClientStream<'ctx> {
         };
 
         let (token, conn2) = match r {
-            (ClientMessage::StreamCreated(tok), Some(fd)) => (tok, unsafe { Connection::from_raw_fd(fd) }),
-            (ClientMessage::StreamCreated(_), None) => {
-                debug!("Missing fd!");
-                return Err(ErrorCode::Error.into());
+            ClientMessage::StreamCreated(tok) => {
+                let fd = conn.take_fd();
+                if fd.is_none() {
+                    debug!("Missing fd!");
+                    return Err(ErrorCode::Error.into());
+                }
+                (tok, unsafe { Connection::from_raw_fd(fd.unwrap()) })
             },
-            (m, _) => {
+            m => {
                 debug!("Unexpected message: {:?}", m);
                 return Err(ErrorCode::Error.into());
             },
@@ -121,8 +124,15 @@ impl<'ctx> ClientStream<'ctx> {
         };
 
         let input_file = match r {
-            (ClientMessage::StreamCreatedInputShm, Some(fd)) => unsafe { File::from_raw_fd(fd) },
-            (m, _) => {
+            ClientMessage::StreamCreatedInputShm => {
+                let fd = conn.take_fd();
+                if fd.is_none() {
+                    debug!("Missing fd!");
+                    return Err(ErrorCode::Error.into());
+                }
+                unsafe { File::from_raw_fd(fd.unwrap()) }
+            },
+            m => {
                 debug!("Unexpected message: {:?}", m);
                 return Err(ErrorCode::Error.into());
             },
@@ -136,8 +146,15 @@ impl<'ctx> ClientStream<'ctx> {
         };
 
         let output_file = match r {
-            (ClientMessage::StreamCreatedOutputShm, Some(fd)) => unsafe { File::from_raw_fd(fd) },
-            (m, _) => {
+            ClientMessage::StreamCreatedOutputShm => {
+                let fd = conn.take_fd();
+                if fd.is_none() {
+                    debug!("Missing fd!");
+                    return Err(ErrorCode::Error.into());
+                }
+                unsafe { File::from_raw_fd(fd.unwrap()) }
+            },
+            m => {
                 debug!("Unexpected message: {:?}", m);
                 return Err(ErrorCode::Error.into());
             },
