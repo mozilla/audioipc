@@ -86,7 +86,11 @@ impl Connection {
                 let r = self.decoder.decode(&mut self.recv_buffer);
                 debug!("receive {:?}", r);
                 match r {
-                    Ok(r) => return Ok(r.unwrap()),
+                    Ok(Some(r)) => return Ok(r),
+                    Ok(None) => {
+                        /* Buffer doesn't contain enough data for a complete
+                         * message, so need to enter recv_buf_fd to get more. */
+                    },
                     Err(e) => return Err(e).chain_err(|| "Failed to deserialize message"),
                 }
             }
