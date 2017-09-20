@@ -80,12 +80,14 @@ impl cubeb::StreamCallback for Callback {
 
         self.input_shm.write(real_input).unwrap();
 
-        self.connection
-            .send(ClientMessage::StreamDataCallback(
-                output.len() as isize,
-                self.output_frame_size as usize
-            ))
-            .unwrap();
+        let r = self.connection.send(ClientMessage::StreamDataCallback(
+            output.len() as isize,
+            self.output_frame_size as usize
+        ));
+        if r.is_err() {
+            debug!("data_callback: Failed to send to client - got={:?}", r);
+            return -1;
+        }
 
         let r = self.connection.receive();
         match r {
@@ -114,7 +116,12 @@ impl cubeb::StreamCallback for Callback {
             cubeb::State::Drained => ffi::CUBEB_STATE_DRAINED,
             cubeb::State::Error => ffi::CUBEB_STATE_ERROR,
         };
-        self.connection.send(ClientMessage::StreamStateCallback(state)).unwrap();
+        let r = self.connection.send(
+            ClientMessage::StreamStateCallback(state)
+        );
+        if r.is_err() {
+            debug!("state_callback: Failed to send to client - got={:?}", r);
+        }
     }
 }
 
