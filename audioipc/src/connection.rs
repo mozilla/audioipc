@@ -1,6 +1,6 @@
 use {AutoCloseFd, RecvFd, SendFd};
 use async::{Async, AsyncRecvFd};
-use bytes::BytesMut;
+use bytes::{BufMut, BytesMut};
 use codec::{Decoder, encode};
 use errors::*;
 use mio::{Poll, PollOpt, Ready, Token};
@@ -8,6 +8,7 @@ use mio::event::Evented;
 use mio::unix::EventedFd;
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
+use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::io::{self, Read};
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -24,7 +25,7 @@ use std::os::unix::prelude::*;
 pub struct Connection {
     stream: net::UnixStream,
     recv_buffer: BytesMut,
-    recv_fd: Option<AutoCloseFd>,
+    recv_fd: VecDeque<AutoCloseFd>,
     send_buffer: BytesMut,
     decoder: Decoder
 }
@@ -35,9 +36,9 @@ impl Connection {
         stream.set_nonblocking(false).unwrap();
         Connection {
             stream: stream,
-            recv_buffer: BytesMut::with_capacity(32 * 1024),
-            recv_fd: None,
-            send_buffer: BytesMut::with_capacity(32 * 1024),
+            recv_buffer: BytesMut::with_capacity(1024),
+            recv_fd: VecDeque::new(),
+            send_buffer: BytesMut::with_capacity(1024),
             decoder: Decoder::new()
         }
     }
@@ -65,7 +66,7 @@ impl Connection {
     }
 
     pub fn take_fd(&mut self) -> Option<RawFd> {
-        self.recv_fd.take().map(|fd| fd.into_raw_fd())
+        self.recv_fd.pop_front().map(|fd| fd.into_raw_fd())
     }
 
     pub fn receive<RT>(&mut self) -> Result<RT>
@@ -98,9 +99,11 @@ impl Connection {
             // Otherwise, try to read more data and try again. Make sure we've
             // got room for at least one byte to read to ensure that we don't
             // get a spurious 0 that looks like EOF
-            self.recv_buffer.reserve(1);
 
-            assert!(self.recv_fd.is_none());
+            // The decoder.decode should have reserved an amount for
+            // the next bit it needs to read.  Check that we reserved
+            // enough space for, at least the 2 byte size prefix.
+            assert!(self.recv_buffer.remaining_mut() > 2);
 
             // TODO: Read until block, EOF, or error.
             // TODO: Switch back to recv_fd.
@@ -109,11 +112,16 @@ impl Connection {
                 // TODO: Handle partial read?
                 Ok(Async::Ready((_, fd))) => {
                     trace!(
-                        "   recv_buf_fd: recv_buffer: {:?}, fd: {:?}",
+                        "   recv_buf_fd: recv_buffer: {:?}, recv_fd: {:?}, fd: {:?}",
                         self.recv_buffer,
+                        self.recv_fd,
                         fd
                     );
-                    self.recv_fd = fd.map(|fd| unsafe { AutoCloseFd::from_raw_fd(fd) });
+                    if let Some(fd) = fd {
+                        self.recv_fd.push_back(
+                            unsafe { AutoCloseFd::from_raw_fd(fd) }
+                        );
+                    }
                 },
                 Ok(Async::NotReady) => bail!("Socket should be blocking."),
                 // TODO: Handle dropped message.
