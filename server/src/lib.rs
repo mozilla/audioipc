@@ -18,7 +18,7 @@ use audioipc::async::{Async, AsyncRecvFd, AsyncSendFd};
 use audioipc::codec::{Decoder, encode};
 use audioipc::messages::{ClientMessage, DeviceInfo, ServerMessage, StreamInitParams, StreamParams};
 use audioipc::shm::{SharedMemReader, SharedMemWriter};
-use bytes::{Bytes, BytesMut, IntoBuf};
+use bytes::{Bytes, BytesMut};
 use cubeb_core::binding::Binding;
 use cubeb_core::ffi;
 use mio::{Ready, Token};
@@ -26,6 +26,7 @@ use mio_uds::{UnixListener, UnixStream};
 use std::{slice, thread};
 use std::collections::VecDeque;
 use std::convert::From;
+use std::io::Cursor;
 use std::os::raw::c_void;
 use std::os::unix::prelude::*;
 use std::sync::Arc;
@@ -509,18 +510,29 @@ impl ServerConn {
         let mut result = Ready::readable();
         let mut processed = 0;
 
-        for &mut (ref buf, ref fd) in &mut self.pending_send {
-            let mut src = buf.into_buf();
-            let fd = match *fd {
-                Some(ref fd) => Some(fd.as_raw_fd()),
-                None => None,
+        for &mut (ref mut buf, ref mut fd) in &mut self.pending_send {
+            trace!("sending buf {:?}, fd {:?}", buf, fd);
+            let r = {
+                let mut src = Cursor::new(buf.as_ref());
+                let fd = match *fd {
+                    Some(ref fd) => Some(fd.as_raw_fd()),
+                    None => None,
+                };
+                try!(self.io.send_buf_fd(&mut src, fd))
             };
-            let r = try!(self.io.send_buf_fd(&mut src, fd));
-            if r.is_ready() {
-                processed += 1;
-            } else {
-                result.insert(Ready::writable());
-                break;
+            match r {
+                Async::Ready(n) if n == buf.len() => {
+                    processed += 1;
+                },
+                Async::Ready(n) => {
+                    let _ = buf.split_to(n);
+                    let _ = fd.take();
+                    result.insert(Ready::writable());
+                    break;
+                },
+                Async::NotReady => {
+                    result.insert(Ready::writable());
+                },
             }
         }
 
