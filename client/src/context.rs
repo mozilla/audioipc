@@ -52,7 +52,8 @@ impl Context for ClientContext {
     }
 
     fn backend_id(&self) -> &'static CStr {
-        assert_not_in_callback();
+        // HACK: This is called reentrantly from Gecko's AudioStream::DataCallback.
+        //assert_not_in_callback();
         unsafe { CStr::from_ptr(b"remote\0".as_ptr() as *const _) }
     }
 
