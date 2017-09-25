@@ -48,7 +48,7 @@ fn stream_thread(
                 return;
             },
             ClientMessage::StreamDataCallback(nframes, frame_size) => {
-                info!(
+                trace!(
                     "stream_thread: Data Callback: nframes={} frame_size={}",
                     nframes,
                     frame_size

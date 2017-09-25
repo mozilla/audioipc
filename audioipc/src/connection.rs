@@ -80,12 +80,12 @@ impl Connection {
     where
         RT: DeserializeOwned + Debug,
     {
-        info!("received_with_fd...");
+        trace!("received_with_fd...");
         loop {
             trace!("   recv_buffer = {:?}", self.recv_buffer);
             if !self.recv_buffer.is_empty() {
                 let r = self.decoder.decode(&mut self.recv_buffer);
-                debug!("receive {:?}", r);
+                trace!("receive {:?}", r);
                 match r {
                     Ok(Some(r)) => return Ok(r),
                     Ok(None) => {
@@ -143,7 +143,7 @@ impl Connection {
         ST: Serialize + Debug,
         FD: IntoRawFd + Debug,
     {
-        info!("send_with_fd {:?}, {:?}", msg, fd_to_send);
+        trace!("send_with_fd {:?}, {:?}", msg, fd_to_send);
         try!(encode(&mut self.send_buffer, &msg));
         let fd_to_send = fd_to_send.map(|fd| fd.into_raw_fd());
         let send = self.send_buffer.take().freeze();
