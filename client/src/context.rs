@@ -4,6 +4,7 @@
 // accompanying file LICENSE for details
 
 use ClientStream;
+use assert_not_in_callback;
 use audioipc::{self, ClientMessage, Connection, ServerMessage, messages};
 use cubeb_backend::{Context, Ops};
 use cubeb_core::{DeviceId, DeviceType, Error, ErrorCode, Result, StreamParams, ffi};
@@ -40,6 +41,7 @@ impl ClientContext {
 
 impl Context for ClientContext {
     fn init(_context_name: Option<&CStr>) -> Result<*mut ffi::cubeb> {
+        assert_not_in_callback();
         // TODO: encapsulate connect, etc inside audioipc.
         let stream = t!(UnixStream::connect(audioipc::get_uds_path()));
         let ctx = Box::new(ClientContext {
@@ -50,31 +52,37 @@ impl Context for ClientContext {
     }
 
     fn backend_id(&self) -> &'static CStr {
+        assert_not_in_callback();
         unsafe { CStr::from_ptr(b"remote\0".as_ptr() as *const _) }
     }
 
     fn max_channel_count(&self) -> Result<u32> {
+        assert_not_in_callback();
         let mut conn = self.connection();
         send_recv!(conn, ContextGetMaxChannelCount => ContextMaxChannelCount())
     }
 
     fn min_latency(&self, params: &StreamParams) -> Result<u32> {
+        assert_not_in_callback();
         let params = messages::StreamParams::from(unsafe { &*params.raw() });
         let mut conn = self.connection();
         send_recv!(conn, ContextGetMinLatency(params) => ContextMinLatency())
     }
 
     fn preferred_sample_rate(&self) -> Result<u32> {
+        assert_not_in_callback();
         let mut conn = self.connection();
         send_recv!(conn, ContextGetPreferredSampleRate => ContextPreferredSampleRate())
     }
 
     fn preferred_channel_layout(&self) -> Result<ffi::cubeb_channel_layout> {
+        assert_not_in_callback();
         let mut conn = self.connection();
         send_recv!(conn, ContextGetPreferredChannelLayout => ContextPreferredChannelLayout())
     }
 
     fn enumerate_devices(&self, devtype: DeviceType) -> Result<ffi::cubeb_device_collection> {
+        assert_not_in_callback();
         let mut conn = self.connection();
         let v: Vec<ffi::cubeb_device_info> =
             match send_recv!(conn, ContextGetDeviceEnumeration(devtype.bits()) => ContextEnumeratedDevices()) {
@@ -93,6 +101,7 @@ impl Context for ClientContext {
     }
 
     fn device_collection_destroy(&self, collection: *mut ffi::cubeb_device_collection) {
+        assert_not_in_callback();
         unsafe {
             let coll = &*collection;
             let mut devices = Vec::from_raw_parts(
@@ -130,6 +139,7 @@ impl Context for ClientContext {
         state_callback: ffi::cubeb_state_callback,
         user_ptr: *mut c_void,
     ) -> Result<*mut ffi::cubeb_stream> {
+        assert_not_in_callback();
 
         fn opt_stream_params(p: Option<&ffi::cubeb_stream_params>) -> Option<messages::StreamParams> {
             match p {
@@ -163,6 +173,7 @@ impl Context for ClientContext {
         _collection_changed_callback: ffi::cubeb_device_collection_changed_callback,
         _user_ptr: *mut c_void,
     ) -> Result<()> {
+        assert_not_in_callback();
         Ok(())
     }
 }

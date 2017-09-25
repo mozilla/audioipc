@@ -4,6 +4,7 @@
 // accompanying file LICENSE for details
 
 use ClientContext;
+use {set_in_callback, assert_not_in_callback};
 use audioipc::{ClientMessage, Connection, ServerMessage, messages};
 use audioipc::shm::{SharedMemMutSlice, SharedMemSlice};
 use cubeb_backend::Stream;
@@ -62,6 +63,7 @@ fn stream_thread(
                     .get_mut_slice(nframes as usize * frame_size)
                     .unwrap()
                     .as_mut_ptr();
+                set_in_callback(true);
                 let nframes = data_cb(
                     ptr::null_mut(),
                     user_ptr as *mut c_void,
@@ -69,6 +71,7 @@ fn stream_thread(
                     output_ptr as *mut _,
                     nframes as _
                 );
+                set_in_callback(false);
                 let r = conn.send(ServerMessage::StreamDataCallback(nframes as isize));
                 if r.is_err() {
                     debug!("stream_thread: Failed to send StreamDataCallback: {:?}", r);
@@ -77,7 +80,9 @@ fn stream_thread(
             },
             ClientMessage::StreamStateCallback(state) => {
                 info!("stream_thread: State Callback: {:?}", state);
+                set_in_callback(true);
                 state_cb(ptr::null_mut(), user_ptr as *mut _, state);
+                set_in_callback(false);
             },
             m => {
                 info!("Unexpected ClientMessage: {:?}", m);
@@ -94,6 +99,7 @@ impl<'ctx> ClientStream<'ctx> {
         state_callback: ffi::cubeb_state_callback,
         user_ptr: *mut c_void,
     ) -> Result<*mut ffi::cubeb_stream> {
+        assert_not_in_callback();
         let mut conn = ctx.connection();
 
         let r = conn.send(ServerMessage::StreamInit(init_params));
@@ -209,41 +215,49 @@ impl<'ctx> Drop for ClientStream<'ctx> {
 
 impl<'ctx> Stream for ClientStream<'ctx> {
     fn start(&self) -> Result<()> {
+        assert_not_in_callback();
         let mut conn = self.context.connection();
         send_recv!(conn, StreamStart(self.token) => StreamStarted)
     }
 
     fn stop(&self) -> Result<()> {
+        assert_not_in_callback();
         let mut conn = self.context.connection();
         send_recv!(conn, StreamStop(self.token) => StreamStopped)
     }
 
     fn reset_default_device(&self) -> Result<()> {
+        assert_not_in_callback();
         let mut conn = self.context.connection();
         send_recv!(conn, StreamResetDefaultDevice(self.token) => StreamDefaultDeviceReset)
     }
 
     fn position(&self) -> Result<u64> {
+        assert_not_in_callback();
         let mut conn = self.context.connection();
         send_recv!(conn, StreamGetPosition(self.token) => StreamPosition())
     }
 
     fn latency(&self) -> Result<u32> {
+        assert_not_in_callback();
         let mut conn = self.context.connection();
         send_recv!(conn, StreamGetLatency(self.token) => StreamLatency())
     }
 
     fn set_volume(&self, volume: f32) -> Result<()> {
+        assert_not_in_callback();
         let mut conn = self.context.connection();
         send_recv!(conn, StreamSetVolume(self.token, volume) => StreamVolumeSet)
     }
 
     fn set_panning(&self, panning: f32) -> Result<()> {
+        assert_not_in_callback();
         let mut conn = self.context.connection();
         send_recv!(conn, StreamSetPanning(self.token, panning) => StreamPanningSet)
     }
 
     fn current_device(&self) -> Result<*const ffi::cubeb_device> {
+        assert_not_in_callback();
         let mut conn = self.context.connection();
         match send_recv!(conn, StreamGetCurrentDevice(self.token) => StreamCurrentDevice()) {
             Ok(d) => Ok(Box::into_raw(Box::new(d.into()))),
@@ -252,6 +266,7 @@ impl<'ctx> Stream for ClientStream<'ctx> {
     }
 
     fn device_destroy(&self, device: *const ffi::cubeb_device) -> Result<()> {
+        assert_not_in_callback();
         // It's all unsafe...
         if !device.is_null() {
             unsafe {
@@ -272,6 +287,7 @@ impl<'ctx> Stream for ClientStream<'ctx> {
         &self,
         _device_changed_callback: ffi::cubeb_device_changed_callback,
     ) -> Result<()> {
+        assert_not_in_callback();
         Ok(())
     }
 }
