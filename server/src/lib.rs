@@ -66,7 +66,7 @@ impl cubeb::StreamCallback for Callback {
     type Frame = u8;
 
     fn data_callback(&mut self, input: &[u8], output: &mut [u8]) -> isize {
-        info!("Stream data callback: {} {}", input.len(), output.len());
+        trace!("Stream data callback: {} {}", input.len(), output.len());
 
         // len is of input and output is frame len. Turn these into the real lengths.
         let real_input = unsafe {
@@ -75,7 +75,7 @@ impl cubeb::StreamCallback for Callback {
         };
         let real_output = unsafe {
             let size_bytes = output.len() * self.output_frame_size as usize;
-            info!("Resize output to {}", size_bytes);
+            trace!("Resize output to {}", size_bytes);
             slice::from_raw_parts_mut(output.as_mut_ptr(), size_bytes)
         };
 
@@ -633,7 +633,7 @@ impl Server {
                     bail!("quit");
                 },
                 token => {
-                    debug!("token {:?} ready", token);
+                    trace!("token {:?} ready", token);
 
                     let context = self.context.as_ref().expect(
                         "Shouldn't receive a message before accepting connection."
@@ -643,7 +643,7 @@ impl Server {
 
                     if event.readiness().is_readable() {
                         let r = self.conns[token].process_read(context);
-                        debug!("got {:?}", r);
+                        trace!("got {:?}", r);
 
                         if let Err(e) = r {
                             debug!("dropped client {:?} due to error {:?}", token, e);
@@ -654,7 +654,7 @@ impl Server {
 
                     if event.readiness().is_writable() {
                         let r = self.conns[token].flush_pending_send();
-                        debug!("got {:?}", r);
+                        trace!("got {:?}", r);
 
                         match r {
                             Ok(r) => readiness = r,
