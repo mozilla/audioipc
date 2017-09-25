@@ -712,12 +712,25 @@ pub fn run(running: Arc<AtomicBool>) -> Result<()> {
     //poll.deregister(&server.socket).unwrap();
 }
 
+struct ServerWrapper {
+    thread_handle: std::thread::JoinHandle<()>,
+    sender_ctl: channel::SenderCtl,
+}
+
+impl ServerWrapper {
+    fn shutdown(self) {
+        // Dropping SenderCtl here will notify the other end.
+        drop(self.sender_ctl);
+        self.thread_handle.join().unwrap();
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn audioipc_server_start() -> *mut c_void {
 
     let (tx, rx) = channel::ctl_pair();
 
-    thread::spawn(move || {
+    let handle = thread::spawn(move || {
         // Ignore result.
         let _ = std::fs::remove_file(audioipc::get_uds_path());
 
@@ -742,13 +755,18 @@ pub extern "C" fn audioipc_server_start() -> *mut c_void {
         }
     });
 
-    Box::into_raw(Box::new(tx)) as *mut _
+    let wrapper = ServerWrapper {
+        thread_handle: handle,
+        sender_ctl: tx
+    };
+
+    Box::into_raw(Box::new(wrapper)) as *mut _
 }
 
 #[no_mangle]
 pub extern "C" fn audioipc_server_stop(p: *mut c_void) {
-    // Dropping SenderCtl here will notify the other end.
-    let _ = unsafe { Box::<channel::SenderCtl>::from_raw(p as *mut _) };
+    let wrapper = unsafe { Box::<ServerWrapper>::from_raw(p as *mut _) };
+    wrapper.shutdown();
 }
 
 fn error(error: cubeb::Error) -> ClientMessage {
