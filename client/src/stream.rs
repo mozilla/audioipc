@@ -69,8 +69,11 @@ fn stream_thread(
                     output_ptr as *mut _,
                     nframes as _
                 );
-                conn.send(ServerMessage::StreamDataCallback(nframes as isize))
-                    .unwrap();
+                let r = conn.send(ServerMessage::StreamDataCallback(nframes as isize));
+                if r.is_err() {
+                    debug!("stream_thread: Failed to send StreamDataCallback: {:?}", r);
+                    return;
+                }
             },
             ClientMessage::StreamStateCallback(state) => {
                 info!("stream_thread: State Callback: {:?}", state);
@@ -93,7 +96,11 @@ impl<'ctx> ClientStream<'ctx> {
     ) -> Result<*mut ffi::cubeb_stream> {
         let mut conn = ctx.connection();
 
-        conn.send(ServerMessage::StreamInit(init_params)).unwrap();
+        let r = conn.send(ServerMessage::StreamInit(init_params));
+        if r.is_err() {
+            debug!("ClientStream::init: Failed to send StreamInit: {:?}", r);
+            return Err(ErrorCode::Error.into());
+        }
 
         let r = match conn.receive_with_fd::<ClientMessage>() {
             Ok(r) => r,
@@ -185,7 +192,17 @@ impl<'ctx> ClientStream<'ctx> {
 impl<'ctx> Drop for ClientStream<'ctx> {
     fn drop(&mut self) {
         let mut conn = self.context.connection();
-        let _: Result<()> = send_recv!(conn, StreamDestroy(self.token) => StreamDestroyed);
+        let r = conn.send(ServerMessage::StreamDestroy(self.token));
+        if r.is_err() {
+            debug!("ClientStream::Drop send error={:?}", r);
+        } else {
+            let r = conn.receive();
+            if let Ok(ClientMessage::StreamDestroyed) = r {
+            } else {
+                debug!("ClientStream::Drop receive error={:?}", r);
+            }
+        }
+        // XXX: This is guaranteed to wait forever if the send failed.
         self.join_handle.take().unwrap().join().unwrap();
     }
 }

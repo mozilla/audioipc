@@ -6,7 +6,7 @@
 use ClientStream;
 use audioipc::{self, ClientMessage, Connection, ServerMessage, messages};
 use cubeb_backend::{Context, Ops};
-use cubeb_core::{DeviceId, DeviceType, Error, Result, StreamParams, ffi};
+use cubeb_core::{DeviceId, DeviceType, Error, ErrorCode, Result, StreamParams, ffi};
 use cubeb_core::binding::Binding;
 use std::ffi::{CStr, CString};
 use std::mem;
@@ -171,6 +171,15 @@ impl Drop for ClientContext {
     fn drop(&mut self) {
         let mut conn = self.connection();
         info!("ClientContext drop...");
-        let _: Result<()> = send_recv!(conn, ClientDisconnect => ClientDisconnected);
+        let r = conn.send(ServerMessage::ClientDisconnect);
+        if r.is_err() {
+            debug!("ClientContext::Drop send error={:?}", r);
+        } else {
+            let r = conn.receive();
+            if let Ok(ClientMessage::ClientDisconnected) = r {
+            } else {
+                debug!("ClientContext::Drop receive error={:?}", r);
+            }
+        }
     }
 }
