@@ -25,6 +25,7 @@ use mio::{Ready, Token};
 use mio_uds::{UnixListener, UnixStream};
 use std::{slice, thread};
 use std::collections::VecDeque;
+use std::collections::HashSet;
 use std::convert::From;
 use std::io::Cursor;
 use std::os::raw::c_void;
@@ -151,12 +152,13 @@ struct ServerConn {
     decoder: Decoder,
     recv_buffer: BytesMut,
     send_buffer: BytesMut,
-    pending_send: VecDeque<(Bytes, Option<AutoCloseFd>)>
+    pending_send: VecDeque<(Bytes, Option<AutoCloseFd>)>,
+    device_ids: HashSet<usize>
 }
 
 impl ServerConn {
     fn new(io: UnixStream) -> ServerConn {
-        ServerConn {
+        let mut sc = ServerConn {
             io: io,
             token: None,
             // TODO: Handle increasing slab size. Pick a good default size.
@@ -164,8 +166,11 @@ impl ServerConn {
             decoder: Decoder::new(),
             recv_buffer: BytesMut::with_capacity(4096),
             send_buffer: BytesMut::with_capacity(4096),
-            pending_send: VecDeque::new()
-        }
+            pending_send: VecDeque::new(),
+            device_ids: HashSet::new()
+        };
+        sc.device_ids.insert(0); // nullptr is always a valid (default) device id.
+        sc
     }
 
     fn process_read(&mut self, context: &Result<cubeb::Context>) -> Result<Ready> {
@@ -272,7 +277,12 @@ impl ServerConn {
                     context
                         .enumerate_devices(cubeb::DeviceType::from_bits_truncate(device_type))
                         .map(|devices| {
-                            let v: Vec<DeviceInfo> = devices.iter().map(|i| i.raw().into()).collect();
+                            let v: Vec<DeviceInfo> = devices.iter()
+                                                            .map(|i| i.raw().into())
+                                                            .collect();
+                            for i in &v {
+                                self.device_ids.insert(i.devid);
+                            }
                             ClientMessage::ContextEnumeratedDevices(v)
                         })
                         .unwrap_or_else(error)
@@ -372,9 +382,18 @@ impl ServerConn {
         }
 
 
+        if !self.device_ids.contains(&params.input_device) {
+            bail!("Invalid input_device passed to stream_init");
+        }
         // TODO: Yuck!
         let input_device = unsafe { cubeb::DeviceId::from_raw(params.input_device as *const _) };
+
+        if !self.device_ids.contains(&params.output_device) {
+            bail!("Invalid output_device passed to stream_init");
+        }
+        // TODO: Yuck!
         let output_device = unsafe { cubeb::DeviceId::from_raw(params.output_device as *const _) };
+
         let latency = params.latency_frames;
         let mut builder = cubeb::StreamInitOptionsBuilder::new();
         builder
@@ -713,6 +732,10 @@ pub fn run(running: Arc<AtomicBool>) -> Result<()> {
     //poll.deregister(&server.socket).unwrap();
 }
 
+fn error(error: cubeb::Error) -> ClientMessage {
+    ClientMessage::ContextError(error.raw_code())
+}
+
 struct ServerWrapper {
     thread_handle: std::thread::JoinHandle<()>,
     sender_ctl: channel::SenderCtl,
@@ -768,8 +791,4 @@ pub extern "C" fn audioipc_server_start() -> *mut c_void {
 pub extern "C" fn audioipc_server_stop(p: *mut c_void) {
     let wrapper = unsafe { Box::<ServerWrapper>::from_raw(p as *mut _) };
     wrapper.shutdown();
-}
-
-fn error(error: cubeb::Error) -> ClientMessage {
-    ClientMessage::ContextError(error.raw_code())
 }
