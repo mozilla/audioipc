@@ -128,9 +128,10 @@ impl cubeb::StreamCallback for Callback {
 
 impl Drop for Callback {
     fn drop(&mut self) {
-        self.connection
-            .send(ClientMessage::StreamDestroyed)
-            .unwrap();
+        let r = self.connection.send(ClientMessage::StreamDestroyed);
+        if r.is_err() {
+            debug!("Callback::drop failed to send StreamDestroyed = {:?}", r);
+        }
     }
 }
 
