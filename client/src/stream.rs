@@ -39,7 +39,7 @@ fn stream_thread(
             Ok(r) => r,
             Err(e) => {
                 debug!("stream_thread: Failed to receive message: {:?}", e);
-                continue;
+                return;
             },
         };
 
