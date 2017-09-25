@@ -58,9 +58,12 @@ impl Context for ClientContext {
     }
 
     fn max_channel_count(&self) -> Result<u32> {
-        assert_not_in_callback();
-        let mut conn = self.connection();
-        send_recv!(conn, ContextGetMaxChannelCount => ContextMaxChannelCount())
+        // HACK: This needs to be reentrant as MSG calls it from within data_callback.
+        //assert_not_in_callback();
+        //let mut conn = self.connection();
+        //send_recv!(conn, ContextGetMaxChannelCount => ContextMaxChannelCount())
+        warn!("Context::max_channel_count lying about result until reentrancy issues resolved.");
+        Ok(2)
     }
 
     fn min_latency(&self, params: &StreamParams) -> Result<u32> {
