@@ -52,18 +52,14 @@ impl Context for ClientContext {
     }
 
     fn backend_id(&self) -> &'static CStr {
-        // HACK: This is called reentrantly from Gecko's AudioStream::DataCallback.
-        //assert_not_in_callback();
+        assert_not_in_callback();
         unsafe { CStr::from_ptr(b"remote\0".as_ptr() as *const _) }
     }
 
     fn max_channel_count(&self) -> Result<u32> {
-        // HACK: This needs to be reentrant as MSG calls it from within data_callback.
-        //assert_not_in_callback();
-        //let mut conn = self.connection();
-        //send_recv!(conn, ContextGetMaxChannelCount => ContextMaxChannelCount())
-        warn!("Context::max_channel_count lying about result until reentrancy issues resolved.");
-        Ok(2)
+        assert_not_in_callback();
+        let mut conn = self.connection();
+        send_recv!(conn, ContextGetMaxChannelCount => ContextMaxChannelCount())
     }
 
     fn min_latency(&self, params: &StreamParams) -> Result<u32> {
