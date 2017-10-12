@@ -127,5 +127,6 @@ pub fn get_uds_path() -> PathBuf {
 }
 
 pub fn get_shm_path(dir: &str) -> PathBuf {
-    get_temp_path(&format!("cubeb-shm-{}", dir))
+    let pid = unsafe { libc::getpid() };
+    get_temp_path(&format!("cubeb-shm-{}-{}", pid, dir))
 }
