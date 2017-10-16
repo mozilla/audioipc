@@ -8,4 +8,5 @@ description = "Cubeb Backend for talking to remote cubeb server."
 audioipc = { path="../audioipc" }
 cubeb-backend = { git="https://github.com/djg/cubeb-rs", version="^0.2" }
 cubeb-core = { git="https://github.com/djg/cubeb-rs", version="^0.1" }
+libc = "0.2"
 log = "^0.3.6"
