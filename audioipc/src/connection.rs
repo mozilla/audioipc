@@ -126,7 +126,7 @@ impl Connection {
                 Ok(Async::NotReady) => bail!("Socket should be blocking."),
                 // TODO: Handle dropped message.
                 // Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => panic!("wouldblock"),
-                _ => bail!("socket write"),
+                Err(e) => return Err(e.into())
             }
         }
     }

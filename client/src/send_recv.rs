@@ -32,8 +32,8 @@ macro_rules! send_recv {
         }
     });
     (__recv $conn:expr, $rmsg:ident) => ({
-        let r = $conn.receive().unwrap();
-        if let ClientMessage::$rmsg = r {
+        let r = $conn.receive();
+        if let Ok(ClientMessage::$rmsg) = r {
             Ok(())
         } else {
             debug!("receive error - got={:?}", r);
@@ -41,8 +41,8 @@ macro_rules! send_recv {
         }
     });
     (__recv $conn:expr, $rmsg:ident __result) => ({
-        let r = $conn.receive().unwrap();
-        if let ClientMessage::$rmsg(v) = r {
+        let r = $conn.receive();
+        if let Ok(ClientMessage::$rmsg(v)) = r {
             Ok(v)
         } else {
             debug!("receive error - got={:?}", r);
