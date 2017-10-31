@@ -10,6 +10,7 @@ extern crate env_logger;
 extern crate libc;
 #[macro_use]
 extern crate log;
+extern crate futures;
 extern crate audioipc_server as server;
 
 use std::process::exit;
@@ -30,7 +31,6 @@ use errors::*;
 // Run with 'RUST_LOG=run,audioipc cargo run -p ipctest'
 fn run() -> Result<()> {
     let handle = server::audioipc_server_start();
-
     let fd = server::audioipc_server_new_client(handle);
 
     match unsafe { libc::fork() } {
@@ -38,10 +38,10 @@ fn run() -> Result<()> {
         0 => {
             client::client_test(fd).unwrap();
             return Ok(());
-        }
+        },
         n => unsafe {
             libc::waitpid(n, std::ptr::null_mut(), 0);
-        }
+        },
     };
 
     server::audioipc_server_stop(handle);
