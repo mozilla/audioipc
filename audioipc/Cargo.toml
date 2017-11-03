@@ -1,6 +1,6 @@
 [package]
 name = "audioipc"
-version = "0.1.0"
+version = "0.2.0"
 authors = [
         "Matthew Gregan <kinetik@flim.org>",
         "Dan Glastonbury <dan.glastonbury@gmail.com>"

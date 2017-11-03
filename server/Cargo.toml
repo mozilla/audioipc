@@ -1,7 +1,10 @@
 [package]
 name = "audioipc-server"
-version = "0.1.0"
-authors = ["Dan Glastonbury <dan.glastonbury@gmail.com>"]
+version = "0.2.0"
+authors = [
+        "Matthew Gregan <kinetik@flim.org>",
+        "Dan Glastonbury <dan.glastonbury@gmail.com>"
+        ]
 description = "Remote cubeb server"
 
 [dependencies]
