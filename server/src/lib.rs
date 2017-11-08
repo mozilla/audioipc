@@ -168,7 +168,7 @@ type StreamSlab = slab::Slab<cubeb::Stream<Callback>, usize>;
 
 // TODO: Server token must be outside range used by server.connections slab.
 // usize::MAX is already used internally in mio.
-const QUIT: Token = Token(std::usize::MAX - 2);
+const CMD: Token = Token(std::usize::MAX - 2);
 const SERVER: Token = Token(std::usize::MAX - 1);
 
 struct ServerConn {
@@ -608,7 +608,9 @@ pub struct Server {
     // Err(_)        - Server has tried and failed to create cubeb::Context.
     //                 Don't try again.
     context: Option<Result<cubeb::Context>>,
-    conns: Slab<ServerConn>
+    conns: Slab<ServerConn>,
+    rx: channel::Receiver<Command>,
+    tx: std::sync::mpsc::Sender<Response>,
 }
 
 impl Drop for Server {
@@ -623,11 +625,15 @@ impl Drop for Server {
 }
 
 impl Server {
-    pub fn new(socket: UnixListener) -> Server {
+    pub fn new(socket: UnixListener,
+               rx: channel::Receiver<Command>,
+               tx: std::sync::mpsc::Sender<Response>) -> Server {
         Server {
             socket: socket,
             context: None,
-            conns: slab::Slab::with_capacity(SERVER_CONN_CHUNK_SIZE)
+            conns: slab::Slab::with_capacity(SERVER_CONN_CHUNK_SIZE),
+            rx: rx,
+            tx: tx,
         }
     }
 
@@ -643,6 +649,10 @@ impl Server {
             Ok(Some((socket, _))) => socket,
         };
 
+        self.handle_new_connection(poll, client_socket)
+    }
+
+    fn handle_new_connection(&mut self, poll: &mut mio::Poll, client_socket: UnixStream) -> Result<()> {
         if !self.conns.has_available() {
             trace!(
                 "server ran out of connection slots. reserving {} more.",
@@ -688,6 +698,17 @@ impl Server {
         Ok(())
     }
 
+    fn new_connection(&mut self, poll: &mut mio::Poll) -> Result<AutoCloseFd> {
+        // TODO: refactor accept and this to share some code.
+        // in this: create a socket pair instead of using socket.accept.
+        // register one side, return the other to send back.
+        let (s1, s2) = UnixStream::pair()?;
+        self.handle_new_connection(poll, s1)?;
+        unsafe {
+            Ok(audioipc::AutoCloseFd::from_raw_fd(s2.into_raw_fd()))
+        }
+    }
+
     pub fn poll(&mut self, poll: &mut mio::Poll) -> Result<()> {
         let mut events = mio::Events::with_capacity(16);
 
@@ -704,9 +725,19 @@ impl Server {
                         warn!("server accept error: {}", e);
                     };
                 },
-                QUIT => {
-                    info!("Quitting Audio Server loop");
-                    bail!("quit");
+                CMD => {
+                    match self.rx.try_recv().unwrap() {
+                        Command::Quit => {
+                            info!("Quitting Audio Server loop");
+                            self.tx.send(Response::Quit).unwrap();
+                            bail!("quit");
+                        },
+                        Command::NewConnection => {
+                            info!("Creating new connection");
+                            let fd = self.new_connection(poll)?;
+                            self.tx.send(Response::Connection(fd)).unwrap();
+                        }
+                    }
                 },
                 token => {
                     trace!("token {:?} ready", token);
@@ -762,14 +793,18 @@ impl Server {
 // it as an Evented that we can send/recv file descriptors (or HANDLEs on
 // Windows) over.
 pub fn run(running: Arc<AtomicBool>) -> Result<()> {
-    let path = audioipc::get_uds_path(1);
+    let path = audioipc::get_uds_path(None);
 
     // Ignore result.
     let _ = std::fs::remove_file(&path);
 
+    // TODO: Use this.
+    let (_, rx) = channel::channel();
+    let (tx2, _) = std::sync::mpsc::channel();
+
     // TODO: Use a SEQPACKET, wrap it in UnixStream?
     let mut poll = mio::Poll::new()?;
-    let mut server = Server::new(UnixListener::bind(&path)?);
+    let mut server = Server::new(UnixListener::bind(&path)?, rx, tx2);
 
     poll.register(
         &server.socket,
@@ -800,14 +835,24 @@ fn error(error: cubeb::Error) -> ClientMessage {
 
 struct ServerWrapper {
     thread_handle: std::thread::JoinHandle<()>,
-    sender_ctl: channel::SenderCtl,
+    tx: channel::Sender<Command>,
+    rx: std::sync::mpsc::Receiver<Response>,
     path: std::path::PathBuf,
+}
+
+pub enum Command {
+    Quit,
+    NewConnection,
+}
+
+pub enum Response {
+    Quit,
+    Connection(AutoCloseFd)
 }
 
 impl ServerWrapper {
     fn shutdown(self) {
-        // Dropping SenderCtl here will notify the other end.
-        drop(self.sender_ctl);
+        let _ = self.tx.send(Command::Quit);
         self.thread_handle.join().unwrap();
         // Ignore result.
         let _ = std::fs::remove_file(self.path);
@@ -816,19 +861,20 @@ impl ServerWrapper {
 
 #[no_mangle]
 pub extern "C" fn audioipc_server_start() -> *mut c_void {
-    let pid = unsafe { libc::getpid() };
-    let path = audioipc::get_uds_path(pid as u64);
+    let pid = Some(unsafe { libc::getpid() } as u64);
+    let path = audioipc::get_uds_path(pid);
 
-    let (tx, rx) = channel::ctl_pair();
+    let (tx, rx) = channel::channel();
+    let (tx2, rx2) = std::sync::mpsc::channel();
 
     let handle = thread::spawn(move || {
-        let path = audioipc::get_uds_path(pid as u64);
+        let path = audioipc::get_uds_path(pid);
         // Ignore result.
         let _ = std::fs::remove_file(&path);
 
         // TODO: Use a SEQPACKET, wrap it in UnixStream?
         let mut poll = mio::Poll::new().unwrap();
-        let mut server = Server::new(UnixListener::bind(&path).unwrap());
+        let mut server = Server::new(UnixListener::bind(&path).unwrap(), rx, tx2);
 
         poll.register(
             &server.socket,
@@ -837,7 +883,7 @@ pub extern "C" fn audioipc_server_start() -> *mut c_void {
             mio::PollOpt::edge()
         ).unwrap();
 
-        poll.register(&rx, QUIT, mio::Ready::readable(), mio::PollOpt::edge())
+        poll.register(&server.rx, CMD, mio::Ready::readable(), mio::PollOpt::edge())
             .unwrap();
 
         loop {
@@ -849,11 +895,25 @@ pub extern "C" fn audioipc_server_start() -> *mut c_void {
 
     let wrapper = ServerWrapper {
         thread_handle: handle,
-        sender_ctl: tx,
+        tx: tx,
+        rx: rx2,
         path: path
     };
 
     Box::into_raw(Box::new(wrapper)) as *mut _
+}
+
+#[no_mangle]
+pub extern "C" fn audioipc_server_new_client(p: *mut c_void) -> libc::c_int {
+    let wrapper: &mut ServerWrapper = unsafe { &mut *(p as *mut _) };
+
+    wrapper.tx.send(Command::NewConnection).unwrap();
+
+    if let Response::Connection(fd) = wrapper.rx.recv().unwrap() {
+        return fd.into_raw_fd();
+    }
+
+    -1
 }
 
 #[no_mangle]
