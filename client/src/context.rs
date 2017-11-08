@@ -13,6 +13,7 @@ use std::ffi::{CStr, CString};
 use std::mem;
 use std::os::raw::c_void;
 use std::os::unix::net::UnixStream;
+use std::os::unix::io::FromRawFd;
 use std::sync::{Mutex, MutexGuard};
 use stream;
 use libc;
@@ -40,24 +41,38 @@ impl ClientContext {
     }
 }
 
+// TODO: encapsulate connect, etc inside audioipc.
+fn open_server_stream() -> Result<UnixStream> {
+    // If we have an existing connection, use that.
+    unsafe {
+        if let Some(fd) = super::G_SERVER_FD {
+            return Ok(UnixStream::from_raw_fd(fd));
+        }
+
+        // Otherwise, fall back to a pid and path based connection.
+        // For now, we try our parent, ourself, and the default path.
+        let ppid = Some(libc::getppid() as u64);
+        if let Ok(stream) = UnixStream::connect(audioipc::get_uds_path(ppid)) {
+            println!("using ppid");
+            return Ok(stream);
+        }
+        let pid = Some(libc::getpid() as u64);
+        if pid != ppid {
+            if let Ok(stream) = UnixStream::connect(audioipc::get_uds_path(pid)) {
+                return Ok(stream);
+            }
+        }
+
+        return Ok(t!(UnixStream::connect(audioipc::get_uds_path(None))));
+    }
+}
+
 impl Context for ClientContext {
     fn init(_context_name: Option<&CStr>) -> Result<*mut ffi::cubeb> {
         assert_not_in_callback();
-        // TODO: encapsulate connect, etc inside audioipc.
-        // TODO: explicit setup of connection so we don't have to guess the
-        // path.  For now, we try our parent, ourself, and the default path.
-        let ppid = unsafe { libc::getppid() };
-        let pid = unsafe { libc::getpid() };
-        let stream = match UnixStream::connect(audioipc::get_uds_path(ppid as u64)) {
-            Ok(stream) => stream,
-            _ => match UnixStream::connect(audioipc::get_uds_path(pid as u64)) {
-                Ok(stream) => stream,
-                _ => t!(UnixStream::connect(audioipc::get_uds_path(1)))
-            }
-        };
         let ctx = Box::new(ClientContext {
             _ops: &CLIENT_OPS as *const _,
-            connection: Mutex::new(Connection::new(stream))
+            connection: Mutex::new(Connection::new(open_server_stream()?))
         });
         Ok(Box::into_raw(ctx) as *mut _)
     }
@@ -201,6 +216,11 @@ impl Drop for ClientContext {
             if let Ok(ClientMessage::ClientDisconnected) = r {
             } else {
                 debug!("ClientContext::Drop receive error={:?}", r);
+            }
+        }
+        unsafe {
+            if super::G_SERVER_FD.is_some() {
+            libc::close(super::G_SERVER_FD.take().unwrap());
             }
         }
     }
