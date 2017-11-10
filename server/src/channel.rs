@@ -1,12 +1,16 @@
+/* NOTE: Imported from https://github.com/carllerche/mio with minimal
+   modifications to build locally.  License and copyright per
+   https://raw.githubusercontent.com/carllerche/mio/master/LICENSE */
+
 //! Thread safe communication channel implementing `Evented`
 
-#![allow(unused_imports, deprecated, missing_debug_implementations)]
+#![allow(unused_imports, dead_code, deprecated, missing_debug_implementations)]
 
-use {io, Ready, Poll, PollOpt, Registration, SetReadiness, Token};
-use event::Evented;
+use mio::{Evented, Ready, Poll, PollOpt, Registration, SetReadiness, Token};
 use lazycell::{LazyCell, AtomicLazyCell};
 use std::any::Any;
 use std::fmt;
+use std::io;
 use std::error;
 use std::sync::{mpsc, Arc};
 use std::sync::atomic::{AtomicUsize, Ordering};
