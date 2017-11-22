@@ -8,5 +8,5 @@ audioipc = { path = "../audioipc" }
 audioipc-server = { path = "../server" }
 ctrlc = "3.0.1"
 env_logger = "0.4.3"
-error-chain = "0.10.0"
+error-chain = "0.11.0"
 log = "0.3.8"
