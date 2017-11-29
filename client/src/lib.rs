@@ -48,7 +48,6 @@ pub unsafe extern "C" fn audioipc_client_init(c: *mut *mut ffi::cubeb, context_n
     if G_SERVER_FD.is_some() {
         panic!("audioipc client's server connection already initialized.");
     }
-    // Fall back to get_uds_path lookup if no existing connection specified.
     if server_connection >= 0 {
         G_SERVER_FD = Some(server_connection);
     }

@@ -5,7 +5,7 @@
 
 use ClientStream;
 use assert_not_in_callback;
-use audioipc::{self, ClientMessage, Connection, ServerMessage, messages};
+use audioipc::{ClientMessage, Connection, ServerMessage, messages};
 use cubeb_backend::{Context, Ops};
 use cubeb_core::{DeviceId, DeviceType, Error, ErrorCode, Result, StreamParams, ffi};
 use cubeb_core::binding::Binding;
@@ -24,14 +24,6 @@ pub struct ClientContext {
     connection: Mutex<Connection>
 }
 
-macro_rules! t(
-    ($e:expr) => (
-        match $e {
-            Ok(e) => e,
-            Err(_) => return Err(Error::default())
-        }
-    ));
-
 pub const CLIENT_OPS: Ops = capi_new!(ClientContext, ClientStream);
 
 impl ClientContext {
@@ -44,13 +36,11 @@ impl ClientContext {
 // TODO: encapsulate connect, etc inside audioipc.
 fn open_server_stream() -> Result<UnixStream> {
     unsafe {
-        // If we have an existing connection, use that.
         if let Some(fd) = super::G_SERVER_FD {
             return Ok(UnixStream::from_raw_fd(fd));
         }
 
-        // Otherwise fall back to a path-based connection.
-        return Ok(t!(UnixStream::connect(audioipc::get_uds_path())));
+        Err(Error::default())
     }
 }
 

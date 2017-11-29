@@ -23,7 +23,7 @@ use bytes::{Bytes, BytesMut};
 use cubeb_core::binding::Binding;
 use cubeb_core::ffi;
 use mio::{Ready, Token};
-use mio_uds::{UnixListener, UnixStream};
+use mio_uds::UnixStream;
 use std::{slice, thread};
 use std::collections::{HashSet, VecDeque};
 use std::convert::From;
@@ -164,10 +164,9 @@ impl Drop for Callback {
 type Slab<T> = slab::Slab<T, Token>;
 type StreamSlab = slab::Slab<cubeb::Stream<Callback>, usize>;
 
-// TODO: Server token must be outside range used by server.connections slab.
+// TODO: Server command token must be outside range used by server.connections slab.
 // usize::MAX is already used internally in mio.
-const CMD: Token = Token(std::usize::MAX - 2);
-const SERVER: Token = Token(std::usize::MAX - 1);
+const CMD: Token = Token(std::usize::MAX - 1);
 
 struct ServerConn {
     //connection: audioipc::Connection,
@@ -600,7 +599,6 @@ impl ServerConn {
 }
 
 pub struct Server {
-    socket: UnixListener,
     // Ok(None)      - Server hasn't tried to create cubeb::Context.
     // Ok(Some(ctx)) - Server has successfully created cubeb::Context.
     // Err(_)        - Server has tried and failed to create cubeb::Context.
@@ -623,31 +621,14 @@ impl Drop for Server {
 }
 
 impl Server {
-    pub fn new(socket: UnixListener,
-               rx: channel::Receiver<Command>,
+    pub fn new(rx: channel::Receiver<Command>,
                tx: std::sync::mpsc::Sender<Response>) -> Server {
         Server {
-            socket: socket,
             context: None,
             conns: slab::Slab::with_capacity(SERVER_CONN_CHUNK_SIZE),
             rx: rx,
             tx: tx,
         }
-    }
-
-    fn accept(&mut self, poll: &mut mio::Poll) -> Result<()> {
-        debug!("Server accepting connection");
-
-        let client_socket = match self.socket.accept() {
-            Err(e) => {
-                warn!("server accept error: {}", e);
-                return Err(e.into());
-            },
-            Ok(None) => panic!("accept returned EAGAIN unexpectedly"),
-            Ok(Some((socket, _))) => socket,
-        };
-
-        self.handle_new_connection(poll, client_socket)
     }
 
     fn handle_new_connection(&mut self, poll: &mut mio::Poll, client_socket: UnixStream) -> Result<()> {
@@ -697,9 +678,6 @@ impl Server {
     }
 
     fn new_connection(&mut self, poll: &mut mio::Poll) -> Result<AutoCloseFd> {
-        // TODO: refactor accept and this to share some code.
-        // in this: create a socket pair instead of using socket.accept.
-        // register one side, return the other to send back.
         let (s1, s2) = UnixStream::pair()?;
         self.handle_new_connection(poll, s1)?;
         unsafe {
@@ -718,11 +696,6 @@ impl Server {
 
         for event in events.iter() {
             match event.token() {
-                SERVER => {
-                    if let Err(e) = self.accept(poll) {
-                        warn!("server accept error: {}", e);
-                    };
-                },
                 CMD => {
                     match self.rx.try_recv().unwrap() {
                         Command::Quit => {
@@ -793,7 +766,6 @@ struct ServerWrapper {
     thread_handle: std::thread::JoinHandle<()>,
     tx: channel::Sender<Command>,
     rx: std::sync::mpsc::Receiver<Response>,
-    path: std::path::PathBuf,
 }
 
 pub enum Command {
@@ -810,33 +782,17 @@ impl ServerWrapper {
     fn shutdown(self) {
         let _ = self.tx.send(Command::Quit);
         self.thread_handle.join().unwrap();
-        // Ignore result.
-        let _ = std::fs::remove_file(self.path);
     }
 }
 
 #[no_mangle]
 pub extern "C" fn audioipc_server_start() -> *mut c_void {
-    let path = audioipc::get_uds_path();
-
     let (tx, rx) = channel::channel();
     let (tx2, rx2) = std::sync::mpsc::channel();
 
     let handle = thread::spawn(move || {
-        let path = audioipc::get_uds_path();
-        // Ignore result.
-        let _ = std::fs::remove_file(&path);
-
-        // TODO: Use a SEQPACKET, wrap it in UnixStream?
         let mut poll = mio::Poll::new().unwrap();
-        let mut server = Server::new(UnixListener::bind(&path).unwrap(), rx, tx2);
-
-        poll.register(
-            &server.socket,
-            SERVER,
-            mio::Ready::readable(),
-            mio::PollOpt::edge()
-        ).unwrap();
+        let mut server = Server::new(rx, tx2);
 
         poll.register(&server.rx, CMD, mio::Ready::readable(), mio::PollOpt::edge())
             .unwrap();
@@ -852,7 +808,6 @@ pub extern "C" fn audioipc_server_start() -> *mut c_void {
         thread_handle: handle,
         tx: tx,
         rx: rx2,
-        path: path
     };
 
     Box::into_raw(Box::new(wrapper)) as *mut _
