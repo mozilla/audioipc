@@ -7,6 +7,7 @@ extern crate audioipc_client;
 extern crate cubeb;
 extern crate cubeb_core;
 extern crate env_logger;
+extern crate libc;
 #[macro_use]
 extern crate log;
 extern crate audioipc_server as server;
@@ -32,8 +33,16 @@ fn run() -> Result<()> {
 
     let fd = server::audioipc_server_new_client(handle);
 
-    // TODO: This could fork() to really test interprocess functionality.
-    client::client_test(fd).unwrap();
+    match unsafe { libc::fork() } {
+        -1 => bail!("fork() failed"),
+        0 => {
+            client::client_test(fd).unwrap();
+            return Ok(());
+        }
+        n => unsafe {
+            libc::waitpid(n, std::ptr::null_mut(), 0);
+        }
+    };
 
     server::audioipc_server_stop(handle);
 
