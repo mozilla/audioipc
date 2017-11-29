@@ -3,15 +3,17 @@
 extern crate error_chain;
 
 extern crate audioipc;
-extern crate ctrlc;
+extern crate audioipc_client;
+extern crate cubeb;
+extern crate cubeb_core;
 extern crate env_logger;
 #[macro_use]
 extern crate log;
 extern crate audioipc_server as server;
 
 use std::process::exit;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+
+mod client;
 
 mod errors {
     error_chain! {
@@ -24,25 +26,15 @@ mod errors {
 
 use errors::*;
 
-// Run server with 'RUST_LOG=run,audioipc cargo run'
-// Run clients with 'RUST_LOG=run,audioipc cargo run -- -c'
+// Run with 'RUST_LOG=run,audioipc cargo run -p ipctest'
 fn run() -> Result<()> {
-    let running = Arc::new(AtomicBool::new(true));
-
-    let r = running.clone();
-    let r = ctrlc::set_handler(move || { r.store(false, Ordering::SeqCst); });
-    if r.is_err() {
-        bail!("could not set ctrlc handler");
-    }
-
     let handle = server::audioipc_server_start();
 
-    loop {
-        std::thread::sleep(std::time::Duration::from_millis(1000));
-        if !running.load(Ordering::SeqCst) {
-            break;
-        }
-    }
+    let fd = server::audioipc_server_new_client(handle);
+
+    // TODO: This could fork() to really test interprocess functionality.
+    client::client_test(fd).unwrap();
+
     server::audioipc_server_stop(handle);
 
     Ok(())

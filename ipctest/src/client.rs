@@ -1,24 +1,14 @@
-#![recursion_limit = "1024"]
-#[macro_use]
-extern crate error_chain;
-
-extern crate audioipc;
-extern crate audioipc_client as client;
-extern crate cubeb;
-extern crate cubeb_core;
-extern crate env_logger;
-#[macro_use]
-extern crate log;
-
+use audioipc_client;
+use cubeb;
 use cubeb::SampleType;
 use cubeb_core::binding::Binding;
 use cubeb_core::ffi;
 use std::f32::consts::PI;
 use std::ffi::CString;
-use std::process::exit;
 use std::ptr;
 use std::thread;
 use std::time::Duration;
+use std::os::raw::c_int;
 
 mod errors {
     error_chain! {
@@ -176,8 +166,7 @@ fn enumerate_devices(ctx: &cubeb::Context) -> Result<()> {
     Ok(())
 }
 
-fn run() -> Result<()> {
-
+pub fn client_test(fd: c_int) -> Result<()> {
     macro_rules! query(
         ($e: expr) => (match $e {
             Ok(v) => v,
@@ -189,7 +178,7 @@ fn run() -> Result<()> {
     // init function to get a raw cubeb pointer.
     let context_name = CString::new("AudioIPC").unwrap();
     let mut c: *mut ffi::cubeb = ptr::null_mut();
-    if unsafe { client::audioipc_client_init(&mut c, context_name.as_ptr(), -1) } < 0 {
+    if unsafe { audioipc_client::audioipc_client_init(&mut c, context_name.as_ptr(), fd) } < 0 {
         return Err("Failed to connect to remote cubeb server.".into());
     }
     let ctx = unsafe { cubeb::Context::from_raw(c) };
@@ -242,24 +231,4 @@ fn run() -> Result<()> {
     query!(stream.stop());
 
     Ok(())
-}
-
-fn main() {
-    env_logger::init().unwrap();
-
-    println!("Cubeb AudioClient...");
-
-    if let Err(ref e) = run() {
-        error!("error: {}", e);
-
-        for e in e.iter().skip(1) {
-            info!("caused by: {}", e);
-        }
-
-        if let Some(backtrace) = e.backtrace() {
-            info!("backtrace: {:?}", backtrace);
-        }
-
-        exit(1);
-    }
 }
