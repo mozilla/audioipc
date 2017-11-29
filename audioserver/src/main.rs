@@ -35,7 +35,15 @@ fn run() -> Result<()> {
         bail!("could not set ctrlc handler");
     }
 
-    server::run(running)?;
+    let handle = server::audioipc_server_start();
+
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        if !running.load(Ordering::SeqCst) {
+            break;
+        }
+    }
+    server::audioipc_server_stop(handle);
 
     Ok(())
 }
