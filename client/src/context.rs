@@ -43,27 +43,14 @@ impl ClientContext {
 
 // TODO: encapsulate connect, etc inside audioipc.
 fn open_server_stream() -> Result<UnixStream> {
-    // If we have an existing connection, use that.
     unsafe {
+        // If we have an existing connection, use that.
         if let Some(fd) = super::G_SERVER_FD {
             return Ok(UnixStream::from_raw_fd(fd));
         }
 
-        // Otherwise, fall back to a pid and path based connection.
-        // For now, we try our parent, ourself, and the default path.
-        let ppid = Some(libc::getppid() as u64);
-        if let Ok(stream) = UnixStream::connect(audioipc::get_uds_path(ppid)) {
-            println!("using ppid");
-            return Ok(stream);
-        }
-        let pid = Some(libc::getpid() as u64);
-        if pid != ppid {
-            if let Ok(stream) = UnixStream::connect(audioipc::get_uds_path(pid)) {
-                return Ok(stream);
-            }
-        }
-
-        return Ok(t!(UnixStream::connect(audioipc::get_uds_path(None))));
+        // Otherwise fall back to a path-based connection.
+        return Ok(t!(UnixStream::connect(audioipc::get_uds_path())));
     }
 }
 

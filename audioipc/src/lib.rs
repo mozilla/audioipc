@@ -122,9 +122,8 @@ fn get_temp_path(name: &str) -> PathBuf {
     path
 }
 
-pub fn get_uds_path(id: Option<u64>) -> PathBuf {
-    let id = id.unwrap_or(1);
-    get_temp_path(&format!("cubeb-sock-{}", id))
+pub fn get_uds_path() -> PathBuf {
+    get_temp_path(&format!("cubeb-sock"))
 }
 
 pub fn get_shm_path(dir: &str) -> PathBuf {

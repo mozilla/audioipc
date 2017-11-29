@@ -31,8 +31,6 @@ use std::io::Cursor;
 use std::os::raw::c_void;
 use std::os::unix::prelude::*;
 use std::sync::{Mutex, MutexGuard};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 mod channel;
 
@@ -787,48 +785,6 @@ impl Server {
     }
 }
 
-
-// TODO: This should take an "Evented" instead of opening the UDS path
-// directly (and let caller set up the Evented), but need a way to describe
-// it as an Evented that we can send/recv file descriptors (or HANDLEs on
-// Windows) over.
-pub fn run(running: Arc<AtomicBool>) -> Result<()> {
-    let path = audioipc::get_uds_path(None);
-
-    // Ignore result.
-    let _ = std::fs::remove_file(&path);
-
-    // TODO: Use this.
-    let (_, rx) = channel::channel();
-    let (tx2, _) = std::sync::mpsc::channel();
-
-    // TODO: Use a SEQPACKET, wrap it in UnixStream?
-    let mut poll = mio::Poll::new()?;
-    let mut server = Server::new(UnixListener::bind(&path)?, rx, tx2);
-
-    poll.register(
-        &server.socket,
-        SERVER,
-        mio::Ready::readable(),
-        mio::PollOpt::edge()
-    ).unwrap();
-
-    loop {
-        if !running.load(Ordering::SeqCst) {
-            let _ = std::fs::remove_file(&path);
-            bail!("server quit due to ctrl-c");
-        }
-
-        let r = server.poll(&mut poll);
-        if r.is_err() {
-            let _ = std::fs::remove_file(&path);
-            return r;
-        }
-    }
-
-    //poll.deregister(&server.socket).unwrap();
-}
-
 fn error(error: cubeb::Error) -> ClientMessage {
     ClientMessage::Error(error.raw_code())
 }
@@ -861,14 +817,13 @@ impl ServerWrapper {
 
 #[no_mangle]
 pub extern "C" fn audioipc_server_start() -> *mut c_void {
-    let pid = Some(unsafe { libc::getpid() } as u64);
-    let path = audioipc::get_uds_path(pid);
+    let path = audioipc::get_uds_path();
 
     let (tx, rx) = channel::channel();
     let (tx2, rx2) = std::sync::mpsc::channel();
 
     let handle = thread::spawn(move || {
-        let path = audioipc::get_uds_path(pid);
+        let path = audioipc::get_uds_path();
         // Ignore result.
         let _ = std::fs::remove_file(&path);
 
