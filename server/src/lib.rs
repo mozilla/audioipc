@@ -768,11 +768,13 @@ struct ServerWrapper {
     rx: std::sync::mpsc::Receiver<Response>,
 }
 
+#[derive(Debug)]
 pub enum Command {
     Quit,
     NewConnection,
 }
 
+#[derive(Debug)]
 pub enum Response {
     Quit,
     Connection(AutoCloseFd)
@@ -781,6 +783,11 @@ pub enum Response {
 impl ServerWrapper {
     fn shutdown(self) {
         let _ = self.tx.send(Command::Quit);
+        let r = self.rx.recv();
+        match r {
+            Ok(Response::Quit) => info!("server quit response received"),
+            e => warn!("unexpected response to server quit: {:?}", e),
+        };
         self.thread_handle.join().unwrap();
     }
 }
