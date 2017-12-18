@@ -197,7 +197,7 @@ impl Drop for ClientContext {
         }
         unsafe {
             if super::G_SERVER_FD.is_some() {
-            libc::close(super::G_SERVER_FD.take().unwrap());
+                libc::close(super::G_SERVER_FD.take().unwrap());
             }
         }
     }
