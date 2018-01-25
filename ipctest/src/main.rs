@@ -32,11 +32,15 @@ use errors::*;
 fn run() -> Result<()> {
     let handle = server::audioipc_server_start();
     let fd = server::audioipc_server_new_client(handle);
+    let fd1 = server::audioipc_server_new_client(handle);
+    let fd2 = server::audioipc_server_new_client(handle);
 
     match unsafe { libc::fork() } {
         -1 => bail!("fork() failed"),
         0 => {
             client::client_test(fd).unwrap();
+            client::client_test(fd1).unwrap();
+            client::client_test(fd2).unwrap();
             return Ok(());
         },
         n => unsafe {
