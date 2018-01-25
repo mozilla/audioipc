@@ -20,10 +20,13 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_void;
 use std::os::unix::io::FromRawFd;
 use std::os::unix::net;
-use std::sync::mpsc;
+use std::sync::{mpsc, Mutex, Arc};
+use std::collections::HashMap;
+use std::thread;
 use stream;
 use tokio_core::reactor::{Handle, Remote};
 use tokio_uds::UnixStream;
+use audio_thread_priority::*;
 
 struct CubebClient;
 
@@ -112,8 +115,42 @@ impl Context for ClientContext {
 
         let rpc = t!(rx_rpc.recv());
 
+        let priority_handles = Arc::new(Mutex::new(HashMap::new()));
+        let priority_handles_ref = priority_handles.clone();
+
         let cpupool = futures_cpupool::Builder::new()
             .name_prefix("AudioIPC")
+            .after_start(move || {
+              // good defaults
+              let tid = thread::current().id();
+              match promote_current_thread_to_real_time(512, 48000) {
+                  Ok(h) => {
+                    info!("Bumped thread {:?} priority to real time for audio.", tid);
+                    priority_handles_ref.lock().unwrap().insert(tid, h);
+                  }
+                  Err(_)=> {
+                      error!("Could not bump thread {:?} priority.", tid);
+                  }
+              }
+            })
+            .before_stop(move || {
+                let tid = thread::current().id();
+                match priority_handles.lock().unwrap().remove(&tid) {
+                    Some(h) =>  {
+                        match demote_current_thread_from_real_time(h) {
+                            Ok(_) => {
+                                info!("thread {:?} demoted", tid);
+                            }
+                            Err(_) => {
+                                error!("could not demote thread {:?}", tid);
+                            }
+                        }
+                    }
+                    None => {
+                        error!("thread {:?} not found in priority handles table", tid);
+                    }
+                }
+            })
             .create();
 
         let ctx = Box::new(ClientContext {

@@ -14,6 +14,7 @@ extern crate libc;
 extern crate log;
 extern crate tokio_core;
 extern crate tokio_uds;
+extern crate audio_thread_priority;
 
 #[macro_use]
 mod send_recv;
