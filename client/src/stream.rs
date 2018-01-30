@@ -50,7 +50,7 @@ impl rpc::Server for CallbackServer {
     fn process(&mut self, req: Self::Request) -> Self::Future {
         match req {
             CallbackReq::Data(nframes, frame_size) => {
-                info!(
+                debug!(
                     "stream_thread: Data Callback: nframes={} frame_size={}",
                     nframes,
                     frame_size
@@ -87,7 +87,7 @@ impl rpc::Server for CallbackServer {
                 })
             },
             CallbackReq::State(state) => {
-                info!("stream_thread: State Callback: {:?}", state);
+                debug!("stream_thread: State Callback: {:?}", state);
                 let user_ptr = self.user_ptr;
                 let cb = self.state_cb;
                 self.cpu_pool.spawn_fn(move || {

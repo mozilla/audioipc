@@ -135,7 +135,7 @@ impl cubeb::StreamCallback for Callback {
     }
 
     fn state_callback(&mut self, state: cubeb::State) {
-        info!("Stream state callback: {:?}", state);
+        debug!("Stream state callback: {:?}", state);
         // TODO: Share this conversion with the same code in cubeb-rs?
         let state = match state {
             cubeb::State::Started => ffi::CUBEB_STATE_STARTED,
@@ -352,7 +352,7 @@ impl CubebServer {
         let output_frame_size = frame_size_in_bytes(output_stream_params);
 
         let (stm1, stm2) = net::UnixStream::pair()?;
-        info!("Created callback pair: {:?}-{:?}", stm1, stm2);
+        debug!("Created callback pair: {:?}-{:?}", stm1, stm2);
         let (input_shm, input_file) =
             SharedMemWriter::new(&audioipc::get_shm_path("input"), SHM_AREA_SIZE)?;
         let (output_shm, output_file) =
