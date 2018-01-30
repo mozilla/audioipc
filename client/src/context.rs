@@ -254,7 +254,7 @@ impl Context for ClientContext {
 
 impl Drop for ClientContext {
     fn drop(&mut self) {
-        info!("ClientContext drop...");
+        debug!("ClientContext drop...");
         let _ = send_recv!(self.rpc(), ClientDisconnect => ClientDisconnected);
         unsafe {
             if super::G_SERVER_FD.is_some() {
