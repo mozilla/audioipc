@@ -167,19 +167,19 @@ impl<'ctx> Drop for ClientStream<'ctx> {
 }
 
 impl<'ctx> Stream for ClientStream<'ctx> {
-    fn start(&self) -> Result<()> {
+    fn start(&mut self) -> Result<()> {
         assert_not_in_callback();
         let rpc = self.context.rpc();
         send_recv!(rpc, StreamStart(self.token) => StreamStarted)
     }
 
-    fn stop(&self) -> Result<()> {
+    fn stop(&mut self) -> Result<()> {
         assert_not_in_callback();
         let rpc = self.context.rpc();
         send_recv!(rpc, StreamStop(self.token) => StreamStopped)
     }
 
-    fn reset_default_device(&self) -> Result<()> {
+    fn reset_default_device(&mut self) -> Result<()> {
         assert_not_in_callback();
         let rpc = self.context.rpc();
         send_recv!(rpc, StreamResetDefaultDevice(self.token) => StreamDefaultDeviceReset)
@@ -197,13 +197,13 @@ impl<'ctx> Stream for ClientStream<'ctx> {
         send_recv!(rpc, StreamGetLatency(self.token) => StreamLatency())
     }
 
-    fn set_volume(&self, volume: f32) -> Result<()> {
+    fn set_volume(&mut self, volume: f32) -> Result<()> {
         assert_not_in_callback();
         let rpc = self.context.rpc();
         send_recv!(rpc, StreamSetVolume(self.token, volume) => StreamVolumeSet)
     }
 
-    fn set_panning(&self, panning: f32) -> Result<()> {
+    fn set_panning(&mut self, panning: f32) -> Result<()> {
         assert_not_in_callback();
         let rpc = self.context.rpc();
         send_recv!(rpc, StreamSetPanning(self.token, panning) => StreamPanningSet)
