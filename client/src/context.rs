@@ -199,7 +199,7 @@ impl Context for ClientContext {
     }
 
     fn stream_init(
-        &self,
+        &mut self,
         stream_name: Option<&CStr>,
         input_device: DeviceId,
         input_stream_params: Option<&ffi::cubeb_stream_params>,
@@ -242,7 +242,7 @@ impl Context for ClientContext {
     }
 
     fn register_device_collection_changed(
-        &self,
+        &mut self,
         _dev_type: DeviceType,
         _collection_changed_callback: ffi::cubeb_device_collection_changed_callback,
         _user_ptr: *mut c_void
