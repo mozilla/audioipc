@@ -101,13 +101,16 @@ impl Context for ClientContext {
         let core = t!(core::spawn_thread("AudioIPC Client RPC", move || {
             let handle = core::handle();
 
-            open_server_stream().ok()
+            open_server_stream()
+                .ok()
                 .and_then(|stream| UnixStream::from_stream(stream, &handle).ok())
                 .and_then(|stream| bind_and_send_client(stream, &handle, &tx_rpc))
-                .ok_or_else(|| io::Error::new(
-                    io::ErrorKind::Other,
-                    "Failed to open stream and create rpc."
-                ))
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::Other,
+                        "Failed to open stream and create rpc."
+                    )
+                })
         }));
 
         let rpc = t!(rx_rpc.recv());

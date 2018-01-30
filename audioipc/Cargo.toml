@@ -8,7 +8,7 @@ authors = [
 description = "Remote Cubeb IPC"
 
 [dependencies]
-cubeb-core = { git = "https://github.com/djg/cubeb-rs", version="^0.1" }
+cubeb-core = { git = "https://github.com/djg/cubeb-rs", branch="support-cubeb-pulse-rs", version="^0.1" }
 bincode = "0.8"
 bytes = "0.4"
 # rayon-core in Gecko uses futures 0.1.13

@@ -7,8 +7,8 @@ authors = ["Dan Glastonbury <dan.glastonbury@gmail.com>"]
 audioipc = { path = "../audioipc" }
 audioipc-server = { path = "../server" }
 audioipc-client= { path = "../client" }
-cubeb-core = { git = "https://github.com/djg/cubeb-rs", version="^0.1" }
-cubeb = { git = "https://github.com/djg/cubeb-rs", version="^0.3.2"  }
+cubeb-core = { git = "https://github.com/djg/cubeb-rs", branch = "support-cubeb-pulse-rs", version="^0.1" }
+cubeb = { git = "https://github.com/djg/cubeb-rs", branch = "support-cubeb-pulse-rs", version="^0.3.2"  }
 env_logger = "0.4.3"
 error-chain = "0.11.0"
 futures = "0.1"
