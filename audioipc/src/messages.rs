@@ -183,7 +183,6 @@ pub enum ServerMessage {
     ContextGetMaxChannelCount,
     ContextGetMinLatency(StreamParams),
     ContextGetPreferredSampleRate,
-    ContextGetPreferredChannelLayout,
     ContextGetDeviceEnumeration(ffi::cubeb_device_type),
 
     StreamInit(StreamInitParams),
