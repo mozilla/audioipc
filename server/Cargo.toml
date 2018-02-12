@@ -9,8 +9,7 @@ description = "Remote cubeb server"
 
 [dependencies]
 audioipc = { path = "../audioipc" }
-cubeb-core = { git = "https://github.com/djg/cubeb-rs", branch = "support-cubeb-pulse-rs", version="^0.1" }
-cubeb = { git = "https://github.com/djg/cubeb-rs", branch = "support-cubeb-pulse-rs", version="^0.3.2" }
+cubeb = { git = "https://github.com/djg/cubeb-rs", branch = "the-great-reorganizing", version="0.4" }
 bytes = "0.4"
 lazycell = "^0.4"
 libc = "0.2"

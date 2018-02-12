@@ -10,8 +10,7 @@ use audioipc::frame::{framed, Framed};
 use audioipc::messages::{self, CallbackReq, CallbackResp, ClientMessage, ServerMessage};
 use audioipc::rpc;
 use audioipc::shm::{SharedMemMutSlice, SharedMemSlice};
-use cubeb_backend::Stream;
-use cubeb_core::{ffi, Result};
+use cubeb_backend::{StreamOps, ffi, Result, DeviceRef, ForeignTypeRef, Error, Stream, ForeignType};
 use futures::Future;
 use futures_cpupool::{CpuFuture, CpuPool};
 use std::ffi::CString;
@@ -26,6 +25,22 @@ use tokio_uds::UnixStream;
 // TODO: Remove and let caller allocate based on cubeb backend requirements.
 const SHM_AREA_SIZE: usize = 2 * 1024 * 1024;
 
+pub struct Device(ffi::cubeb_device);
+
+impl Drop for Device {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.0.input_name.is_null() {
+                let _ = CString::from_raw(self.0.input_name as *mut _);
+            }
+            if !self.0.output_name.is_null() {
+                let _ = CString::from_raw(self.0.output_name as *mut _);
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct ClientStream<'ctx> {
     // This must be a reference to Context for cubeb, cubeb accesses stream methods via stream->context->ops
     context: &'ctx ClientContext,
@@ -60,7 +75,7 @@ impl rpc::Server for CallbackServer {
                 let input_shm = unsafe { self.input_shm.clone_view() };
                 let mut output_shm = unsafe { self.output_shm.clone_view() };
                 let user_ptr = self.user_ptr;
-                let cb = self.data_cb;
+                let cb = self.data_cb.unwrap();
 
                 self.cpu_pool.spawn_fn(move || {
                     // TODO: This is proof-of-concept. Make it better.
@@ -74,13 +89,13 @@ impl rpc::Server for CallbackServer {
                         .as_mut_ptr();
 
                     set_in_callback(true);
-                    let nframes = cb(
+                    let nframes = unsafe { cb(
                         ptr::null_mut(),
                         user_ptr as *mut c_void,
                         input_ptr as *const _,
                         output_ptr as *mut _,
                         nframes as _
-                    );
+                    ) };
                     set_in_callback(false);
 
                     Ok(CallbackResp::Data(nframes as isize))
@@ -89,10 +104,10 @@ impl rpc::Server for CallbackServer {
             CallbackReq::State(state) => {
                 debug!("stream_thread: State Callback: {:?}", state);
                 let user_ptr = self.user_ptr;
-                let cb = self.state_cb;
+                let cb = self.state_cb.unwrap();
                 self.cpu_pool.spawn_fn(move || {
                     set_in_callback(true);
-                    cb(ptr::null_mut(), user_ptr as *mut _, state);
+                    unsafe { cb(ptr::null_mut(), user_ptr as *mut _, state); }
                     set_in_callback(false);
 
                     Ok(CallbackResp::State)
@@ -109,7 +124,7 @@ impl<'ctx> ClientStream<'ctx> {
         data_callback: ffi::cubeb_data_callback,
         state_callback: ffi::cubeb_state_callback,
         user_ptr: *mut c_void
-    ) -> Result<*mut ffi::cubeb_stream> {
+    ) -> Result<Stream> {
         assert_not_in_callback();
 
         let rpc = ctx.rpc();
@@ -151,10 +166,11 @@ impl<'ctx> ClientStream<'ctx> {
         });
         wait_rx.recv().unwrap();
 
-        Ok(Box::into_raw(Box::new(ClientStream {
+        let stream = Box::into_raw(Box::new(ClientStream {
             context: ctx,
             token: data.token
-        })) as _)
+        }));
+        Ok(unsafe { Stream::from_ptr(stream as *mut _)})
     }
 }
 
@@ -166,7 +182,7 @@ impl<'ctx> Drop for ClientStream<'ctx> {
     }
 }
 
-impl<'ctx> Stream for ClientStream<'ctx> {
+impl<'ctx> StreamOps for ClientStream<'ctx> {
     fn start(&mut self) -> Result<()> {
         assert_not_in_callback();
         let rpc = self.context.rpc();
@@ -185,13 +201,13 @@ impl<'ctx> Stream for ClientStream<'ctx> {
         send_recv!(rpc, StreamResetDefaultDevice(self.token) => StreamDefaultDeviceReset)
     }
 
-    fn position(&self) -> Result<u64> {
+    fn position(&mut self) -> Result<u64> {
         assert_not_in_callback();
         let rpc = self.context.rpc();
         send_recv!(rpc, StreamGetPosition(self.token) => StreamPosition())
     }
 
-    fn latency(&self) -> Result<u32> {
+    fn latency(&mut self) -> Result<u32> {
         assert_not_in_callback();
         let rpc = self.context.rpc();
         send_recv!(rpc, StreamGetLatency(self.token) => StreamLatency())
@@ -209,35 +225,31 @@ impl<'ctx> Stream for ClientStream<'ctx> {
         send_recv!(rpc, StreamSetPanning(self.token, panning) => StreamPanningSet)
     }
 
-    fn current_device(&self) -> Result<*const ffi::cubeb_device> {
+    fn current_device(&mut self) -> Result<&DeviceRef> {
         assert_not_in_callback();
         let rpc = self.context.rpc();
         match send_recv!(rpc, StreamGetCurrentDevice(self.token) => StreamCurrentDevice()) {
-            Ok(d) => Ok(Box::into_raw(Box::new(d.into()))),
+            Ok(d) => Ok(unsafe { DeviceRef::from_ptr(Box::into_raw(Box::new(d.into())))}),
             Err(e) => Err(e)
         }
     }
 
-    fn device_destroy(&self, device: *const ffi::cubeb_device) -> Result<()> {
+    fn device_destroy(&mut self, device: &DeviceRef) -> Result<()> {
         assert_not_in_callback();
         // It's all unsafe...
-        if !device.is_null() {
+        if device.as_ptr().is_null() {
+            Err(Error::error())
+        } else {
             unsafe {
-                if !(*device).output_name.is_null() {
-                    let _ = CString::from_raw((*device).output_name as *mut _);
-                }
-                if !(*device).input_name.is_null() {
-                    let _ = CString::from_raw((*device).input_name as *mut _);
-                }
-                let _: Box<ffi::cubeb_device> = Box::from_raw(device as *mut _);
+                let _: Box<Device> = Box::from_raw(device.as_ptr() as *mut _);
             }
+            Ok(())
         }
-        Ok(())
     }
 
     // TODO: How do we call this back? On what thread?
     fn register_device_changed_callback(
-        &self,
+        &mut self,
         _device_changed_callback: ffi::cubeb_device_changed_callback
     ) -> Result<()> {
         assert_not_in_callback();
@@ -251,6 +263,6 @@ pub fn init(
     data_callback: ffi::cubeb_data_callback,
     state_callback: ffi::cubeb_state_callback,
     user_ptr: *mut c_void
-) -> Result<*mut ffi::cubeb_stream> {
+) -> Result<Stream> {
     ClientStream::init(ctx, init_params, data_callback, state_callback, user_ptr)
 }

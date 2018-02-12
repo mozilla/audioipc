@@ -6,7 +6,7 @@
 extern crate audioipc;
 #[macro_use]
 extern crate cubeb_backend;
-extern crate cubeb_core;
+extern crate foreign_types;
 extern crate futures;
 extern crate futures_cpupool;
 extern crate libc;
@@ -21,8 +21,7 @@ mod context;
 mod stream;
 
 use context::ClientContext;
-use cubeb_backend::capi;
-use cubeb_core::ffi;
+use cubeb_backend::{capi, ffi};
 use std::os::raw::{c_char, c_int};
 use std::os::unix::io::RawFd;
 use stream::ClientStream;

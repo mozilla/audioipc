@@ -1,14 +1,11 @@
 use audioipc_client;
-use cubeb;
-use cubeb::SampleType;
-use cubeb_core::binding::Binding;
-use cubeb_core::ffi;
+use cubeb::{self, ffi, ForeignType, Sample};
 use std::f32::consts::PI;
 use std::ffi::CString;
+use std::os::raw::c_int;
 use std::ptr;
 use std::thread;
 use std::time::Duration;
-use std::os::raw::c_int;
 
 mod errors {
     error_chain! {
@@ -24,39 +21,13 @@ const SAMPLE_RATE: u32 = 48000;
 const STREAM_FORMAT: cubeb::SampleFormat = cubeb::SampleFormat::S16LE;
 
 // store the phase of the generated waveform
-struct Tone {
-    position: isize
-}
 
-impl cubeb::StreamCallback for Tone {
-    type Frame = cubeb::MonoFrame<i16>;
-
-    fn data_callback(&mut self, _: &[cubeb::MonoFrame<i16>], output: &mut [cubeb::MonoFrame<i16>]) -> isize {
-
-        // generate our test tone on the fly
-        for f in output.iter_mut() {
-            // North American dial tone
-            let t1 = (2.0 * PI * 350.0 * self.position as f32 / SAMPLE_RATE as f32).sin();
-            let t2 = (2.0 * PI * 440.0 * self.position as f32 / SAMPLE_RATE as f32).sin();
-
-            f.m = i16::from_float(0.5 * (t1 + t2));
-
-            self.position += 1;
-        }
-
-        output.len() as isize
-    }
-
-    fn state_callback(&mut self, state: cubeb::State) {
-        println!("stream {:?}", state);
-    }
-}
+type Frame = cubeb::MonoFrame<i16>;
 
 fn print_device_info(info: &cubeb::DeviceInfo) {
-
-    let devtype = if info.device_type().contains(cubeb::DEVICE_TYPE_INPUT) {
+    let devtype = if info.device_type().contains(cubeb::DeviceType::INPUT) {
         "input"
-    } else if info.device_type().contains(cubeb::DEVICE_TYPE_OUTPUT) {
+    } else if info.device_type().contains(cubeb::DeviceType::OUTPUT) {
         "output"
     } else {
         "unknown?"
@@ -65,28 +36,28 @@ fn print_device_info(info: &cubeb::DeviceInfo) {
     let devstate = match info.state() {
         cubeb::DeviceState::Disabled => "disabled",
         cubeb::DeviceState::Unplugged => "unplugged",
-        cubeb::DeviceState::Enabled => "enabled",
+        cubeb::DeviceState::Enabled => "enabled"
     };
 
     let devdeffmt = match info.default_format() {
-        cubeb::DEVICE_FMT_S16LE => "S16LE",
-        cubeb::DEVICE_FMT_S16BE => "S16BE",
-        cubeb::DEVICE_FMT_F32LE => "F32LE",
-        cubeb::DEVICE_FMT_F32BE => "F32BE",
-        _ => "unknown?",
+        cubeb::DeviceFormat::S16LE => "S16LE",
+        cubeb::DeviceFormat::S16BE => "S16BE",
+        cubeb::DeviceFormat::F32LE => "F32LE",
+        cubeb::DeviceFormat::F32BE => "F32BE",
+        _ => "unknown?"
     };
 
     let mut devfmts = "".to_string();
-    if info.format().contains(cubeb::DEVICE_FMT_S16LE) {
+    if info.format().contains(cubeb::DeviceFormat::S16LE) {
         devfmts = format!("{} S16LE", devfmts);
     }
-    if info.format().contains(cubeb::DEVICE_FMT_S16BE) {
+    if info.format().contains(cubeb::DeviceFormat::S16BE) {
         devfmts = format!("{} S16BE", devfmts);
     }
-    if info.format().contains(cubeb::DEVICE_FMT_F32LE) {
+    if info.format().contains(cubeb::DeviceFormat::F32LE) {
         devfmts = format!("{} F32LE", devfmts);
     }
-    if info.format().contains(cubeb::DEVICE_FMT_F32BE) {
+    if info.format().contains(cubeb::DeviceFormat::F32BE) {
         devfmts = format!("{} F32BE", devfmts);
     }
 
@@ -130,7 +101,7 @@ fn print_device_info(info: &cubeb::DeviceInfo) {
 }
 
 fn enumerate_devices(ctx: &cubeb::Context) -> Result<()> {
-    let devices = match ctx.enumerate_devices(cubeb::DEVICE_TYPE_INPUT) {
+    let devices = match ctx.enumerate_devices(cubeb::DeviceType::INPUT) {
         Ok(devices) => devices,
         Err(e) if e.code() == cubeb::ErrorCode::NotSupported => {
             println!("Device enumeration not support for this backend.");
@@ -138,7 +109,7 @@ fn enumerate_devices(ctx: &cubeb::Context) -> Result<()> {
         },
         Err(e) => {
             return Err(e).chain_err(|| "Error enumerating devices");
-        },
+        }
     };
 
     println!("Found {} input devices", devices.len());
@@ -151,11 +122,11 @@ fn enumerate_devices(ctx: &cubeb::Context) -> Result<()> {
         ctx.backend_id()
     );
 
-    let devices = match ctx.enumerate_devices(cubeb::DEVICE_TYPE_OUTPUT) {
+    let devices = match ctx.enumerate_devices(cubeb::DeviceType::OUTPUT) {
         Ok(devices) => devices,
         Err(e) => {
             return Err(e).chain_err(|| "Error enumerating devices");
-        },
+        }
     };
 
     println!("Found {} output devices", devices.len());
@@ -178,10 +149,11 @@ pub fn client_test(fd: c_int) -> Result<()> {
     // init function to get a raw cubeb pointer.
     let context_name = CString::new("AudioIPC").unwrap();
     let mut c: *mut ffi::cubeb = ptr::null_mut();
-    if unsafe { audioipc_client::audioipc_client_init(&mut c, context_name.as_ptr(), fd) } < 0 {
+    if unsafe { audioipc_client::audioipc_client_init(&mut c, context_name.as_ptr(), fd) } < 0
+    {
         return Err("Failed to connect to remote cubeb server.".into());
     }
-    let ctx = unsafe { cubeb::Context::from_raw(c) };
+    let ctx = unsafe { cubeb::Context::from_ptr(c) };
 
 
     let format = cubeb::SampleFormat::S16NE;
@@ -213,19 +185,32 @@ pub fn client_test(fd: c_int) -> Result<()> {
         .layout(cubeb::ChannelLayout::Mono)
         .take();
 
-    let stream_init_opts = cubeb::StreamInitOptionsBuilder::new()
-        .stream_name("Cubeb tone (mono)")
-        .output_stream_param(&params)
+    let mut position = 0u32;
+
+    let mut builder = cubeb::StreamBuilder::<Frame>::new();
+    builder
+        .name("Cubeb tone (mono)")
+        .default_output(&params)
         .latency(4096)
-        .take();
+        .data_callback(move |_, output| {
+            // generate our test tone on the fly
+            for f in output.iter_mut() {
+                // North American dial tone
+                let t1 = (2.0 * PI * 350.0 * position as f32 / SAMPLE_RATE as f32).sin();
+                let t2 = (2.0 * PI * 440.0 * position as f32 / SAMPLE_RATE as f32).sin();
 
-    let stream = query!(ctx.stream_init(
-        &stream_init_opts,
-        Tone {
-            position: 0
-        }
-    ));
+                f.m = i16::from_float(0.5 * (t1 + t2));
 
+                position += 1;
+            }
+
+            output.len() as isize
+        })
+        .state_callback(|state| println!("stream {:?}", state));
+
+    let stream = query!(builder.init(&ctx));
+
+    query!(stream.set_volume(1.0));
     query!(stream.start());
     thread::sleep(Duration::from_millis(500));
     query!(stream.stop());
