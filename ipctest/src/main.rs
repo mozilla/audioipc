@@ -4,14 +4,13 @@ extern crate error_chain;
 
 extern crate audioipc;
 extern crate audioipc_client;
+extern crate audioipc_server as server;
 extern crate cubeb;
-extern crate cubeb_core;
 extern crate env_logger;
+extern crate futures;
 extern crate libc;
 #[macro_use]
 extern crate log;
-extern crate futures;
-extern crate audioipc_server as server;
 
 use std::process::exit;
 
@@ -41,7 +40,7 @@ fn run() -> Result<()> {
         },
         n => unsafe {
             libc::waitpid(n, std::ptr::null_mut(), 0);
-        },
+        }
     };
 
     server::audioipc_server_stop(handle);

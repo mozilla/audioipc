@@ -9,8 +9,8 @@ description = "Cubeb Backend for talking to remote cubeb server."
 
 [dependencies]
 audioipc = { path="../audioipc" }
-cubeb-backend = { git="https://github.com/djg/cubeb-rs", branch = "support-cubeb-pulse-rs", version="^0.3" }
-cubeb-core = { git="https://github.com/djg/cubeb-rs", branch = "support-cubeb-pulse-rs", version="^0.1" }
+cubeb-backend = "0.4"
+foreign-types = "0.3"
 # rayon-core in Gecko uses futures 0.1.13
 futures = { version="=0.1.13", default-features=false, features=["use_std"] }
 # futures-cpupool 0.1.5 matches futures 0.1.13

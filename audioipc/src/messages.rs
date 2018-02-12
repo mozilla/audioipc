@@ -3,9 +3,9 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details
 
-use cubeb_core::{self, ffi};
+use cubeb::{self, ffi};
 use std::ffi::{CStr, CString};
-use std::os::raw::c_char;
+use std::os::raw::{c_char, c_int, c_uint};
 use std::os::unix::io::RawFd;
 use std::ptr;
 
@@ -15,8 +15,8 @@ pub struct Device {
     pub input_name: Option<Vec<u8>>
 }
 
-impl<'a> From<cubeb_core::Device<'a>> for Device {
-    fn from(info: cubeb_core::Device) -> Self {
+impl<'a> From<&'a cubeb::DeviceRef> for Device {
+    fn from(info: &'a cubeb::DeviceRef) -> Self {
         Self {
             output_name: info.output_name_bytes().map(|s| s.to_vec()),
             input_name: info.input_name_bytes().map(|s| s.to_vec())
@@ -65,8 +65,9 @@ pub struct DeviceInfo {
     pub latency_hi: u32
 }
 
-impl<'a> From<&'a ffi::cubeb_device_info> for DeviceInfo {
-    fn from(info: &'a ffi::cubeb_device_info) -> Self {
+impl<'a> From<&'a cubeb::DeviceInfoRef> for DeviceInfo {
+    fn from(info: &'a cubeb::DeviceInfoRef) -> Self {
+        let info = unsafe { &*info.as_ptr() };
         DeviceInfo {
             devid: info.devid as _,
             device_id: dup_str(info.device_id),
@@ -117,38 +118,18 @@ impl From<DeviceInfo> for ffi::cubeb_device_info {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub struct StreamParams {
-    pub format: u32,
-    pub rate: u16,
-    pub channels: u8,
-    pub layout: i32,
-    pub prefs: i32
+    pub format: ffi::cubeb_sample_format,
+    pub rate: c_uint,
+    pub channels: c_uint,
+    pub layout: ffi::cubeb_channel_layout,
+    pub prefs: ffi::cubeb_stream_prefs
 }
 
-impl<'a> From<&'a ffi::cubeb_stream_params> for StreamParams {
-    fn from(params: &'a ffi::cubeb_stream_params) -> Self {
-        assert!(params.channels <= u32::from(u8::max_value()));
-
-        StreamParams {
-            format: params.format,
-            rate: params.rate as u16,
-            channels: params.channels as u8,
-            layout: params.layout,
-            prefs: params.prefs
-        }
-    }
-}
-
-impl<'a> From<&'a StreamParams> for ffi::cubeb_stream_params {
-    fn from(params: &StreamParams) -> Self {
-        ffi::cubeb_stream_params {
-            format: params.format,
-            rate: u32::from(params.rate),
-            channels: u32::from(params.channels),
-            layout: params.layout,
-            prefs: params.prefs
-        }
+impl<'a> From<&'a cubeb::StreamParamsRef> for StreamParams {
+    fn from(x: &cubeb::StreamParamsRef) -> StreamParams {
+        unsafe { *(x.as_ptr() as *mut StreamParams) }
     }
 }
 
@@ -171,16 +152,16 @@ fn dup_str(s: *const c_char) -> Option<Vec<u8>> {
     }
 }
 
-fn opt_str(v: Option<Vec<u8>>) -> *const c_char {
+fn opt_str(v: Option<Vec<u8>>) -> *mut c_char {
     match v {
         Some(v) => match CString::new(v) {
             Ok(s) => s.into_raw(),
             Err(_) => {
                 debug!("Failed to convert bytes to CString");
-                ptr::null()
+                ptr::null_mut()
             }
         },
-        None => ptr::null()
+        None => ptr::null_mut()
     }
 }
 
@@ -244,7 +225,7 @@ pub enum ClientMessage {
     StreamPanningSet,
     StreamCurrentDevice(Device),
 
-    Error(ffi::cubeb_error_code)
+    Error(c_int)
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -286,5 +267,37 @@ impl AssocRawFd for ClientMessage {
         if let ClientMessage::StreamCreated(ref mut data) = *self {
             data.fds = f().unwrap();
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::StreamParams;
+    use cubeb::ffi;
+    use std::mem;
+
+    #[test]
+    fn stream_params_size_check() {
+        assert_eq!(
+            mem::size_of::<StreamParams>(),
+            mem::size_of::<ffi::cubeb_stream_params>()
+        )
+    }
+
+    #[test]
+    fn stream_params_from() {
+        let mut raw = ffi::cubeb_stream_params::default();
+        raw.format = ffi::CUBEB_SAMPLE_FLOAT32BE;
+        raw.rate = 96_000;
+        raw.channels = 32;
+        raw.layout = ffi::CUBEB_LAYOUT_3F1_LFE;
+        raw.prefs = ffi::CUBEB_STREAM_PREF_LOOPBACK;
+        let wrapped = ::cubeb::StreamParams::from(raw);
+        let params = StreamParams::from(wrapped.as_ref());
+        assert_eq!(params.format, raw.format);
+        assert_eq!(params.rate, raw.rate);
+        assert_eq!(params.channels, raw.channels);
+        assert_eq!(params.layout, raw.layout);
+        assert_eq!(params.prefs, raw.prefs);
     }
 }
