@@ -10,8 +10,7 @@ use audioipc::{core, rpc};
 use audioipc::codec::LengthDelimitedCodec;
 use audioipc::fd_passing::{framed_with_fds, FramedWithFds};
 use cubeb_backend::{ffi, ChannelLayout, Context, ContextOps, DeviceCollectionRef, DeviceId,
-                    DeviceType, Error, Ops, Result, Stream, StreamParams,
-                    StreamParamsRef};
+                    DeviceType, Error, Ops, Result, Stream, StreamParams, StreamParamsRef};
 use futures::Future;
 use futures_cpupool::{self, CpuPool};
 use libc;
@@ -30,8 +29,7 @@ struct CubebClient;
 impl rpc::Client for CubebClient {
     type Request = ServerMessage;
     type Response = ClientMessage;
-    type Transport =
-        FramedWithFds<UnixStream, LengthDelimitedCodec<Self::Request, Self::Response>>;
+    type Transport = FramedWithFds<UnixStream, LengthDelimitedCodec<Self::Request, Self::Response>>;
 }
 
 macro_rules! t(
@@ -48,7 +46,7 @@ pub struct ClientContext {
     _ops: *const Ops,
     rpc: rpc::ClientProxy<ServerMessage, ClientMessage>,
     core: core::CoreThread,
-    cpu_pool: CpuPool
+    cpu_pool: CpuPool,
 }
 
 impl ClientContext {
@@ -84,7 +82,7 @@ impl ContextOps for ClientContext {
         fn bind_and_send_client(
             stream: UnixStream,
             handle: &Handle,
-            tx_rpc: &mpsc::Sender<rpc::ClientProxy<ServerMessage, ClientMessage>>
+            tx_rpc: &mpsc::Sender<rpc::ClientProxy<ServerMessage, ClientMessage>>,
         ) -> Option<()> {
             let transport = framed_with_fds(stream, Default::default());
             let rpc = rpc::bind_client::<CubebClient>(transport, handle);
@@ -108,7 +106,7 @@ impl ContextOps for ClientContext {
                 .ok_or_else(|| {
                     io::Error::new(
                         io::ErrorKind::Other,
-                        "Failed to open stream and create rpc."
+                        "Failed to open stream and create rpc.",
                     )
                 })
         }));
@@ -123,7 +121,7 @@ impl ContextOps for ClientContext {
             _ops: &CLIENT_OPS as *const _,
             rpc: rpc,
             core: core,
-            cpu_pool: cpupool
+            cpu_pool: cpupool,
         });
         Ok(unsafe { Context::from_ptr(Box::into_raw(ctx) as *mut _) })
     }
@@ -153,15 +151,15 @@ impl ContextOps for ClientContext {
         assert_not_in_callback();
         send_recv!(self.rpc(),
                    ContextGetPreferredChannelLayout => ContextPreferredChannelLayout())
-            .map(
-            |l| ChannelLayout::from(l)
-        )
+            .map(|l| {
+            ChannelLayout::from(l)
+        })
     }
 
     fn enumerate_devices(
         &mut self,
         devtype: DeviceType,
-        collection: &DeviceCollectionRef
+        collection: &DeviceCollectionRef,
     ) -> Result<()> {
         assert_not_in_callback();
         let v: Vec<ffi::cubeb_device_info> = match send_recv!(self.rpc(),
@@ -169,7 +167,7 @@ impl ContextOps for ClientContext {
                              ContextEnumeratedDevices())
         {
             Ok(mut v) => v.drain(..).map(|i| i.into()).collect(),
-            Err(e) => return Err(e)
+            Err(e) => return Err(e),
         };
         let mut vs = v.into_boxed_slice();
         let coll = unsafe { &mut *collection.as_ptr() };
@@ -188,7 +186,7 @@ impl ContextOps for ClientContext {
             let mut devices = Vec::from_raw_parts(
                 coll.device as *mut ffi::cubeb_device_info,
                 coll.count,
-                coll.count
+                coll.count,
             );
             for dev in &mut devices {
                 if !dev.device_id.is_null() {
@@ -221,20 +219,20 @@ impl ContextOps for ClientContext {
         // These params aren't sent to the server
         data_callback: ffi::cubeb_data_callback,
         state_callback: ffi::cubeb_state_callback,
-        user_ptr: *mut c_void
+        user_ptr: *mut c_void,
     ) -> Result<Stream> {
         assert_not_in_callback();
 
         fn opt_stream_params(p: Option<&StreamParamsRef>) -> Option<messages::StreamParams> {
             match p {
                 Some(p) => Some(messages::StreamParams::from(p)),
-                None => None
+                None => None,
             }
         }
 
         let stream_name = match stream_name {
             Some(s) => Some(s.to_bytes().to_vec()),
-            None => None
+            None => None,
         };
 
         let input_stream_params = opt_stream_params(input_stream_params);
@@ -246,7 +244,7 @@ impl ContextOps for ClientContext {
             input_stream_params: input_stream_params,
             output_device: output_device as usize,
             output_stream_params: output_stream_params,
-            latency_frames: latency_frame
+            latency_frames: latency_frame,
         };
         stream::init(self, init_params, data_callback, state_callback, user_ptr)
     }
@@ -255,7 +253,7 @@ impl ContextOps for ClientContext {
         &mut self,
         _dev_type: DeviceType,
         _collection_changed_callback: ffi::cubeb_device_collection_changed_callback,
-        _user_ptr: *mut c_void
+        _user_ptr: *mut c_void,
     ) -> Result<()> {
         assert_not_in_callback();
         Ok(())

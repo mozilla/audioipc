@@ -37,10 +37,10 @@ fn run() -> Result<()> {
         0 => {
             client::client_test(fd).unwrap();
             return Ok(());
-        },
+        }
         n => unsafe {
             libc::waitpid(n, std::ptr::null_mut(), 0);
-        }
+        },
     };
 
     server::audioipc_server_stop(handle);

@@ -4,11 +4,11 @@ use std::os::raw::c_int;
 #[doc(hidden)]
 pub fn _err<E>(e: E) -> Error
 where
-    E: Into<Option<c_int>>
+    E: Into<Option<c_int>>,
 {
     match e.into() {
         Some(e) => unsafe { Error::from_raw(e) },
-        None => Error::error()
+        None => Error::error(),
     }
 }
 

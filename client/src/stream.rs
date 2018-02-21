@@ -10,7 +10,7 @@ use audioipc::frame::{framed, Framed};
 use audioipc::messages::{self, CallbackReq, CallbackResp, ClientMessage, ServerMessage};
 use audioipc::rpc;
 use audioipc::shm::{SharedMemMutSlice, SharedMemSlice};
-use cubeb_backend::{StreamOps, ffi, Result, DeviceRef, Error, Stream};
+use cubeb_backend::{ffi, DeviceRef, Error, Result, Stream, StreamOps};
 use futures::Future;
 use futures_cpupool::{CpuFuture, CpuPool};
 use std::ffi::CString;
@@ -42,9 +42,10 @@ impl Drop for Device {
 
 #[derive(Debug)]
 pub struct ClientStream<'ctx> {
-    // This must be a reference to Context for cubeb, cubeb accesses stream methods via stream->context->ops
+    // This must be a reference to Context for cubeb, cubeb accesses
+    // stream methods via stream->context->ops
     context: &'ctx ClientContext,
-    token: usize
+    token: usize,
 }
 
 struct CallbackServer {
@@ -53,7 +54,7 @@ struct CallbackServer {
     data_cb: ffi::cubeb_data_callback,
     state_cb: ffi::cubeb_state_callback,
     user_ptr: usize,
-    cpu_pool: CpuPool
+    cpu_pool: CpuPool,
 }
 
 impl rpc::Server for CallbackServer {
@@ -67,8 +68,7 @@ impl rpc::Server for CallbackServer {
             CallbackReq::Data(nframes, frame_size) => {
                 debug!(
                     "stream_thread: Data Callback: nframes={} frame_size={}",
-                    nframes,
-                    frame_size
+                    nframes, frame_size
                 );
 
                 // Clone values that need to be moved into the cpu pool thread.
@@ -89,25 +89,29 @@ impl rpc::Server for CallbackServer {
                         .as_mut_ptr();
 
                     set_in_callback(true);
-                    let nframes = unsafe { cb(
-                        ptr::null_mut(),
-                        user_ptr as *mut c_void,
-                        input_ptr as *const _,
-                        output_ptr as *mut _,
-                        nframes as _
-                    ) };
+                    let nframes = unsafe {
+                        cb(
+                            ptr::null_mut(),
+                            user_ptr as *mut c_void,
+                            input_ptr as *const _,
+                            output_ptr as *mut _,
+                            nframes as _,
+                        )
+                    };
                     set_in_callback(false);
 
                     Ok(CallbackResp::Data(nframes as isize))
                 })
-            },
+            }
             CallbackReq::State(state) => {
                 debug!("stream_thread: State Callback: {:?}", state);
                 let user_ptr = self.user_ptr;
                 let cb = self.state_cb.unwrap();
                 self.cpu_pool.spawn_fn(move || {
                     set_in_callback(true);
-                    unsafe { cb(ptr::null_mut(), user_ptr as *mut _, state); }
+                    unsafe {
+                        cb(ptr::null_mut(), user_ptr as *mut _, state);
+                    }
                     set_in_callback(false);
 
                     Ok(CallbackResp::State)
@@ -123,7 +127,7 @@ impl<'ctx> ClientStream<'ctx> {
         init_params: messages::StreamInitParams,
         data_callback: ffi::cubeb_data_callback,
         state_callback: ffi::cubeb_state_callback,
-        user_ptr: *mut c_void
+        user_ptr: *mut c_void,
     ) -> Result<Stream> {
         assert_not_in_callback();
 
@@ -153,7 +157,7 @@ impl<'ctx> ClientStream<'ctx> {
             data_cb: data_callback,
             state_cb: state_callback,
             user_ptr: user_data,
-            cpu_pool: cpu_pool
+            cpu_pool: cpu_pool,
         };
 
         let (wait_tx, wait_rx) = mpsc::channel();
@@ -168,9 +172,9 @@ impl<'ctx> ClientStream<'ctx> {
 
         let stream = Box::into_raw(Box::new(ClientStream {
             context: ctx,
-            token: data.token
+            token: data.token,
         }));
-        Ok(unsafe { Stream::from_ptr(stream as *mut _)})
+        Ok(unsafe { Stream::from_ptr(stream as *mut _) })
     }
 }
 
@@ -229,8 +233,8 @@ impl<'ctx> StreamOps for ClientStream<'ctx> {
         assert_not_in_callback();
         let rpc = self.context.rpc();
         match send_recv!(rpc, StreamGetCurrentDevice(self.token) => StreamCurrentDevice()) {
-            Ok(d) => Ok(unsafe { DeviceRef::from_ptr(Box::into_raw(Box::new(d.into())))}),
-            Err(e) => Err(e)
+            Ok(d) => Ok(unsafe { DeviceRef::from_ptr(Box::into_raw(Box::new(d.into()))) }),
+            Err(e) => Err(e),
         }
     }
 
@@ -250,7 +254,7 @@ impl<'ctx> StreamOps for ClientStream<'ctx> {
     // TODO: How do we call this back? On what thread?
     fn register_device_changed_callback(
         &mut self,
-        _device_changed_callback: ffi::cubeb_device_changed_callback
+        _device_changed_callback: ffi::cubeb_device_changed_callback,
     ) -> Result<()> {
         assert_not_in_callback();
         Ok(())
@@ -262,7 +266,7 @@ pub fn init(
     init_params: messages::StreamInitParams,
     data_callback: ffi::cubeb_data_callback,
     state_callback: ffi::cubeb_state_callback,
-    user_ptr: *mut c_void
+    user_ptr: *mut c_void,
 ) -> Result<Stream> {
     ClientStream::init(ctx, init_params, data_callback, state_callback, user_ptr)
 }

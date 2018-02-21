@@ -36,7 +36,7 @@ fn print_device_info(info: &cubeb::DeviceInfo) {
     let devstate = match info.state() {
         cubeb::DeviceState::Disabled => "disabled",
         cubeb::DeviceState::Unplugged => "unplugged",
-        cubeb::DeviceState::Enabled => "enabled"
+        cubeb::DeviceState::Enabled => "enabled",
     };
 
     let devdeffmt = match info.default_format() {
@@ -44,7 +44,7 @@ fn print_device_info(info: &cubeb::DeviceInfo) {
         cubeb::DeviceFormat::S16BE => "S16BE",
         cubeb::DeviceFormat::F32LE => "F32LE",
         cubeb::DeviceFormat::F32BE => "F32BE",
-        _ => "unknown?"
+        _ => "unknown?",
     };
 
     let mut devfmts = "".to_string();
@@ -106,7 +106,7 @@ fn enumerate_devices(ctx: &cubeb::Context) -> Result<()> {
         Err(e) if e.code() == cubeb::ErrorCode::NotSupported => {
             println!("Device enumeration not support for this backend.");
             return Ok(());
-        },
+        }
         Err(e) => {
             return Err(e).chain_err(|| "Error enumerating devices");
         }
@@ -149,12 +149,10 @@ pub fn client_test(fd: c_int) -> Result<()> {
     // init function to get a raw cubeb pointer.
     let context_name = CString::new("AudioIPC").unwrap();
     let mut c: *mut ffi::cubeb = ptr::null_mut();
-    if unsafe { audioipc_client::audioipc_client_init(&mut c, context_name.as_ptr(), fd) } < 0
-    {
+    if unsafe { audioipc_client::audioipc_client_init(&mut c, context_name.as_ptr(), fd) } < 0 {
         return Err("Failed to connect to remote cubeb server.".into());
     }
     let ctx = unsafe { cubeb::Context::from_ptr(c) };
-
 
     let format = cubeb::SampleFormat::S16NE;
     let rate = query!(ctx.preferred_sample_rate());

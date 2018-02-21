@@ -59,7 +59,7 @@ pub trait RecvMsg {
     fn recv_msg(
         &mut self,
         iov: &mut [&mut IoVec],
-        cmsg: &mut [u8]
+        cmsg: &mut [u8],
     ) -> io::Result<(usize, usize, i32)>;
 }
 
@@ -71,7 +71,7 @@ impl<T: AsRawFd> RecvMsg for T {
     fn recv_msg(
         &mut self,
         iov: &mut [&mut IoVec],
-        cmsg: &mut [u8]
+        cmsg: &mut [u8],
     ) -> io::Result<(usize, usize, i32)> {
         msg::recv_msg_with_flags(self.as_raw_fd(), iov, cmsg, MSG_CMSG_CLOEXEC)
     }

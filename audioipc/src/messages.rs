@@ -12,14 +12,14 @@ use std::ptr;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Device {
     pub output_name: Option<Vec<u8>>,
-    pub input_name: Option<Vec<u8>>
+    pub input_name: Option<Vec<u8>>,
 }
 
 impl<'a> From<&'a cubeb::DeviceRef> for Device {
     fn from(info: &'a cubeb::DeviceRef) -> Self {
         Self {
             output_name: info.output_name_bytes().map(|s| s.to_vec()),
-            input_name: info.input_name_bytes().map(|s| s.to_vec())
+            input_name: info.input_name_bytes().map(|s| s.to_vec()),
         }
     }
 }
@@ -28,7 +28,7 @@ impl From<ffi::cubeb_device> for Device {
     fn from(info: ffi::cubeb_device) -> Self {
         Self {
             output_name: dup_str(info.output_name),
-            input_name: dup_str(info.input_name)
+            input_name: dup_str(info.input_name),
         }
     }
 }
@@ -37,7 +37,7 @@ impl From<Device> for ffi::cubeb_device {
     fn from(info: Device) -> Self {
         Self {
             output_name: opt_str(info.output_name),
-            input_name: opt_str(info.input_name)
+            input_name: opt_str(info.input_name),
         }
     }
 }
@@ -62,7 +62,7 @@ pub struct DeviceInfo {
     pub min_rate: u32,
 
     pub latency_lo: u32,
-    pub latency_hi: u32
+    pub latency_hi: u32,
 }
 
 impl<'a> From<&'a cubeb::DeviceInfoRef> for DeviceInfo {
@@ -87,7 +87,7 @@ impl<'a> From<&'a cubeb::DeviceInfoRef> for DeviceInfo {
             min_rate: info.min_rate,
 
             latency_lo: info.latency_lo,
-            latency_hi: info.latency_hi
+            latency_hi: info.latency_hi,
         }
     }
 }
@@ -113,7 +113,7 @@ impl From<DeviceInfo> for ffi::cubeb_device_info {
             min_rate: info.min_rate,
 
             latency_lo: info.latency_lo,
-            latency_hi: info.latency_hi
+            latency_hi: info.latency_hi,
         }
     }
 }
@@ -124,7 +124,7 @@ pub struct StreamParams {
     pub rate: c_uint,
     pub channels: c_uint,
     pub layout: ffi::cubeb_channel_layout,
-    pub prefs: ffi::cubeb_stream_prefs
+    pub prefs: ffi::cubeb_stream_prefs,
 }
 
 impl<'a> From<&'a cubeb::StreamParamsRef> for StreamParams {
@@ -140,7 +140,7 @@ pub struct StreamInitParams {
     pub input_stream_params: Option<StreamParams>,
     pub output_device: usize,
     pub output_stream_params: Option<StreamParams>,
-    pub latency_frames: u32
+    pub latency_frames: u32,
 }
 
 fn dup_str(s: *const c_char) -> Option<Vec<u8>> {
@@ -161,14 +161,14 @@ fn opt_str(v: Option<Vec<u8>>) -> *mut c_char {
                 ptr::null_mut()
             }
         },
-        None => ptr::null_mut()
+        None => ptr::null_mut(),
     }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StreamCreate {
     pub token: usize,
-    pub fds: [RawFd; 3]
+    pub fds: [RawFd; 3],
 }
 
 // Client -> Server messages.
@@ -196,7 +196,7 @@ pub enum ServerMessage {
     StreamGetLatency(usize),
     StreamSetVolume(usize, f32),
     StreamSetPanning(usize, f32),
-    StreamGetCurrentDevice(usize)
+    StreamGetCurrentDevice(usize),
 }
 
 // Server -> Client messages.
@@ -225,19 +225,19 @@ pub enum ClientMessage {
     StreamPanningSet,
     StreamCurrentDevice(Device),
 
-    Error(c_int)
+    Error(c_int),
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub enum CallbackReq {
     Data(isize, usize),
-    State(ffi::cubeb_state)
+    State(ffi::cubeb_state),
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub enum CallbackResp {
     Data(isize),
-    State
+    State,
 }
 
 pub trait AssocRawFd {
@@ -246,7 +246,7 @@ pub trait AssocRawFd {
     }
     fn take_fd<F>(&mut self, _: F)
     where
-        F: FnOnce() -> Option<[RawFd; 3]>
+        F: FnOnce() -> Option<[RawFd; 3]>,
     {
     }
 }
@@ -256,13 +256,13 @@ impl AssocRawFd for ClientMessage {
     fn fd(&self) -> Option<[RawFd; 3]> {
         match *self {
             ClientMessage::StreamCreated(ref data) => Some(data.fds),
-            _ => None
+            _ => None,
         }
     }
 
     fn take_fd<F>(&mut self, f: F)
     where
-        F: FnOnce() -> Option<[RawFd; 3]>
+        F: FnOnce() -> Option<[RawFd; 3]>,
     {
         if let ClientMessage::StreamCreated(ref mut data) = *self {
             data.fds = f().unwrap();

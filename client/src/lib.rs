@@ -48,7 +48,7 @@ static mut G_SERVER_FD: Option<RawFd> = None;
 pub unsafe extern "C" fn audioipc_client_init(
     c: *mut *mut ffi::cubeb,
     context_name: *const c_char,
-    server_connection: c_int
+    server_connection: c_int,
 ) -> c_int {
     // TODO: Windows portability (for fd).
     // TODO: Better way to pass extra parameters to Context impl.
