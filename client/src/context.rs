@@ -9,8 +9,8 @@ use audioipc::{messages, ClientMessage, ServerMessage};
 use audioipc::{core, rpc};
 use audioipc::codec::LengthDelimitedCodec;
 use audioipc::fd_passing::{framed_with_fds, FramedWithFds};
-use cubeb_backend::{ffi, Context, ContextOps, DeviceCollectionRef, DeviceId,
-                    DeviceType, Error, Ops, Result, Stream, StreamParams, StreamParamsRef};
+use cubeb_backend::{ffi, Context, ContextOps, DeviceCollectionRef, DeviceId, DeviceType, Error,
+                    Ops, Result, Stream, StreamParams, StreamParamsRef};
 use futures::Future;
 use futures_cpupool::{self, CpuPool};
 use libc;

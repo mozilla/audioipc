@@ -209,7 +209,6 @@ pub enum ClientMessage {
     ContextMaxChannelCount(u32),
     ContextMinLatency(u32),
     ContextPreferredSampleRate(u32),
-    ContextPreferredChannelLayout(ffi::cubeb_channel_layout),
     ContextEnumeratedDevices(Vec<DeviceInfo>),
 
     StreamCreated(StreamCreate),

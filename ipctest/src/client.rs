@@ -152,7 +152,7 @@ pub fn client_test(fd: c_int) -> Result<()> {
     let init_params = audioipc_client::AudioIpcInitParams {
         server_connection: fd,
         pool_size: 1,
-        stack_size: 4 * 1024,
+        stack_size: 16 * 1024,
     };
     if unsafe { audioipc_client::audioipc_client_init(&mut c, context_name.as_ptr(), &init_params) }
         < 0
@@ -164,7 +164,7 @@ pub fn client_test(fd: c_int) -> Result<()> {
     let format = cubeb::SampleFormat::S16NE;
     let rate = query!(ctx.preferred_sample_rate());
     let channels = query!(ctx.max_channel_count());
-    let layout = query!(ctx.preferred_channel_layout());
+    let layout = cubeb::ChannelLayout::MONO;
 
     let params = cubeb::StreamParamsBuilder::new()
         .format(format)
@@ -179,7 +179,6 @@ pub fn client_test(fd: c_int) -> Result<()> {
     println!("Max Channels: {}", channels);
     println!("Min Latency: {}", latency);
     println!("Preferred Rate: {}", rate);
-    println!("Preferred Layout: {:?}", layout);
 
     try!(enumerate_devices(&ctx));
 
@@ -187,7 +186,7 @@ pub fn client_test(fd: c_int) -> Result<()> {
         .format(STREAM_FORMAT)
         .rate(SAMPLE_RATE)
         .channels(1)
-        .layout(cubeb::ChannelLayout::Mono)
+        .layout(cubeb::ChannelLayout::MONO)
         .take();
 
     let mut position = 0u32;
