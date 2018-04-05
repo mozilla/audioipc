@@ -164,13 +164,12 @@ pub fn client_test(fd: c_int) -> Result<()> {
     let format = cubeb::SampleFormat::S16NE;
     let rate = query!(ctx.preferred_sample_rate());
     let channels = query!(ctx.max_channel_count());
-    let layout = query!(ctx.preferred_channel_layout());
 
     let params = cubeb::StreamParamsBuilder::new()
         .format(format)
         .rate(rate)
         .channels(channels)
-        .layout(layout)
+        .layout(cubeb::ChannelLayout::UNDEFINED)
         .take();
 
     let latency = query!(ctx.min_latency(&params));
@@ -179,7 +178,6 @@ pub fn client_test(fd: c_int) -> Result<()> {
     println!("Max Channels: {}", channels);
     println!("Min Latency: {}", latency);
     println!("Preferred Rate: {}", rate);
-    println!("Preferred Layout: {:?}", layout);
 
     try!(enumerate_devices(&ctx));
 
@@ -187,7 +185,7 @@ pub fn client_test(fd: c_int) -> Result<()> {
         .format(STREAM_FORMAT)
         .rate(SAMPLE_RATE)
         .channels(1)
-        .layout(cubeb::ChannelLayout::Mono)
+        .layout(cubeb::ChannelLayout::MONO)
         .take();
 
     let mut position = 0u32;
