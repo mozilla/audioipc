@@ -35,11 +35,23 @@ fn run() -> Result<()> {
     match unsafe { libc::fork() } {
         -1 => bail!("fork() failed"),
         0 => {
-            client::client_test(fd).unwrap();
-            return Ok(());
+            return client::client_test(fd);
         }
         n => unsafe {
-            libc::waitpid(n, std::ptr::null_mut(), 0);
+            let mut status: libc::c_int = 0;
+            libc::waitpid(n, &mut status, 0);
+            if libc::WIFSIGNALED(status) {
+                let signum = libc::WTERMSIG(status);
+                if libc::WCOREDUMP(status) {
+                    bail!(
+                        "Child process {} exited with sig {}. Core dumped.",
+                        n,
+                        signum
+                    );
+                } else {
+                    bail!("Child process {} exited with sig {}.", n, signum);
+                }
+            }
         },
     };
 
