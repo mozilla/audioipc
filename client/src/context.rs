@@ -42,6 +42,9 @@ macro_rules! t(
 
 pub const CLIENT_OPS: Ops = capi_new!(ClientContext, ClientStream);
 
+// ClientContext's layout *must* match cubeb.c's `struct cubeb` for the
+// common fields.
+#[repr(C)]
 pub struct ClientContext {
     _ops: *const Ops,
     rpc: rpc::ClientProxy<ServerMessage, ClientMessage>,

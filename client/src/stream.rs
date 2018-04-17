@@ -40,11 +40,15 @@ impl Drop for Device {
     }
 }
 
+// ClientStream's layout *must* match cubeb.c's `struct cubeb_stream` for the
+// common fields.
+#[repr(C)]
 #[derive(Debug)]
 pub struct ClientStream<'ctx> {
     // This must be a reference to Context for cubeb, cubeb accesses
     // stream methods via stream->context->ops
     context: &'ctx ClientContext,
+    user_ptr: *mut c_void,
     token: usize,
 }
 
@@ -172,6 +176,7 @@ impl<'ctx> ClientStream<'ctx> {
 
         let stream = Box::into_raw(Box::new(ClientStream {
             context: ctx,
+            user_ptr: user_ptr,
             token: data.token,
         }));
         Ok(unsafe { Stream::from_ptr(stream as *mut _) })
