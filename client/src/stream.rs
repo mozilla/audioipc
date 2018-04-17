@@ -273,5 +273,13 @@ pub fn init(
     state_callback: ffi::cubeb_state_callback,
     user_ptr: *mut c_void,
 ) -> Result<Stream> {
-    ClientStream::init(ctx, init_params, data_callback, state_callback, user_ptr)
+    let stm = try!(ClientStream::init(
+        ctx,
+        init_params,
+        data_callback,
+        state_callback,
+        user_ptr
+    ));
+    debug_assert_eq!(stm.user_ptr(), user_ptr);
+    Ok(stm)
 }
