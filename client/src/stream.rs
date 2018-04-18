@@ -70,9 +70,10 @@ impl rpc::Server for CallbackServer {
     fn process(&mut self, req: Self::Request) -> Self::Future {
         match req {
             CallbackReq::Data(nframes, frame_size) => {
-                debug!(
+                trace!(
                     "stream_thread: Data Callback: nframes={} frame_size={}",
-                    nframes, frame_size
+                    nframes,
+                    frame_size
                 );
 
                 // Clone values that need to be moved into the cpu pool thread.
@@ -108,7 +109,7 @@ impl rpc::Server for CallbackServer {
                 })
             }
             CallbackReq::State(state) => {
-                debug!("stream_thread: State Callback: {:?}", state);
+                trace!("stream_thread: State Callback: {:?}", state);
                 let user_ptr = self.user_ptr;
                 let cb = self.state_cb.unwrap();
                 self.cpu_pool.spawn_fn(move || {
@@ -138,7 +139,7 @@ impl<'ctx> ClientStream<'ctx> {
         let rpc = ctx.rpc();
         let data = try!(send_recv!(rpc, StreamInit(init_params) => StreamCreated()));
 
-        trace!("token = {}, fds = {:?}", data.token, data.fds);
+        debug!("token = {}, fds = {:?}", data.token, data.fds);
 
         let stm = data.fds[0];
         let stream = unsafe { net::UnixStream::from_raw_fd(stm) };
@@ -185,7 +186,7 @@ impl<'ctx> ClientStream<'ctx> {
 
 impl<'ctx> Drop for ClientStream<'ctx> {
     fn drop(&mut self) {
-        trace!("ClientStream drop...");
+        debug!("ClientStream dropped...");
         let rpc = self.context.rpc();
         let _ = send_recv!(rpc, StreamDestroy(self.token) => StreamDestroyed);
     }

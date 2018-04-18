@@ -207,7 +207,7 @@ impl CubebServer {
                 .unwrap_or_else(error),
         };
 
-        debug!("process_msg: req={:?}, resp={:?}", msg, resp);
+        trace!("process_msg: req={:?}, resp={:?}", msg, resp);
 
         resp
     }
