@@ -230,7 +230,7 @@ impl ContextOps for ClientContext {
         }
 
         let stream_name = match stream_name {
-            Some(s) => Some(s.to_bytes().to_vec()),
+            Some(s) => Some(s.to_bytes_with_nul().to_vec()),
             None => None,
         };
 
