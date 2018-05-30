@@ -152,7 +152,7 @@ pub fn client_test(fd: c_int) -> Result<()> {
     let init_params = audioipc_client::AudioIpcInitParams {
         server_connection: fd,
         pool_size: 1,
-        stack_size: 4 * 1024,
+        stack_size: 64 * 1024,
     };
     if unsafe { audioipc_client::audioipc_client_init(&mut c, context_name.as_ptr(), &init_params) }
         < 0
