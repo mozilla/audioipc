@@ -26,3 +26,6 @@ tokio-uds = "0.1.7"
 [dependencies.error-chain]
 version = "0.11.0"
 default-features = false
+
+[build-dependencies]
+cc = "1.0"
