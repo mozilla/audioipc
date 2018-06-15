@@ -318,15 +318,26 @@ fn close_fds(fds: &[RawFd]) {
 #[cfg(test)]
 mod tests {
     use bytes::BufMut;
+    use libc;
+    use std;
 
-    const CMSG_BYTES: &[u8] =
-        b"\x1c\0\0\0\0\0\0\0\x01\0\0\0\x01\0\0\02\0\0\0[\0\0\0\\\0\0\0\xe5\xe5\xe5\xe5";
+    extern {
+        fn cmsghdr_bytes(size: *mut libc::size_t) -> *const libc::uint8_t;
+    }
+
+    fn cmsg_bytes() -> &'static [u8] {
+        let mut size = 0;
+        unsafe {
+            let ptr = cmsghdr_bytes(&mut size);
+            std::slice::from_raw_parts(ptr, size)
+        }
+    }
 
     #[test]
     fn single_cmsg() {
         let mut incoming = super::IncomingFds::new(16);
 
-        incoming.cmsg().put_slice(CMSG_BYTES);
+        incoming.cmsg().put_slice(cmsg_bytes());
         assert!(incoming.take_fds().is_some());
         assert!(incoming.take_fds().is_none());
     }
@@ -335,9 +346,9 @@ mod tests {
     fn multiple_cmsg_1() {
         let mut incoming = super::IncomingFds::new(16);
 
-        incoming.cmsg().put_slice(CMSG_BYTES);
+        incoming.cmsg().put_slice(cmsg_bytes());
         assert!(incoming.take_fds().is_some());
-        incoming.cmsg().put_slice(CMSG_BYTES);
+        incoming.cmsg().put_slice(cmsg_bytes());
         assert!(incoming.take_fds().is_some());
         assert!(incoming.take_fds().is_none());
     }
@@ -345,11 +356,12 @@ mod tests {
     #[test]
     fn multiple_cmsg_2() {
         let mut incoming = super::IncomingFds::new(16);
+        println!("cmsg_bytes() {}", cmsg_bytes().len());
 
-        incoming.cmsg().put_slice(CMSG_BYTES);
-        incoming.cmsg().put_slice(CMSG_BYTES);
+        incoming.cmsg().put_slice(cmsg_bytes());
+        incoming.cmsg().put_slice(cmsg_bytes());
         assert!(incoming.take_fds().is_some());
-        incoming.cmsg().put_slice(CMSG_BYTES);
+        incoming.cmsg().put_slice(cmsg_bytes());
         assert!(incoming.take_fds().is_some());
         assert!(incoming.take_fds().is_some());
         assert!(incoming.take_fds().is_none());
