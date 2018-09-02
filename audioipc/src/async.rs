@@ -5,7 +5,7 @@
 
 //! Various async helpers modelled after futures-rs and tokio-io.
 
-use {RecvMsg, SendMsg};
+use msg::{RecvMsg, SendMsg};
 use bytes::{Buf, BufMut};
 use futures::{Async, Poll};
 use iovec::IoVec;
