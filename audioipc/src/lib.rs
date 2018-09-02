@@ -2,6 +2,7 @@
 //
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details
+
 #![recursion_limit = "1024"]
 #[macro_use]
 extern crate error_chain;
@@ -31,13 +32,13 @@ extern crate tokio_uds;
 mod async;
 mod cmsg;
 pub mod codec;
+pub mod core;
 pub mod errors;
 pub mod fd_passing;
 pub mod frame;
-pub mod rpc;
-pub mod core;
 pub mod messages;
 mod msg;
+pub mod rpc;
 pub mod shm;
 
 pub use messages::{ClientMessage, ServerMessage};

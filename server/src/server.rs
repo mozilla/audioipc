@@ -2,13 +2,16 @@
 //
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details
+
 use audioipc;
 use audioipc::codec::LengthDelimitedCodec;
 use audioipc::core;
 use audioipc::fd_passing::FramedWithFds;
 use audioipc::frame::{framed, Framed};
-use audioipc::messages::{CallbackReq, CallbackResp, ClientMessage, Device, DeviceInfo,
-                         ServerMessage, StreamCreate, StreamInitParams, StreamParams};
+use audioipc::messages::{
+    CallbackReq, CallbackResp, ClientMessage, Device, DeviceInfo, ServerMessage, StreamCreate,
+    StreamInitParams, StreamParams,
+};
 use audioipc::rpc;
 use audioipc::shm::{SharedMemReader, SharedMemWriter};
 use cubeb;
@@ -22,8 +25,8 @@ use std::convert::From;
 use std::ffi::{CStr, CString};
 use std::mem::{size_of, ManuallyDrop};
 use std::os::raw::{c_long, c_void};
-use std::os::unix::net;
 use std::os::unix::io::IntoRawFd;
+use std::os::unix::net;
 use std::{panic, slice};
 use tokio_core::reactor::Remote;
 use tokio_uds::UnixStream;
@@ -90,12 +93,12 @@ impl ServerStreamCallbacks {
 
         self.input_shm.write(real_input).unwrap();
 
-        let r = self.rpc
+        let r = self
+            .rpc
             .call(CallbackReq::Data(
                 output.len() as isize,
                 self.output_frame_size as usize,
-            ))
-            .wait();
+            )).wait();
 
         match r {
             Ok(CallbackResp::Data(frames)) => {
@@ -217,10 +220,10 @@ impl CubebServer {
                 .map(|devices| {
                     let v: Vec<DeviceInfo> = devices.iter().map(|i| i.as_ref().into()).collect();
                     ClientMessage::ContextEnumeratedDevices(v)
-                })
-                .unwrap_or_else(error),
+                }).unwrap_or_else(error),
 
-            ServerMessage::StreamInit(ref params) => self.process_stream_init(context, params)
+            ServerMessage::StreamInit(ref params) => self
+                .process_stream_init(context, params)
                 .unwrap_or_else(|_| error(cubeb::Error::error())),
 
             ServerMessage::StreamDestroy(stm_tok) => {
@@ -302,8 +305,7 @@ impl CubebServer {
                     };
                     let channel_count = p.channels as u16;
                     sample_size * channel_count
-                })
-                .unwrap_or(0u16)
+                }).unwrap_or(0u16)
         }
 
         // Create the callback handling struct which is attached the cubeb stream.
@@ -381,8 +383,7 @@ impl CubebServer {
                     Some(data_cb_c),
                     Some(state_cb_c),
                     user_ptr,
-                )
-                .and_then(|stream| {
+                ).and_then(|stream| {
                     if !self.streams.has_available() {
                         trace!(
                             "server connection ran out of stream slots. reserving {} more.",
@@ -399,8 +400,7 @@ impl CubebServer {
                                 .insert(ServerStream {
                                     stream: ManuallyDrop::new(stream),
                                     cbs: ManuallyDrop::new(cbs),
-                                })
-                                .index()
+                                }).index()
                         }
                         None => {
                             // TODO: Turn into error
@@ -416,8 +416,7 @@ impl CubebServer {
                             output_file.into_raw_fd(),
                         ],
                     }))
-                })
-                .map_err(|e| e.into())
+                }).map_err(|e| e.into())
         }
     }
 }

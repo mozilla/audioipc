@@ -2,6 +2,7 @@
 //
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details
+
 #[macro_use]
 extern crate error_chain;
 
@@ -26,8 +27,8 @@ use futures::sync::oneshot;
 use futures::Future;
 use std::error::Error;
 use std::os::raw::c_void;
-use std::os::unix::net;
 use std::os::unix::io::IntoRawFd;
+use std::os::unix::net;
 use std::ptr;
 use tokio_uds::UnixStream;
 
@@ -114,8 +115,7 @@ pub extern "C" fn audioipc_server_new_client(p: *mut c_void) -> PlatformHandleTy
                         let transport = framed_with_fds(sock, Default::default());
                         rpc::bind_server(transport, server::CubebServer::new(cb_remote), handle);
                         Ok(())
-                    })
-                    .map_err(|_| ())
+                    }).map_err(|_| ())
                     // Notify waiting thread that sock2 has been registered.
                     .and_then(|_| wait_tx.send(()))
             });
@@ -123,8 +123,7 @@ pub extern "C" fn audioipc_server_new_client(p: *mut c_void) -> PlatformHandleTy
             // with reactor::Core.
             let _ = wait_rx.wait();
             Ok(sock1.into_raw_fd())
-        })
-        .unwrap_or(-1)
+        }).unwrap_or(-1)
 }
 
 #[no_mangle]

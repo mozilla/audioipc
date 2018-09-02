@@ -1,8 +1,13 @@
-use iovec::IoVec;
+// Copyright © 2017 Mozilla Foundation
+//
+// This program is made available under an ISC-style license.  See the
+// accompanying file LICENSE for details.
+
 use iovec::unix as iovec;
+use iovec::IoVec;
 use libc;
-use std::{cmp, io, mem, ptr};
 use std::os::unix::io::{AsRawFd, RawFd};
+use std::{cmp, io, mem, ptr};
 
 // Extend sys::os::unix::net::UnixStream to support sending and receiving a single file desc.
 // We can extend UnixStream by using traits, eliminating the need to introduce a new wrapped
