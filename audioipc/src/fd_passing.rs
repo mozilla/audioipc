@@ -293,10 +293,6 @@ pub fn framed_with_fds<A, C>(io: A, codec: C) -> FramedWithFds<A, C> {
     }
 }
 
-fn write_zero() -> io::Error {
-    io::Error::new(io::ErrorKind::WriteZero, "failed to write frame to io")
-}
-
 fn clone_into_array<A, T>(slice: &[T]) -> A
 where
     A: Sized + Default + AsMut<[T]>,

@@ -34,7 +34,7 @@ use std::ffi::{CStr, CString};
 use std::mem::{size_of, ManuallyDrop};
 use std::os::raw::{c_long, c_void};
 use std::os::unix::net;
-use std::os::unix::prelude::*;
+use std::os::unix::io::IntoRawFd;
 use std::{panic, ptr, slice};
 use tokio_core::reactor::Remote;
 use tokio_uds::UnixStream;
@@ -164,7 +164,7 @@ impl Drop for ServerStream {
 
 type StreamSlab = slab::Slab<ServerStream, usize>;
 
-pub struct CubebServer {
+struct CubebServer {
     cb_remote: Remote,
     streams: StreamSlab,
 }
@@ -185,7 +185,7 @@ impl rpc::Server for CubebServer {
 }
 
 impl CubebServer {
-    pub fn new(cb_remote: Remote) -> Self {
+    fn new(cb_remote: Remote) -> Self {
         CubebServer {
             cb_remote: cb_remote,
             streams: StreamSlab::with_capacity(STREAM_CONN_CHUNK_SIZE),
