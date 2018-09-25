@@ -4,6 +4,7 @@
 // accompanying file LICENSE for details
 
 use audioipc;
+use audioipc::PlatformHandle;
 use audioipc::codec::LengthDelimitedCodec;
 use audioipc::core;
 use audioipc::fd_passing::FramedWithFds;
@@ -403,9 +404,9 @@ impl CubebServer {
                     Ok(ClientMessage::StreamCreated(StreamCreate {
                         token: stm_tok,
                         fds: [
-                            stm1.into_raw_fd(),
-                            input_file.into_raw_fd(),
-                            output_file.into_raw_fd(),
+                            PlatformHandle::new(stm1.into_raw_fd()),
+                            PlatformHandle::new(input_file.into_raw_fd()),
+                            PlatformHandle::new(output_file.into_raw_fd()),
                         ],
                     }))
                 }).map_err(|e| e.into())

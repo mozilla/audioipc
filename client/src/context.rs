@@ -14,7 +14,6 @@ use cubeb_backend::{
 };
 use futures::Future;
 use futures_cpupool::{self, CpuPool};
-use libc;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_void;
 use std::os::unix::io::FromRawFd;
@@ -76,7 +75,7 @@ impl ClientContext {
 fn open_server_stream() -> Result<net::UnixStream> {
     unsafe {
         if let Some(fd) = G_SERVER_FD {
-            return Ok(net::UnixStream::from_raw_fd(fd));
+            return Ok(net::UnixStream::from_raw_fd(fd.as_raw()));
         }
 
         Err(Error::default())
@@ -280,7 +279,7 @@ impl Drop for ClientContext {
         let _ = send_recv!(self.rpc(), ClientDisconnect => ClientDisconnected);
         unsafe {
             if G_SERVER_FD.is_some() {
-                libc::close(super::G_SERVER_FD.take().unwrap());
+                G_SERVER_FD.take().unwrap().close();
             }
         }
     }

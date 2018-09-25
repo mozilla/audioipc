@@ -6,11 +6,16 @@
 //! Various async helpers modelled after futures-rs and tokio-io.
 
 use bytes::{Buf, BufMut};
-use futures::{Async, Poll};
+#[cfg(not(target_os = "windows"))]
+use futures::Async;
+use futures::Poll;
+#[cfg(not(target_os = "windows"))]
 use iovec::IoVec;
+#[cfg(not(target_os = "windows"))]
 use msg::{RecvMsg, SendMsg};
 use std::io;
 use tokio_io::{AsyncRead, AsyncWrite};
+#[cfg(not(target_os = "windows"))]
 use tokio_uds::UnixStream;
 
 pub trait AsyncRecvMsg: AsyncRead {
@@ -54,6 +59,7 @@ pub trait AsyncSendMsg: AsyncWrite {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+#[cfg(not(target_os = "windows"))]
 impl AsyncRecvMsg for UnixStream {
     fn recv_msg_buf<B>(&mut self, buf: &mut B, cmsg: &mut B) -> Poll<(usize, i32), io::Error>
     where
@@ -123,6 +129,7 @@ impl AsyncRecvMsg for UnixStream {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 impl AsyncSendMsg for UnixStream {
     fn send_msg_buf<B, C>(&mut self, buf: &mut B, cmsg: &C) -> Poll<usize, io::Error>
     where

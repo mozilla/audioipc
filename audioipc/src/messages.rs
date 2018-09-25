@@ -3,10 +3,10 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details
 
+use PlatformHandle;
 use cubeb::{self, ffi};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_uint};
-use std::os::unix::io::RawFd;
 use std::ptr;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -169,7 +169,7 @@ fn opt_str(v: Option<Vec<u8>>) -> *mut c_char {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StreamCreate {
     pub token: usize,
-    pub fds: [RawFd; 3],
+    pub fds: [PlatformHandle; 3],
 }
 
 // Client -> Server messages.
@@ -241,6 +241,8 @@ pub enum CallbackResp {
     State,
 }
 
+use std::os::unix::io::RawFd;
+
 pub trait AssocRawFd {
     fn fd(&self) -> Option<[RawFd; 3]> {
         None
@@ -253,10 +255,13 @@ pub trait AssocRawFd {
 }
 
 impl AssocRawFd for ServerMessage {}
+
 impl AssocRawFd for ClientMessage {
     fn fd(&self) -> Option<[RawFd; 3]> {
         match *self {
-            ClientMessage::StreamCreated(ref data) => Some(data.fds),
+            ClientMessage::StreamCreated(ref data) => Some([data.fds[0].as_raw(),
+                                                            data.fds[1].as_raw(),
+                                                            data.fds[2].as_raw()]),
             _ => None,
         }
     }
@@ -266,7 +271,10 @@ impl AssocRawFd for ClientMessage {
         F: FnOnce() -> Option<[RawFd; 3]>,
     {
         if let ClientMessage::StreamCreated(ref mut data) = *self {
-            data.fds = f().unwrap();
+            let fds = f().unwrap();
+            data.fds = [PlatformHandle::new(fds[0]),
+                        PlatformHandle::new(fds[1]),
+                        PlatformHandle::new(fds[2])]
         }
     }
 }

@@ -22,6 +22,7 @@ serde_derive = "1.*.*"
 tokio-core = "0.1"
 tokio-io = "0.1"
 tokio-uds = "0.1.7"
+winapi = "0.3.6"
 
 [dependencies.error-chain]
 version = "0.11.0"

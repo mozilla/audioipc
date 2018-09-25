@@ -158,10 +158,10 @@ impl<'ctx> ClientStream<'ctx> {
         debug!("token = {}, fds = {:?}", data.token, data.fds);
 
         let stm = data.fds[0];
-        let stream = unsafe { net::UnixStream::from_raw_fd(stm) };
+        let stream = unsafe { net::UnixStream::from_raw_fd(stm.as_raw()) };
 
         let input = data.fds[1];
-        let input_file = unsafe { File::from_raw_fd(input) };
+        let input_file = unsafe { File::from_raw_fd(input.as_raw()) };
         let input_shm = if has_input {
             Some(SharedMemSlice::from(&input_file, SHM_AREA_SIZE).unwrap())
         } else {
@@ -169,7 +169,7 @@ impl<'ctx> ClientStream<'ctx> {
         };
 
         let output = data.fds[2];
-        let output_file = unsafe { File::from_raw_fd(output) };
+        let output_file = unsafe { File::from_raw_fd(output.as_raw()) };
         let output_shm = if has_output {
             Some(SharedMemMutSlice::from(&output_file, SHM_AREA_SIZE).unwrap())
         } else {
