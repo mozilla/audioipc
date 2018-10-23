@@ -1,3 +1,8 @@
+// Copyright © 2017 Mozilla Foundation
+//
+// This program is made available under an ISC-style license.  See the
+// accompanying file LICENSE for details.
+
 use audioipc_client;
 use cubeb::{self, ffi, Sample};
 use std::f32::consts::PI;
@@ -209,8 +214,7 @@ pub fn client_test(fd: c_int) -> Result<()> {
             }
 
             output.len() as isize
-        })
-        .state_callback(|state| println!("stream {:?}", state));
+        }).state_callback(|state| println!("stream {:?}", state));
 
     let stream = query!(builder.init(&ctx));
 
