@@ -14,8 +14,6 @@ use futures_cpupool::{CpuFuture, CpuPool};
 use std::ffi::CString;
 use std::fs::File;
 use std::os::raw::c_void;
-use std::os::unix::io::FromRawFd;
-use std::os::unix::net;
 use std::ptr;
 use std::sync::mpsc;
 use tokio_uds::UnixStream;
@@ -139,6 +137,20 @@ impl rpc::Server for CallbackServer {
     }
 }
 
+#[cfg(not(windows))]
+unsafe fn file_from_platformhandle(handle: audioipc::PlatformHandleType) -> File {
+    use std::os::unix::io::FromRawFd;
+
+    File::from_raw_fd(handle)
+}
+
+#[cfg(windows)]
+unsafe fn file_from_platformhandle(handle: audioipc::PlatformHandleType) -> File {
+    use std::os::windows::io::FromRawHandle;
+
+    File::from_raw_handle(handle)
+}
+
 impl<'ctx> ClientStream<'ctx> {
     fn init(
         ctx: &'ctx ClientContext,
@@ -158,10 +170,10 @@ impl<'ctx> ClientStream<'ctx> {
         debug!("token = {}, fds = {:?}", data.token, data.fds);
 
         let stm = data.fds[0];
-        let stream = unsafe { net::UnixStream::from_raw_fd(stm.as_raw()) };
+        let stream = unsafe { audioipc::MessageStream::from_raw_fd(stm.as_raw()) };
 
         let input = data.fds[1];
-        let input_file = unsafe { File::from_raw_fd(input.as_raw()) };
+        let input_file = unsafe { file_from_platformhandle(input.as_raw()) };
         let input_shm = if has_input {
             Some(SharedMemSlice::from(&input_file, SHM_AREA_SIZE).unwrap())
         } else {
@@ -169,7 +181,7 @@ impl<'ctx> ClientStream<'ctx> {
         };
 
         let output = data.fds[2];
-        let output_file = unsafe { File::from_raw_fd(output.as_raw()) };
+        let output_file = unsafe { file_from_platformhandle(output.as_raw()) };
         let output_shm = if has_output {
             Some(SharedMemMutSlice::from(&output_file, SHM_AREA_SIZE).unwrap())
         } else {
@@ -191,7 +203,7 @@ impl<'ctx> ClientStream<'ctx> {
 
         let (wait_tx, wait_rx) = mpsc::channel();
         ctx.remote().spawn(move |handle| {
-            let stream = UnixStream::from_stream(stream, handle).unwrap();
+            let stream = audioipc::std_ipc_to_tokio_ipc(stream, handle).unwrap();
             let transport = framed(stream, Default::default());
             rpc::bind_server(transport, server, handle);
             wait_tx.send(()).unwrap();

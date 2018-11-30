@@ -27,7 +27,6 @@ use std::ffi::{CStr, CString};
 use std::mem::{size_of, ManuallyDrop};
 use std::os::raw::{c_long, c_void};
 use std::os::unix::io::IntoRawFd;
-use std::os::unix::net;
 use std::{panic, slice};
 use tokio_core::reactor::Remote;
 use tokio_uds::UnixStream;
@@ -305,7 +304,7 @@ impl CubebServer {
         let input_frame_size = frame_size_in_bytes(params.input_stream_params.as_ref());
         let output_frame_size = frame_size_in_bytes(params.output_stream_params.as_ref());
 
-        let (stm1, stm2) = net::UnixStream::pair()?;
+        let (stm1, stm2) = super::anonymous_ipc_pair()?;
         debug!("Created callback pair: {:?}-{:?}", stm1, stm2);
         let (input_shm, input_file) =
             SharedMemWriter::new(&audioipc::get_shm_path("input"), SHM_AREA_SIZE)?;
@@ -324,7 +323,7 @@ impl CubebServer {
             // Ensure we're running on a loop different to the one
             // invoking spawn_fn.
             assert_ne!(id, handle.id());
-            let stream = UnixStream::from_stream(stm2, handle).unwrap();
+            let stream = super::std_ipc_to_tokio_ipc(stm2, handle).unwrap();
             let transport = framed(stream, Default::default());
             let rpc = rpc::bind_client::<CallbackClient>(transport, handle);
             drop(tx.send(rpc));
@@ -404,7 +403,7 @@ impl CubebServer {
                     Ok(ClientMessage::StreamCreated(StreamCreate {
                         token: stm_tok,
                         fds: [
-                            PlatformHandle::new(stm1.into_raw_fd()),
+                            PlatformHandle::new(audioipc::to_raw_handle(stm1)),
                             PlatformHandle::new(input_file.into_raw_fd()),
                             PlatformHandle::new(output_file.into_raw_fd()),
                         ],

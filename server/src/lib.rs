@@ -19,6 +19,7 @@ extern crate slab;
 extern crate tokio_core;
 extern crate tokio_uds;
 
+use audioipc::{anonymous_ipc_pair, std_ipc_to_tokio_ipc, to_raw_handle};
 use audioipc::core;
 use audioipc::fd_passing::framed_with_fds;
 use audioipc::rpc;
@@ -27,10 +28,7 @@ use futures::sync::oneshot;
 use futures::Future;
 use std::error::Error;
 use std::os::raw::c_void;
-use std::os::unix::io::IntoRawFd;
-use std::os::unix::net;
 use std::ptr;
-use tokio_uds::UnixStream;
 
 mod server;
 
@@ -105,13 +103,13 @@ pub extern "C" fn audioipc_server_new_client(p: *mut c_void) -> PlatformHandleTy
     // We create a pair of connected unix domain sockets. One socket is
     // registered with the reactor core, the other is returned to the
     // caller.
-    net::UnixStream::pair()
+    anonymous_ipc_pair()
         .and_then(|(sock1, sock2)| {
             // Spawn closure to run on same thread as reactor::Core
             // via remote handle.
             wrapper.core_thread.remote().spawn(|handle| {
                 trace!("Incoming connection");
-                UnixStream::from_stream(sock2, handle)
+                std_ipc_to_tokio_ipc(sock2, handle)
                     .and_then(|sock| {
                         let transport = framed_with_fds(sock, Default::default());
                         rpc::bind_server(transport, server::CubebServer::new(cb_remote), handle);
@@ -123,7 +121,7 @@ pub extern "C" fn audioipc_server_new_client(p: *mut c_void) -> PlatformHandleTy
             // Wait for notification that sock2 has been registered
             // with reactor::Core.
             let _ = wait_rx.wait();
-            Ok(sock1.into_raw_fd())
+            Ok(to_raw_handle(sock1))
         }).unwrap_or(-1)
 }
 

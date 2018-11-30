@@ -141,3 +141,33 @@ pub fn get_shm_path(dir: &str) -> PathBuf {
     temp.push(&format!("cubeb-shm-{}-{}", pid, dir));
     temp
 }
+
+use std::os::unix::io::{IntoRawFd, FromRawFd};
+use std::os::unix::net;
+
+#[derive(Debug)]
+pub struct MessageStream(net::UnixStream);
+//pub struct AsyncMessageStream(tokio_uds::UnixStream);
+
+impl MessageStream {
+    fn new(stream: net::UnixStream) -> MessageStream {
+        MessageStream(stream)
+    }
+
+    pub unsafe fn from_raw_fd(raw: PlatformHandleType) -> MessageStream {
+        MessageStream::new(net::UnixStream::from_raw_fd(raw))
+    }
+}
+
+pub fn anonymous_ipc_pair() -> std::result::Result<(MessageStream, MessageStream), std::io::Error> {
+    let pair = net::UnixStream::pair()?;
+    Ok((MessageStream::new(pair.0), MessageStream::new(pair.1)))
+}
+
+pub fn std_ipc_to_tokio_ipc(std: MessageStream, handle: &tokio_core::reactor::Handle) -> std::result::Result<tokio_uds::UnixStream, std::io::Error> {
+    tokio_uds::UnixStream::from_stream(std.0, handle)
+}
+
+pub fn to_raw_handle(sock: MessageStream) -> PlatformHandleType {
+    sock.0.into_raw_fd()
+}
