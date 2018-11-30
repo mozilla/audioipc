@@ -15,8 +15,6 @@ use iovec::IoVec;
 use msg::{RecvMsg, SendMsg};
 use std::io;
 use tokio_io::{AsyncRead, AsyncWrite};
-#[cfg(not(target_os = "windows"))]
-use tokio_uds::UnixStream;
 
 pub trait AsyncRecvMsg: AsyncRead {
     /// Pull some bytes from this source into the specified `Buf`, returning
@@ -60,12 +58,12 @@ pub trait AsyncSendMsg: AsyncWrite {
 ////////////////////////////////////////////////////////////////////////////////
 
 #[cfg(not(target_os = "windows"))]
-impl AsyncRecvMsg for UnixStream {
+impl AsyncRecvMsg for super::AsyncMessageStream {
     fn recv_msg_buf<B>(&mut self, buf: &mut B, cmsg: &mut B) -> Poll<(usize, i32), io::Error>
     where
         B: BufMut,
     {
-        if let Async::NotReady = <UnixStream>::poll_read(self) {
+        if let Async::NotReady = <super::AsyncMessageStream>::poll_read(self) {
             return Ok(Async::NotReady);
         }
         let r = unsafe {
@@ -130,13 +128,13 @@ impl AsyncRecvMsg for UnixStream {
 }
 
 #[cfg(not(target_os = "windows"))]
-impl AsyncSendMsg for UnixStream {
+impl AsyncSendMsg for super::AsyncMessageStream {
     fn send_msg_buf<B, C>(&mut self, buf: &mut B, cmsg: &C) -> Poll<usize, io::Error>
     where
         B: Buf,
         C: Buf,
     {
-        if let Async::NotReady = <UnixStream>::poll_write(self) {
+        if let Async::NotReady = <super::AsyncMessageStream>::poll_write(self) {
             return Ok(Async::NotReady);
         }
         let r = {

@@ -16,7 +16,6 @@ use std::fs::File;
 use std::os::raw::c_void;
 use std::ptr;
 use std::sync::mpsc;
-use tokio_uds::UnixStream;
 use ClientContext;
 use {assert_not_in_callback, set_in_callback};
 
@@ -63,7 +62,7 @@ impl rpc::Server for CallbackServer {
     type Request = CallbackReq;
     type Response = CallbackResp;
     type Future = CpuFuture<Self::Response, ()>;
-    type Transport = Framed<UnixStream, LengthDelimitedCodec<Self::Response, Self::Request>>;
+    type Transport = Framed<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Response, Self::Request>>;
 
     fn process(&mut self, req: Self::Request) -> Self::Future {
         match req {

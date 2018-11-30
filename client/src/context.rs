@@ -21,7 +21,6 @@ use std::thread;
 use std::{fmt, io, mem, ptr};
 use stream;
 use tokio_core::reactor::{Handle, Remote};
-use tokio_uds::UnixStream;
 use {ClientStream, CPUPOOL_INIT_PARAMS, G_SERVER_FD};
 
 struct CubebClient;
@@ -29,7 +28,7 @@ struct CubebClient;
 impl rpc::Client for CubebClient {
     type Request = ServerMessage;
     type Response = ClientMessage;
-    type Transport = FramedWithFds<UnixStream, LengthDelimitedCodec<Self::Request, Self::Response>>;
+    type Transport = FramedWithFds<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Request, Self::Response>>;
 }
 
 macro_rules! t(
@@ -83,7 +82,7 @@ fn open_server_stream() -> Result<audioipc::MessageStream> {
 impl ContextOps for ClientContext {
     fn init(_context_name: Option<&CStr>) -> Result<Context> {
         fn bind_and_send_client(
-            stream: UnixStream,
+            stream: audioipc::AsyncMessageStream,
             handle: &Handle,
             tx_rpc: &mpsc::Sender<rpc::ClientProxy<ServerMessage, ClientMessage>>,
         ) -> Option<()> {

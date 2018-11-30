@@ -29,7 +29,6 @@ use std::os::raw::{c_long, c_void};
 use std::os::unix::io::IntoRawFd;
 use std::{panic, slice};
 use tokio_core::reactor::Remote;
-use tokio_uds::UnixStream;
 
 use errors::*;
 
@@ -65,7 +64,7 @@ struct CallbackClient;
 impl rpc::Client for CallbackClient {
     type Request = CallbackReq;
     type Response = CallbackResp;
-    type Transport = Framed<UnixStream, LengthDelimitedCodec<Self::Request, Self::Response>>;
+    type Transport = Framed<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Request, Self::Response>>;
 }
 
 struct ServerStreamCallbacks {
@@ -148,7 +147,7 @@ impl rpc::Server for CubebServer {
     type Request = ServerMessage;
     type Response = ClientMessage;
     type Future = FutureResult<Self::Response, ()>;
-    type Transport = FramedWithFds<UnixStream, LengthDelimitedCodec<Self::Response, Self::Request>>;
+    type Transport = FramedWithFds<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Response, Self::Request>>;
 
     fn process(&mut self, req: Self::Request) -> Self::Future {
         let resp = with_local_context(|context| match *context {
