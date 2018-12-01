@@ -7,7 +7,6 @@ use audioipc_client;
 use cubeb::{self, ffi, Sample};
 use std::f32::consts::PI;
 use std::ffi::CString;
-use std::os::raw::c_int;
 use std::ptr;
 use std::thread;
 use std::time::Duration;
@@ -142,7 +141,7 @@ fn enumerate_devices(ctx: &cubeb::Context) -> Result<()> {
     Ok(())
 }
 
-pub fn client_test(fd: c_int) -> Result<()> {
+pub fn client_test(fd: audioipc::PlatformHandleType) -> Result<()> {
     macro_rules! query(
         ($e: expr) => (match $e {
             Ok(v) => v,

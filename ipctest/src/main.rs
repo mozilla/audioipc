@@ -16,6 +16,7 @@ extern crate futures;
 extern crate libc;
 #[macro_use]
 extern crate log;
+extern crate winapi;
 
 use std::process::exit;
 
@@ -33,6 +34,7 @@ mod errors {
 use errors::*;
 
 // Run with 'RUST_LOG=run,audioipc cargo run -p ipctest'
+#[cfg(not(windows))]
 fn run() -> Result<()> {
     let handle = server::audioipc_server_start();
     let fd = server::audioipc_server_new_client(handle);
@@ -65,12 +67,78 @@ fn run() -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(windows))]
+fn run_client(_pid: u32, _handle: usize) -> Result<()> {
+    bail!("not used on non-Windows");
+}
+
+#[cfg(windows)]
+fn run() -> Result<()> {
+    let handle = server::audioipc_server_start();
+    let fd = server::audioipc_server_new_client(handle);
+
+    let args: Vec<String> = std::env::args().collect();
+
+    let mut child = std::process::Command::new(&args[0])
+        .arg("--client")
+        .env("PID", format!("{}", std::process::id()))
+        .env("HANDLE", format!("{}", fd as usize))
+        .spawn()
+        .expect("child process failed");
+
+    child.wait().expect("child process wait failed");
+
+    server::audioipc_server_stop(handle);
+
+    Ok(())
+}
+
+#[cfg(windows)]
+fn run_client(pid: u32, handle: usize) -> Result<()> {
+    #[cfg(windows)]
+    use winapi::um::{processthreadsapi, winnt, handleapi, winnt::HANDLE};
+    #[cfg(windows)]
+    use winapi::shared::minwindef::FALSE;
+
+    let mut target_handle = std::ptr::null_mut();
+    unsafe {
+        let source = processthreadsapi::OpenProcess(winnt::PROCESS_DUP_HANDLE,
+                                                    FALSE,
+                                                    pid);
+        let target = processthreadsapi::GetCurrentProcess();
+
+        let ok = handleapi::DuplicateHandle(source,
+                                            handle as HANDLE,
+                                            target,
+                                            &mut target_handle,
+                                            0,
+                                            FALSE,
+                                            winnt::DUPLICATE_SAME_ACCESS);
+        if ok == FALSE {
+            bail!("DuplicateHandle failed");
+        }
+    }
+
+    client::client_test(target_handle)
+}
+
 fn main() {
     env_logger::init().unwrap();
 
-    println!("Cubeb AudioServer...");
+    let args: Vec<String> = std::env::args().collect();
 
-    if let Err(ref e) = run() {
+    let client = args.len() == 2 && args[1] == "--client";
+
+    let result = if !client {
+        println!("Cubeb AudioServer...");
+        run()
+    } else {
+        let pid: u32 = std::env::var("PID").unwrap().parse().unwrap();
+        let handle: usize = std::env::var("HANDLE").unwrap().parse().unwrap();
+        run_client(pid, handle)
+    };
+
+    if let Err(ref e) = result {
         error!("error: {}", e);
 
         for e in e.iter().skip(1) {
