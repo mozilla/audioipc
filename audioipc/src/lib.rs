@@ -39,6 +39,10 @@ pub mod core;
 pub mod errors;
 #[cfg(not(target_os = "windows"))]
 pub mod fd_passing;
+#[cfg(target_os = "windows")]
+pub mod handle_passing;
+#[cfg(target_os = "windows")]
+pub use handle_passing as fd_passing;
 pub mod frame;
 pub mod messages;
 #[cfg(not(target_os = "windows"))]
@@ -60,6 +64,8 @@ pub type PlatformHandleType = libc::c_int;
 // This stands in for RawFd/RawHandle.
 #[derive(Copy, Clone, Debug)]
 pub struct PlatformHandle(PlatformHandleType);
+
+unsafe impl Send for PlatformHandle {}
 
 // Custom serialization to treat HANDLEs as i64.
 // We're slightly lazy and treat file descriptors as i64 rather than i32.
@@ -105,7 +111,8 @@ fn valid_handle(handle: PlatformHandleType) -> bool {
 #[cfg(target_os = "windows")]
 fn valid_handle(handle: PlatformHandleType) -> bool {
     const INVALID_HANDLE_VALUE: PlatformHandleType = -1isize as PlatformHandleType;
-    handle != INVALID_HANDLE_VALUE
+    const NULL_HANDLE_VALUE: PlatformHandleType = 0isize as PlatformHandleType;
+    handle != INVALID_HANDLE_VALUE && handle != NULL_HANDLE_VALUE
 }
 
 impl PlatformHandle {
@@ -124,19 +131,53 @@ impl PlatformHandle {
         self.0
     }
 
-    #[cfg(not(windows))]
-    pub fn close(self) {
-        unsafe { libc::close(self.0) };
-    }
-
-    #[cfg(windows)]
-    pub fn close(self) {
-        unsafe { winapi::um::handleapi::CloseHandle(self.0) };
+    pub unsafe fn close(self) {
+        close_platformhandle(self.0);
     }
 }
 
+#[cfg(not(windows))]
+unsafe fn close_platformhandle(handle: PlatformHandleType) {
+    libc::close(handle);
+}
+
+#[cfg(windows)]
+unsafe fn close_platformhandle(handle: PlatformHandleType) {
+    handleapi::CloseHandle(handle);
+}
+
+#[cfg(windows)]
+use winapi::um::{processthreadsapi, winnt, handleapi};
+#[cfg(windows)]
+use winapi::shared::minwindef::{DWORD, FALSE};
+
+#[cfg(windows)]
+unsafe fn duplicate_platformhandle(source_handle: PlatformHandleType,
+                                   target_pid: DWORD) -> Result<PlatformHandleType, std::io::Error> {
+    let source = processthreadsapi::GetCurrentProcess();
+    let target = processthreadsapi::OpenProcess(winnt::PROCESS_DUP_HANDLE,
+                                                FALSE,
+                                                target_pid);
+    if !valid_handle(target) {
+        return Err(std::io::Error::new(std::io::ErrorKind::Other, "invalid target process"));
+    }
+
+    let mut target_handle = std::ptr::null_mut();
+    let ok = handleapi::DuplicateHandle(source,
+                                        source_handle,
+                                        target,
+                                        &mut target_handle,
+                                        0,
+                                        FALSE,
+                                        winnt::DUPLICATE_CLOSE_SOURCE | winnt::DUPLICATE_SAME_ACCESS);
+    if ok == FALSE {
+        return Err(std::io::Error::new(std::io::ErrorKind::Other, "DuplicateHandle failed"));
+    }
+    Ok(target_handle)
+}
+
 pub fn get_shm_path(dir: &str) -> PathBuf {
-    let pid = unsafe { libc::getpid() };
+    let pid = std::process::id();
     let mut temp = temp_dir();
     temp.push(&format!("cubeb-shm-{}-{}", pid, dir));
     temp
@@ -151,3 +192,5 @@ pub use messagestream_unix::*;
 pub mod messagestream_win;
 #[cfg(windows)]
 pub use messagestream_win::*;
+#[cfg(windows)]
+mod tokio_named_pipes;

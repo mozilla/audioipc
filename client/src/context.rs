@@ -136,6 +136,8 @@ impl ContextOps for ClientContext {
             .stack_size(params.stack_size)
             .create();
 
+        send_recv!(rpc, ClientConnect(std::process::id()) => ClientConnected)?;
+
         let ctx = Box::new(ClientContext {
             _ops: &CLIENT_OPS as *const _,
             rpc: rpc,

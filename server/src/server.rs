@@ -26,7 +26,6 @@ use std::convert::From;
 use std::ffi::{CStr, CString};
 use std::mem::{size_of, ManuallyDrop};
 use std::os::raw::{c_long, c_void};
-use std::os::unix::io::IntoRawFd;
 use std::{panic, slice};
 use tokio_core::reactor::Remote;
 
@@ -141,6 +140,7 @@ type StreamSlab = slab::Slab<ServerStream, usize>;
 pub struct CubebServer {
     cb_remote: Remote,
     streams: StreamSlab,
+    remote_pid: Option<u32>,
 }
 
 impl rpc::Server for CubebServer {
@@ -163,13 +163,17 @@ impl CubebServer {
         CubebServer {
             cb_remote: cb_remote,
             streams: StreamSlab::with_capacity(STREAM_CONN_CHUNK_SIZE),
+            remote_pid: None,
         }
     }
 
     // Process a request coming from the client.
     fn process_msg(&mut self, context: &cubeb::Context, msg: &ServerMessage) -> ClientMessage {
         let resp: ClientMessage = match *msg {
-            ServerMessage::ClientConnect => panic!("already connected"),
+            ServerMessage::ClientConnect(pid) => {
+                self.remote_pid = Some(pid);
+                ClientMessage::ClientConnected
+            }
 
             ServerMessage::ClientDisconnect => {
                 // TODO:
@@ -403,9 +407,10 @@ impl CubebServer {
                         token: stm_tok,
                         fds: [
                             PlatformHandle::new(audioipc::to_raw_handle(stm1)),
-                            PlatformHandle::new(input_file.into_raw_fd()),
-                            PlatformHandle::new(output_file.into_raw_fd()),
+                            PlatformHandle::new(audioipc::to_raw_handle(input_file)),
+                            PlatformHandle::new(audioipc::to_raw_handle(output_file)),
                         ],
+                        target_pid: self.remote_pid.unwrap()
                     }))
                 }).map_err(|e| e.into())
         }

@@ -122,7 +122,7 @@ pub extern "C" fn audioipc_server_new_client(p: *mut c_void) -> PlatformHandleTy
             // with reactor::Core.
             let _ = wait_rx.wait();
             Ok(to_raw_handle(sock1))
-        }).unwrap_or(-1)
+        }).unwrap_or(-1isize as PlatformHandleType)
 }
 
 #[no_mangle]

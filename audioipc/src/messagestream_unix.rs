@@ -5,6 +5,7 @@
 
 use std::os::unix::io::{IntoRawFd, FromRawFd, AsRawFd, RawFd};
 use std::os::unix::net;
+use tokio_io::{AsyncRead, AsyncWrite};
 
 #[derive(Debug)]
 pub struct MessageStream(net::UnixStream);
@@ -57,13 +58,13 @@ impl std::io::Write for AsyncMessageStream {
     }
 }
 
-impl tokio_io::AsyncRead for AsyncMessageStream {
+impl AsyncRead for AsyncMessageStream {
     fn read_buf<B: bytes::BufMut>(&mut self, buf: &mut B) -> futures::Poll<usize, std::io::Error> {
         <&tokio_uds::UnixStream>::read_buf(&mut &self.0, buf)
     }
 }
 
-impl tokio_io::AsyncWrite for AsyncMessageStream {
+impl AsyncWrite for AsyncMessageStream {
     fn shutdown(&mut self) -> futures::Poll<(), std::io::Error> {
         <&tokio_uds::UnixStream>::shutdown(&mut &self.0)
     }
@@ -79,6 +80,12 @@ impl AsRawFd for AsyncMessageStream {
     }
 }
 
+impl IntoRawFd for MessageStream {
+    fn into_raw_fd(self) -> RawFd {
+        self.0.into_raw_fd()
+    }
+}
+
 pub fn anonymous_ipc_pair() -> std::result::Result<(MessageStream, MessageStream), std::io::Error> {
     let pair = net::UnixStream::pair()?;
     Ok((MessageStream::new(pair.0), MessageStream::new(pair.1)))
@@ -88,6 +95,6 @@ pub fn std_ipc_to_tokio_ipc(std: MessageStream, handle: &tokio_core::reactor::Ha
     Ok(AsyncMessageStream::new(tokio_uds::UnixStream::from_stream(std.0, handle)?))
 }
 
-pub fn to_raw_handle(sock: MessageStream) -> super::PlatformHandleType {
-    sock.0.into_raw_fd()
+pub fn to_raw_handle<T: IntoRawFd>(sock: T) -> super::PlatformHandleType {
+    sock.into_raw_fd()
 }

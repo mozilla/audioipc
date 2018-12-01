@@ -170,6 +170,7 @@ fn opt_str(v: Option<Vec<u8>>) -> *mut c_char {
 pub struct StreamCreate {
     pub token: usize,
     pub fds: [PlatformHandle; 3],
+    pub target_pid: u32,
 }
 
 // Client -> Server messages.
@@ -177,7 +178,7 @@ pub struct StreamCreate {
 // ServerConn::process_msg doesn't have a catch-all case.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ServerMessage {
-    ClientConnect,
+    ClientConnect(u32),
     ClientDisconnect,
 
     ContextGetBackendId,
@@ -241,8 +242,10 @@ pub enum CallbackResp {
     State,
 }
 
+#[cfg(not(windows))]
 use std::os::unix::io::RawFd;
 
+#[cfg(not(windows))]
 pub trait AssocRawFd {
     fn fd(&self) -> Option<[RawFd; 3]> {
         None
@@ -254,8 +257,10 @@ pub trait AssocRawFd {
     }
 }
 
+#[cfg(not(windows))]
 impl AssocRawFd for ServerMessage {}
 
+#[cfg(not(windows))]
 impl AssocRawFd for ClientMessage {
     fn fd(&self) -> Option<[RawFd; 3]> {
         match *self {
@@ -269,6 +274,49 @@ impl AssocRawFd for ClientMessage {
     fn take_fd<F>(&mut self, f: F)
     where
         F: FnOnce() -> Option<[RawFd; 3]>,
+    {
+        if let ClientMessage::StreamCreated(ref mut data) = *self {
+            let fds = f().unwrap();
+            data.fds = [PlatformHandle::new(fds[0]),
+                        PlatformHandle::new(fds[1]),
+                        PlatformHandle::new(fds[2])]
+        }
+    }
+}
+
+#[cfg(windows)]
+use std::os::windows::io::RawHandle;
+
+#[cfg(windows)]
+pub trait AssocRawFd {
+    fn fd(&self) -> Option<([RawHandle; 3], u32)> {
+        None
+    }
+    fn take_fd<F>(&mut self, _: F)
+    where
+        F: FnOnce() -> Option<[RawHandle; 3]>,
+    {
+    }
+}
+
+#[cfg(windows)]
+impl AssocRawFd for ServerMessage {}
+
+#[cfg(windows)]
+impl AssocRawFd for ClientMessage {
+    fn fd(&self) -> Option<([RawHandle; 3], u32)> {
+        match *self {
+            ClientMessage::StreamCreated(ref data) => Some(([data.fds[0].as_raw(),
+                                                             data.fds[1].as_raw(),
+                                                             data.fds[2].as_raw()],
+                                                            data.target_pid)),
+            _ => None,
+        }
+    }
+
+    fn take_fd<F>(&mut self, f: F)
+    where
+        F: FnOnce() -> Option<[RawHandle; 3]>,
     {
         if let ClientMessage::StreamCreated(ref mut data) = *self {
             let fds = f().unwrap();
