@@ -7,7 +7,7 @@ authors = ["Dan Glastonbury <dan.glastonbury@gmail.com>"]
 audioipc = { path = "../audioipc" }
 audioipc-server = { path = "../server" }
 audioipc-client= { path = "../client" }
-cubeb = "0.5.2"
+cubeb = "0.5.3"
 env_logger = "0.4.3"
 error-chain = "0.11.0"
 futures = "0.1"
