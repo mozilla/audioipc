@@ -16,8 +16,17 @@ impl MessageStream {
         MessageStream(stream)
     }
 
+    pub fn anonymous_ipc_pair() -> std::result::Result<(MessageStream, MessageStream), std::io::Error> {
+        let pair = net::UnixStream::pair()?;
+        Ok((MessageStream::new(pair.0), MessageStream::new(pair.1)))
+    }
+
     pub unsafe fn from_raw_fd(raw: super::PlatformHandleType) -> MessageStream {
         MessageStream::new(net::UnixStream::from_raw_fd(raw))
+    }
+
+    pub fn into_tokio_ipc(self, handle: &tokio_core::reactor::Handle) -> std::result::Result<AsyncMessageStream, std::io::Error> {
+        Ok(AsyncMessageStream::new(tokio_uds::UnixStream::from_stream(self.0, handle)?))
     }
 }
 
@@ -84,17 +93,4 @@ impl IntoRawFd for MessageStream {
     fn into_raw_fd(self) -> RawFd {
         self.0.into_raw_fd()
     }
-}
-
-pub fn anonymous_ipc_pair() -> std::result::Result<(MessageStream, MessageStream), std::io::Error> {
-    let pair = net::UnixStream::pair()?;
-    Ok((MessageStream::new(pair.0), MessageStream::new(pair.1)))
-}
-
-pub fn std_ipc_to_tokio_ipc(std: MessageStream, handle: &tokio_core::reactor::Handle) -> std::result::Result<AsyncMessageStream, std::io::Error> {
-    Ok(AsyncMessageStream::new(tokio_uds::UnixStream::from_stream(std.0, handle)?))
-}
-
-pub fn to_raw_handle<T: IntoRawFd>(sock: T) -> super::PlatformHandleType {
-    sock.into_raw_fd()
 }

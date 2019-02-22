@@ -4,10 +4,10 @@
 // accompanying file LICENSE for details
 
 use audioipc;
-use audioipc::PlatformHandle;
+use audioipc::{MessageStream, PlatformHandle};
 use audioipc::codec::LengthDelimitedCodec;
 use audioipc::core;
-use audioipc::fd_passing::FramedWithFds;
+use audioipc::platformhandle_passing::FramedWithPlatformHandles;
 use audioipc::frame::{framed, Framed};
 use audioipc::messages::{
     CallbackReq, CallbackResp, ClientMessage, Device, DeviceInfo, ServerMessage, StreamCreate,
@@ -147,7 +147,7 @@ impl rpc::Server for CubebServer {
     type Request = ServerMessage;
     type Response = ClientMessage;
     type Future = FutureResult<Self::Response, ()>;
-    type Transport = FramedWithFds<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Response, Self::Request>>;
+    type Transport = FramedWithPlatformHandles<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Response, Self::Request>>;
 
     fn process(&mut self, req: Self::Request) -> Self::Future {
         let resp = with_local_context(|context| match *context {
@@ -307,7 +307,7 @@ impl CubebServer {
         let input_frame_size = frame_size_in_bytes(params.input_stream_params.as_ref());
         let output_frame_size = frame_size_in_bytes(params.output_stream_params.as_ref());
 
-        let (stm1, stm2) = super::anonymous_ipc_pair()?;
+        let (stm1, stm2) = MessageStream::anonymous_ipc_pair()?;
         debug!("Created callback pair: {:?}-{:?}", stm1, stm2);
         let (input_shm, input_file) =
             SharedMemWriter::new(&audioipc::get_shm_path("input"), SHM_AREA_SIZE)?;
@@ -326,7 +326,7 @@ impl CubebServer {
             // Ensure we're running on a loop different to the one
             // invoking spawn_fn.
             assert_ne!(id, handle.id());
-            let stream = super::std_ipc_to_tokio_ipc(stm2, handle).unwrap();
+            let stream = stm2.into_tokio_ipc(handle).unwrap();
             let transport = framed(stream, Default::default());
             let rpc = rpc::bind_client::<CallbackClient>(transport, handle);
             drop(tx.send(rpc));
@@ -405,10 +405,10 @@ impl CubebServer {
 
                     Ok(ClientMessage::StreamCreated(StreamCreate {
                         token: stm_tok,
-                        fds: [
-                            PlatformHandle::new(audioipc::to_raw_handle(stm1)),
-                            PlatformHandle::new(audioipc::to_raw_handle(input_file)),
-                            PlatformHandle::new(audioipc::to_raw_handle(output_file)),
+                        platform_handles: [
+                            PlatformHandle::from(stm1),
+                            PlatformHandle::from(input_file),
+                            PlatformHandle::from(output_file),
                         ],
                         target_pid: self.remote_pid.unwrap()
                     }))

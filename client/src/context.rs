@@ -5,7 +5,7 @@
 
 use assert_not_in_callback;
 use audioipc::codec::LengthDelimitedCodec;
-use audioipc::fd_passing::{framed_with_fds, FramedWithFds};
+use audioipc::platformhandle_passing::{framed_with_platformhandles, FramedWithPlatformHandles};
 use audioipc::{core, rpc};
 use audioipc::{messages, ClientMessage, ServerMessage};
 use cubeb_backend::{
@@ -28,7 +28,7 @@ struct CubebClient;
 impl rpc::Client for CubebClient {
     type Request = ServerMessage;
     type Response = ClientMessage;
-    type Transport = FramedWithFds<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Request, Self::Response>>;
+    type Transport = FramedWithPlatformHandles<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Request, Self::Response>>;
 }
 
 macro_rules! t(
@@ -86,7 +86,7 @@ impl ContextOps for ClientContext {
             handle: &Handle,
             tx_rpc: &mpsc::Sender<rpc::ClientProxy<ServerMessage, ClientMessage>>,
         ) -> Option<()> {
-            let transport = framed_with_fds(stream, Default::default());
+            let transport = framed_with_platformhandles(stream, Default::default());
             let rpc = rpc::bind_client::<CubebClient>(transport, handle);
             // If send fails then the rx end has closed
             // which is unlikely here.
@@ -117,7 +117,7 @@ impl ContextOps for ClientContext {
 
             open_server_stream()
                 .ok()
-                .and_then(|stream| audioipc::std_ipc_to_tokio_ipc(stream, &handle).ok())
+                .and_then(|stream| stream.into_tokio_ipc(&handle).ok())
                 .and_then(|stream| bind_and_send_client(stream, &handle, &tx_rpc))
                 .ok_or_else(|| {
                     io::Error::new(

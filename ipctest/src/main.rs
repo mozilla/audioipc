@@ -34,7 +34,7 @@ mod errors {
 use errors::*;
 
 // Run with 'RUST_LOG=run,audioipc cargo run -p ipctest'
-#[cfg(not(windows))]
+#[cfg(unix)]
 fn run() -> Result<()> {
     let handle = server::audioipc_server_start();
     let fd = server::audioipc_server_new_client(handle);
@@ -67,7 +67,7 @@ fn run() -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(unix)]
 fn run_client(_pid: u32, _handle: usize) -> Result<()> {
     bail!("not used on non-Windows");
 }
@@ -95,9 +95,7 @@ fn run() -> Result<()> {
 
 #[cfg(windows)]
 fn run_client(pid: u32, handle: usize) -> Result<()> {
-    #[cfg(windows)]
     use winapi::um::{processthreadsapi, winnt, handleapi, winnt::HANDLE};
-    #[cfg(windows)]
     use winapi::shared::minwindef::FALSE;
 
     let mut target_handle = std::ptr::null_mut();

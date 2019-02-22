@@ -8,7 +8,7 @@ use bytes::{Bytes, BytesMut, IntoBuf};
 use cmsg;
 use codec::Codec;
 use futures::{AsyncSink, Poll, Sink, StartSend, Stream};
-use messages::AssocRawFd;
+use messages::AssocRawPlatformHandle;
 use std::collections::VecDeque;
 use std::os::unix::io::RawFd;
 use std::{fmt, io, mem};
@@ -65,7 +65,7 @@ struct Frame {
 
 /// A unified `Stream` and `Sink` interface over an I/O object, using
 /// the `Codec` trait to encode and decode the payload.
-pub struct FramedWithFds<A, C> {
+pub struct FramedWithPlatformHandles<A, C> {
     io: A,
     codec: C,
     // Stream
@@ -79,7 +79,7 @@ pub struct FramedWithFds<A, C> {
     outgoing_fds: BytesMut,
 }
 
-impl<A, C> FramedWithFds<A, C>
+impl<A, C> FramedWithPlatformHandles<A, C>
 where
     A: AsyncSendMsg,
 {
@@ -161,11 +161,11 @@ where
     }
 }
 
-impl<A, C> Stream for FramedWithFds<A, C>
+impl<A, C> Stream for FramedWithPlatformHandles<A, C>
 where
     A: AsyncRecvMsg,
     C: Codec,
-    C::Out: AssocRawFd,
+    C::Out: AssocRawPlatformHandle,
 {
     type Item = C::Out;
     type Error = io::Error;
@@ -180,7 +180,7 @@ where
             if self.is_readable {
                 if self.eof {
                     let mut item = try!(self.codec.decode_eof(&mut self.read_buf));
-                    item.take_fd(|| self.incoming_fds.take_fds());
+                    item.take_platform_handles(|| self.incoming_fds.take_fds());
                     return Ok(Some(item).into());
                 }
 
@@ -188,7 +188,7 @@ where
 
                 if let Some(mut item) = try!(self.codec.decode(&mut self.read_buf)) {
                     trace!("frame decoded from buffer");
-                    item.take_fd(|| self.incoming_fds.take_fds());
+                    item.take_platform_handles(|| self.incoming_fds.take_fds());
                     return Ok(Some(item).into());
                 }
 
@@ -214,11 +214,11 @@ where
     }
 }
 
-impl<A, C> Sink for FramedWithFds<A, C>
+impl<A, C> Sink for FramedWithPlatformHandles<A, C>
 where
     A: AsyncSendMsg,
     C: Codec,
-    C::In: AssocRawFd + fmt::Debug,
+    C::In: AssocRawPlatformHandle + fmt::Debug,
 {
     type SinkItem = C::In;
     type SinkError = io::Error;
@@ -236,11 +236,11 @@ where
             }
         }
 
-        let fds = item.fd();
+        let fds = item.platform_handles();
         try!(self.codec.encode(item, &mut self.write_buf));
         let fds = fds.and_then(|fds| {
             cmsg::builder(&mut self.outgoing_fds)
-                .rights(&fds[..])
+                .rights(&fds.0[..])
                 .finish()
                 .ok()
         });
@@ -273,8 +273,8 @@ where
     }
 }
 
-pub fn framed_with_fds<A, C>(io: A, codec: C) -> FramedWithFds<A, C> {
-    FramedWithFds {
+pub fn framed_with_platformhandles<A, C>(io: A, codec: C) -> FramedWithPlatformHandles<A, C> {
+    FramedWithPlatformHandles {
         io: io,
         codec: codec,
         read_buf: BytesMut::with_capacity(INITIAL_CAPACITY),

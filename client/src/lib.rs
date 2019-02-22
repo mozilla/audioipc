@@ -97,7 +97,6 @@ pub unsafe extern "C" fn audioipc_client_init(
 
     let init_params = &*init_params;
 
-    // TODO: Windows portability (for fd).
     // TODO: Better way to pass extra parameters to Context impl.
     if G_SERVER_FD.is_some() {
         return cubeb_backend::ffi::CUBEB_ERROR;

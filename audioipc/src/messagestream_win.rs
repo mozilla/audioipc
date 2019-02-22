@@ -18,8 +18,19 @@ impl MessageStream {
         MessageStream(stream)
     }
 
+
+    pub fn anonymous_ipc_pair() -> std::result::Result<(MessageStream, MessageStream), std::io::Error> {
+        let pipe1 = mio_named_pipes::NamedPipe::new(get_pipe_name())?;
+        let pipe2 = unsafe { mio_named_pipes::NamedPipe::from_raw_handle(pipe1.as_raw_handle()) };
+        Ok((MessageStream::new(pipe1), MessageStream::new(pipe2)))
+    }
+
     pub unsafe fn from_raw_fd(raw: super::PlatformHandleType) -> MessageStream {
         MessageStream::new(mio_named_pipes::NamedPipe::from_raw_handle(raw))
+    }
+
+    pub fn into_tokio_ipc(self, handle: &tokio_core::reactor::Handle) -> std::result::Result<AsyncMessageStream, std::io::Error> {
+        Ok(AsyncMessageStream::new(tokio_named_pipes::NamedPipe::from_pipe(self.0, handle)?))
     }
 }
 
@@ -95,18 +106,4 @@ fn get_pipe_name() -> String {
     let pid = std::process::id();
     let pipe_id = PIPE_ID.fetch_add(1, Ordering::SeqCst);
     format!("\\\\.\\pipe\\cubeb-pipe-{}-{}", pid, pipe_id)
-}
-
-pub fn anonymous_ipc_pair() -> std::result::Result<(MessageStream, MessageStream), std::io::Error> {
-    let pipe1 = mio_named_pipes::NamedPipe::new(get_pipe_name())?;
-    let pipe2 = unsafe { mio_named_pipes::NamedPipe::from_raw_handle(pipe1.as_raw_handle()) };
-    Ok((MessageStream::new(pipe1), MessageStream::new(pipe2)))
-}
-
-pub fn std_ipc_to_tokio_ipc(std: MessageStream, handle: &tokio_core::reactor::Handle) -> std::result::Result<AsyncMessageStream, std::io::Error> {
-    Ok(AsyncMessageStream::new(tokio_named_pipes::NamedPipe::from_pipe(std.0, handle)?))
-}
-
-pub fn to_raw_handle<T: IntoRawHandle>(sock: T) -> super::PlatformHandleType {
-    sock.into_raw_handle()
 }

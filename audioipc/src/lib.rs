@@ -28,24 +28,27 @@ extern crate tokio_core;
 #[macro_use]
 extern crate tokio_io;
 extern crate tokio_uds;
+#[cfg(windows)]
 extern crate winapi;
 
 mod async;
-#[cfg(not(target_os = "windows"))]
+#[cfg(unix)]
 mod cmsg;
 pub mod codec;
 pub mod core;
 #[allow(deprecated)]
 pub mod errors;
-#[cfg(not(target_os = "windows"))]
+#[cfg(unix)]
 pub mod fd_passing;
-#[cfg(target_os = "windows")]
+#[cfg(unix)]
+pub use fd_passing as platformhandle_passing;
+#[cfg(windows)]
 pub mod handle_passing;
-#[cfg(target_os = "windows")]
-pub use handle_passing as fd_passing;
+#[cfg(windows)]
+pub use handle_passing as platformhandle_passing;
 pub mod frame;
 pub mod messages;
-#[cfg(not(target_os = "windows"))]
+#[cfg(unix)]
 mod msg;
 pub mod rpc;
 pub mod shm;
@@ -54,11 +57,16 @@ pub use messages::{ClientMessage, ServerMessage};
 use std::env::temp_dir;
 use std::path::PathBuf;
 
+#[cfg(windows)]
+use std::os::windows::io::{FromRawHandle, IntoRawHandle};
+#[cfg(unix)]
+use std::os::unix::io::{FromRawFd, IntoRawFd};
+
 // This must match the definition of
 // ipc::FileDescriptor::PlatformHandleType in Gecko.
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 pub type PlatformHandleType = std::os::windows::raw::HANDLE;
-#[cfg(not(target_os = "windows"))]
+#[cfg(unix)]
 pub type PlatformHandleType = libc::c_int;
 
 // This stands in for RawFd/RawHandle.
@@ -67,8 +75,11 @@ pub struct PlatformHandle(PlatformHandleType);
 
 unsafe impl Send for PlatformHandle {}
 
-// Custom serialization to treat HANDLEs as i64.
-// We're slightly lazy and treat file descriptors as i64 rather than i32.
+// Custom serialization to treat HANDLEs as i64.  This is not valid in
+// general, but after sending the HANDLE value to a remote process we
+// use it to create a valid HANDLE via DuplicateHandle.
+// To avoid duplicating the serialization code, we're lazy and treat
+// file descriptors as i64 rather than i32.
 impl serde::Serialize for PlatformHandle {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -103,12 +114,12 @@ impl<'de> serde::Deserialize<'de> for PlatformHandle {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(unix)]
 fn valid_handle(handle: PlatformHandleType) -> bool {
     handle >= 0
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn valid_handle(handle: PlatformHandleType) -> bool {
     const INVALID_HANDLE_VALUE: PlatformHandleType = -1isize as PlatformHandleType;
     const NULL_HANDLE_VALUE: PlatformHandleType = 0isize as PlatformHandleType;
@@ -127,6 +138,26 @@ impl PlatformHandle {
         Some(PlatformHandle::new(raw))
     }
 
+    #[cfg(windows)]
+    pub fn from<T: IntoRawHandle>(from: T) -> PlatformHandle {
+        PlatformHandle::new(from.into_raw_handle())
+    }
+
+    #[cfg(unix)]
+    pub fn from<T: IntoRawFd>(from: T) -> PlatformHandle {
+        PlatformHandle::new(from.into_raw_fd())
+    }
+
+    #[cfg(windows)]
+    pub unsafe fn into_file(self) -> std::fs::File {
+        std::fs::File::from_raw_handle(self.0)
+    }
+
+    #[cfg(unix)]
+    pub unsafe fn into_file(self) -> std::fs::File {
+        std::fs::File::from_raw_fd(self.0)
+    }
+
     pub fn as_raw(&self) -> PlatformHandleType {
         self.0
     }
@@ -136,44 +167,14 @@ impl PlatformHandle {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(unix)]
 unsafe fn close_platformhandle(handle: PlatformHandleType) {
     libc::close(handle);
 }
 
 #[cfg(windows)]
 unsafe fn close_platformhandle(handle: PlatformHandleType) {
-    handleapi::CloseHandle(handle);
-}
-
-#[cfg(windows)]
-use winapi::um::{processthreadsapi, winnt, handleapi};
-#[cfg(windows)]
-use winapi::shared::minwindef::{DWORD, FALSE};
-
-#[cfg(windows)]
-unsafe fn duplicate_platformhandle(source_handle: PlatformHandleType,
-                                   target_pid: DWORD) -> Result<PlatformHandleType, std::io::Error> {
-    let source = processthreadsapi::GetCurrentProcess();
-    let target = processthreadsapi::OpenProcess(winnt::PROCESS_DUP_HANDLE,
-                                                FALSE,
-                                                target_pid);
-    if !valid_handle(target) {
-        return Err(std::io::Error::new(std::io::ErrorKind::Other, "invalid target process"));
-    }
-
-    let mut target_handle = std::ptr::null_mut();
-    let ok = handleapi::DuplicateHandle(source,
-                                        source_handle,
-                                        target,
-                                        &mut target_handle,
-                                        0,
-                                        FALSE,
-                                        winnt::DUPLICATE_CLOSE_SOURCE | winnt::DUPLICATE_SAME_ACCESS);
-    if ok == FALSE {
-        return Err(std::io::Error::new(std::io::ErrorKind::Other, "DuplicateHandle failed"));
-    }
-    Ok(target_handle)
+    winapi::um::handleapi::CloseHandle(handle);
 }
 
 pub fn get_shm_path(dir: &str) -> PathBuf {
@@ -183,9 +184,9 @@ pub fn get_shm_path(dir: &str) -> PathBuf {
     temp
 }
 
-#[cfg(not(windows))]
+#[cfg(unix)]
 pub mod messagestream_unix;
-#[cfg(not(windows))]
+#[cfg(unix)]
 pub use messagestream_unix::*;
 
 #[cfg(windows)]

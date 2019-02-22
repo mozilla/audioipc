@@ -7,7 +7,7 @@ use tokio_io::{AsyncRead, AsyncWrite};
 use bytes::{Bytes, BytesMut, IntoBuf};
 use codec::Codec;
 use futures::{AsyncSink, Poll, Sink, StartSend, Stream};
-use messages::AssocRawFd;
+use messages::AssocRawPlatformHandle;
 use std::collections::VecDeque;
 use std::{fmt, io};
 
@@ -21,7 +21,7 @@ struct Frame {
 
 /// A unified `Stream` and `Sink` interface over an I/O object, using
 /// the `Codec` trait to encode and decode the payload.
-pub struct FramedWithFds<A, C> {
+pub struct FramedWithPlatformHandles<A, C> {
     io: A,
     codec: C,
     // Stream
@@ -33,7 +33,7 @@ pub struct FramedWithFds<A, C> {
     write_buf: BytesMut,
 }
 
-impl<A, C> FramedWithFds<A, C>
+impl<A, C> FramedWithPlatformHandles<A, C>
 where
     A: AsyncWrite,
 {
@@ -69,9 +69,9 @@ where
                     if n != frame.msgs.len() {
                         // If only part of the message was sent then
                         // re-queue the remaining message at the head
-                        // of the queue. (Don't need to resend the fds
-                        // since they've been sent with the first
-                        // part.)
+                        // of the queue. (Don't need to resend the
+                        // handles since they've been sent with the
+                        // first part.)
                         drop(frame.msgs.split_to(n));
                         self.frames.push_front(frame);
                         break;
@@ -99,11 +99,11 @@ where
     }
 }
 
-impl<A, C> Stream for FramedWithFds<A, C>
+impl<A, C> Stream for FramedWithPlatformHandles<A, C>
 where
     A: AsyncRead,
     C: Codec,
-    C::Out: AssocRawFd,
+    C::Out: AssocRawPlatformHandle,
 {
     type Item = C::Out;
     type Error = io::Error;
@@ -150,11 +150,11 @@ where
     }
 }
 
-impl<A, C> Sink for FramedWithFds<A, C>
+impl<A, C> Sink for FramedWithPlatformHandles<A, C>
 where
     A: AsyncWrite,
     C: Codec,
-    C::In: AssocRawFd + fmt::Debug,
+    C::In: AssocRawPlatformHandle + fmt::Debug,
 {
     type SinkItem = C::In;
     type SinkError = io::Error;
@@ -172,23 +172,21 @@ where
             }
         }
 
-        let mut got_fds = false;
-        if let Some((fds, target_pid)) = item.fd() {
-            got_fds = true;
-            let remote_fds = unsafe {
-                [super::duplicate_platformhandle(fds[0], target_pid)?,
-                 super::duplicate_platformhandle(fds[1], target_pid)?,
-                 super::duplicate_platformhandle(fds[2], target_pid)?]
+        let mut got_handles = false;
+        if let Some((handles, target_pid)) = item.platform_handles() {
+            got_handles = true;
+            let remote_handles = unsafe {
+                [duplicate_platformhandle(handles[0], target_pid)?,
+                 duplicate_platformhandle(handles[1], target_pid)?,
+                 duplicate_platformhandle(handles[2], target_pid)?]
             };
-            trace!("item fds: {:?} remote_fds: {:?}", fds, remote_fds);
-            item.take_fd(|| {
-                Some(remote_fds)
-            });
+            trace!("item handles: {:?} remote_handles: {:?}", handles, remote_handles);
+            item.take_platform_handles(|| Some(remote_handles));
         }
 
         try!(self.codec.encode(item, &mut self.write_buf));
 
-        if got_fds {
+        if got_handles {
             // Enforce splitting sends on messages that contain file
             // descriptors.
             self.set_frame();
@@ -214,8 +212,8 @@ where
     }
 }
 
-pub fn framed_with_fds<A, C>(io: A, codec: C) -> FramedWithFds<A, C> {
-    FramedWithFds {
+pub fn framed_with_platformhandles<A, C>(io: A, codec: C) -> FramedWithPlatformHandles<A, C> {
+    FramedWithPlatformHandles {
         io: io,
         codec: codec,
         read_buf: BytesMut::with_capacity(INITIAL_CAPACITY),
@@ -224,4 +222,35 @@ pub fn framed_with_fds<A, C>(io: A, codec: C) -> FramedWithFds<A, C> {
         frames: VecDeque::new(),
         write_buf: BytesMut::with_capacity(INITIAL_CAPACITY),
     }
+}
+
+use winapi::um::{processthreadsapi, winnt, handleapi};
+use winapi::shared::minwindef::{DWORD, FALSE};
+use super::PlatformHandleType;
+
+// source_handle is effectively taken ownership of (consumed) and
+// closed when duplicate_platformhandle is called.
+// TODO: Make this transfer more explicit via the type system.
+unsafe fn duplicate_platformhandle(source_handle: PlatformHandleType,
+                                   target_pid: DWORD) -> Result<PlatformHandleType, std::io::Error> {
+    let source = processthreadsapi::GetCurrentProcess();
+    let target = processthreadsapi::OpenProcess(winnt::PROCESS_DUP_HANDLE,
+                                                FALSE,
+                                                target_pid);
+    if !super::valid_handle(target) {
+        return Err(std::io::Error::new(std::io::ErrorKind::Other, "invalid target process"));
+    }
+
+    let mut target_handle = std::ptr::null_mut();
+    let ok = handleapi::DuplicateHandle(source,
+                                        source_handle,
+                                        target,
+                                        &mut target_handle,
+                                        0,
+                                        FALSE,
+                                        winnt::DUPLICATE_CLOSE_SOURCE | winnt::DUPLICATE_SAME_ACCESS);
+    if ok == FALSE {
+        return Err(std::io::Error::new(std::io::ErrorKind::Other, "DuplicateHandle failed"));
+    }
+    Ok(target_handle)
 }
