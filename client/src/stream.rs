@@ -283,7 +283,7 @@ impl<'ctx> StreamOps for ClientStream<'ctx> {
         _device_changed_callback: ffi::cubeb_device_changed_callback,
     ) -> Result<()> {
         assert_not_in_callback();
-        Ok(())
+        Err(Error::not_supported())
     }
 }
 
