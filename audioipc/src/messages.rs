@@ -208,7 +208,7 @@ pub enum ClientMessage {
     ClientConnected,
     ClientDisconnected,
 
-    ContextBackendId(),
+    ContextBackendId(String),
     ContextMaxChannelCount(u32),
     ContextMinLatency(u32),
     ContextPreferredSampleRate(u32),

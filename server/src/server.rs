@@ -181,7 +181,8 @@ impl CubebServer {
                 ClientMessage::ClientDisconnected
             }
 
-            ServerMessage::ContextGetBackendId => ClientMessage::ContextBackendId(),
+            ServerMessage::ContextGetBackendId =>
+                ClientMessage::ContextBackendId(context.backend_id().to_string()),
 
             ServerMessage::ContextGetMaxChannelCount => context
                 .max_channel_count()
