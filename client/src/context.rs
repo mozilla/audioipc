@@ -55,6 +55,7 @@ pub struct ClientContext {
     rpc: rpc::ClientProxy<ServerMessage, ClientMessage>,
     core: core::CoreThread,
     cpu_pool: CpuPool,
+    backend_id: CString,
 }
 
 impl ClientContext {
@@ -173,6 +174,10 @@ impl ContextOps for ClientContext {
         // will return errors the caller expects to handle.
         let _ = send_recv!(rpc, ClientConnect(std::process::id()) => ClientConnected);
 
+        let backend_id = send_recv!(rpc, ContextGetBackendId => ContextBackendId())
+            .unwrap_or_else(|_| "(remote error)".to_string());
+        let backend_id = CString::new(backend_id).expect("backend_id query failed");
+
         let pool = get_thread_pool(params);
 
         let ctx = Box::new(ClientContext {
@@ -180,13 +185,15 @@ impl ContextOps for ClientContext {
             rpc: rpc,
             core: core,
             cpu_pool: pool,
+            backend_id: backend_id,
         });
         Ok(unsafe { Context::from_ptr(Box::into_raw(ctx) as *mut _) })
     }
 
     fn backend_id(&mut self) -> &'static CStr {
         assert_not_in_callback();
-        unsafe { CStr::from_ptr(b"remote\0".as_ptr() as *const _) }
+        // Awful hack.  TODO: Make cubeb-rs's ContextOps::backend_id return a non-'static CStr.
+        unsafe { std::mem::transmute::<&CStr, &'static CStr>(self.backend_id.as_c_str()) }
     }
 
     fn max_channel_count(&mut self) -> Result<u32> {

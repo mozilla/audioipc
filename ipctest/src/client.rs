@@ -179,7 +179,7 @@ pub fn client_test(fd: audioipc::PlatformHandleType) -> Result<()> {
 
     let latency = query!(ctx.min_latency(&params));
 
-    println!("Cubeb context {}:", ctx.backend_id());
+    println!("Cubeb backend: {}", ctx.backend_id());
     println!("Max Channels: {}", channels);
     println!("Min Latency: {}", latency);
     println!("Preferred Rate: {}", rate);
