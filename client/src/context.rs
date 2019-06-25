@@ -6,15 +6,16 @@
 use assert_not_in_callback;
 use audio_thread_priority::promote_current_thread_to_real_time;
 use audioipc::codec::LengthDelimitedCodec;
+use audioipc::frame::{framed, Framed};
 use audioipc::platformhandle_passing::{framed_with_platformhandles, FramedWithPlatformHandles};
 use audioipc::{core, rpc};
-use audioipc::{messages, ClientMessage, ServerMessage};
+use audioipc::{messages, ClientMessage, ServerMessage, messages::DeviceCollectionReq, messages::DeviceCollectionResp};
 use cubeb_backend::{
     ffi, Context, ContextOps, DeviceCollectionRef, DeviceId, DeviceType, Error, Ops, Result,
     Stream, StreamParams, StreamParamsRef,
 };
 use futures::Future;
-use futures_cpupool::CpuPool;
+use futures_cpupool::{CpuFuture, CpuPool};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_void;
 use std::sync::mpsc;
@@ -56,6 +57,7 @@ pub struct ClientContext {
     core: core::CoreThread,
     cpu_pool: CpuPool,
     backend_id: CString,
+    device_collection_rpc: bool,
 }
 
 impl ClientContext {
@@ -129,6 +131,41 @@ cfg_if! {
         }
     }
 }
+struct DeviceCollectionServer {
+    cb: ffi::cubeb_device_collection_changed_callback,
+    user_ptr: usize,
+    cpu_pool: CpuPool,
+}
+
+impl rpc::Server for DeviceCollectionServer {
+    type Request = DeviceCollectionReq;
+    type Response = DeviceCollectionResp;
+    type Future = CpuFuture<Self::Response, ()>;
+    type Transport = Framed<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Response, Self::Request>>;
+
+    fn process(&mut self, req: Self::Request) -> Self::Future {
+        match req {
+            DeviceCollectionReq::DeviceChange(device_type) => {
+                trace!("ctx_thread: DeviceChange Callback: device_type={}",
+                       device_type);
+
+                let user_ptr = self.user_ptr;
+                let cb = self.cb.unwrap();
+
+                self.cpu_pool.spawn_fn(move || {
+                    unsafe {
+                        cb(
+                            ptr::null_mut(),
+                            user_ptr as *mut c_void,
+                        )
+                    };
+
+                    Ok(DeviceCollectionResp::DeviceChange)
+                })
+            }
+        }
+    }
+}
 
 impl ContextOps for ClientContext {
     fn init(_context_name: Option<&CStr>) -> Result<Context> {
@@ -186,6 +223,7 @@ impl ContextOps for ClientContext {
             core: core,
             cpu_pool: pool,
             backend_id: backend_id,
+            device_collection_rpc: false,
         });
         Ok(unsafe { Context::from_ptr(Box::into_raw(ctx) as *mut _) })
     }
@@ -307,12 +345,50 @@ impl ContextOps for ClientContext {
 
     fn register_device_collection_changed(
         &mut self,
-        _dev_type: DeviceType,
-        _collection_changed_callback: ffi::cubeb_device_collection_changed_callback,
-        _user_ptr: *mut c_void,
+        devtype: DeviceType,
+        collection_changed_callback: ffi::cubeb_device_collection_changed_callback,
+        user_ptr: *mut c_void,
     ) -> Result<()> {
         assert_not_in_callback();
-        Err(Error::not_supported())
+
+        if !self.device_collection_rpc {
+            let fds = send_recv!(self.rpc(),
+                                 ContextSetupDeviceCollectionCallback =>
+                                 ContextSetupDeviceCollectionCallback())?;
+
+            let stream = unsafe {
+                audioipc::MessageStream::from_raw_fd(fds.platform_handles[0].as_raw())
+            };
+
+            // TODO: The lowest comms layer expects exactly 3 PlatformHandles, but we only
+            // need one here.  Drop the dummy handles the other side sent us to discard.
+            unsafe {
+                fds.platform_handles[1].into_file();
+                fds.platform_handles[2].into_file();
+            }
+
+            let server = DeviceCollectionServer {
+                cb: collection_changed_callback,
+                user_ptr: user_ptr as usize,
+                cpu_pool: self.cpu_pool(),
+            };
+
+            let (wait_tx, wait_rx) = mpsc::channel();
+            self.remote().spawn(move |handle| {
+                let stream = stream.into_tokio_ipc(handle).unwrap();
+                let transport = framed(stream, Default::default());
+                rpc::bind_server(transport, server, handle);
+                wait_tx.send(()).unwrap();
+                Ok(())
+            });
+            wait_rx.recv().unwrap();
+            self.device_collection_rpc = true;
+        }
+
+        let enable = collection_changed_callback.is_some();
+        send_recv!(self.rpc(),
+                   ContextRegisterDeviceCollectionChanged(devtype.bits(), enable) =>
+                   ContextRegisteredDeviceCollectionChanged)
     }
 }
 
