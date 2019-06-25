@@ -314,7 +314,7 @@ mod tests {
     use std;
 
     extern {
-        fn cmsghdr_bytes(size: *mut libc::size_t) -> *const libc::uint8_t;
+        fn cmsghdr_bytes(size: *mut libc::size_t) -> *const u8;
     }
 
     fn cmsg_bytes() -> &'static [u8] {
