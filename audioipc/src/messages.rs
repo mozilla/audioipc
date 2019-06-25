@@ -174,6 +174,12 @@ pub struct StreamCreate {
     pub target_pid: u32,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RegisterDeviceCollectionChanged {
+    pub platform_handles: [PlatformHandle; 3],
+    pub target_pid: u32,
+}
+
 // Client -> Server messages.
 // TODO: Callbacks should be different messages types so
 // ServerConn::process_msg doesn't have a catch-all case.
@@ -187,6 +193,8 @@ pub enum ServerMessage {
     ContextGetMinLatency(StreamParams),
     ContextGetPreferredSampleRate,
     ContextGetDeviceEnumeration(ffi::cubeb_device_type),
+    ContextSetupDeviceCollectionCallback,
+    ContextRegisterDeviceCollectionChanged(ffi::cubeb_device_type, bool),
 
     StreamInit(StreamInitParams),
     StreamDestroy(usize),
@@ -213,6 +221,8 @@ pub enum ClientMessage {
     ContextMinLatency(u32),
     ContextPreferredSampleRate(u32),
     ContextEnumeratedDevices(Vec<DeviceInfo>),
+    ContextSetupDeviceCollectionCallback(RegisterDeviceCollectionChanged),
+    ContextRegisteredDeviceCollectionChanged,
 
     StreamCreated(StreamCreate),
     StreamDestroyed,
@@ -243,6 +253,16 @@ pub enum CallbackResp {
     State,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub enum DeviceCollectionReq {
+    DeviceChange(ffi::cubeb_device_type),
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub enum DeviceCollectionResp {
+    DeviceChange,
+}
+
 pub trait AssocRawPlatformHandle {
     fn platform_handles(&self) -> Option<([PlatformHandleType; 3], u32)> {
         None
@@ -264,6 +284,10 @@ impl AssocRawPlatformHandle for ClientMessage {
                                                              data.platform_handles[1].as_raw(),
                                                              data.platform_handles[2].as_raw()],
                                                             data.target_pid)),
+            ClientMessage::ContextSetupDeviceCollectionCallback(ref data) =>
+                Some(([data.platform_handles[0].as_raw(),
+                       data.platform_handles[1].as_raw(),
+                       data.platform_handles[2].as_raw()], data.target_pid)),
             _ => None,
         }
     }
@@ -272,11 +296,20 @@ impl AssocRawPlatformHandle for ClientMessage {
     where
         F: FnOnce() -> Option<[PlatformHandleType; 3]>,
     {
-        if let ClientMessage::StreamCreated(ref mut data) = *self {
-            let handles = f().expect("platform_handles must be available when processing StreamCreated");
-            data.platform_handles = [PlatformHandle::new(handles[0]),
-                                     PlatformHandle::new(handles[1]),
-                                     PlatformHandle::new(handles[2])]
+        match *self {
+            ClientMessage::StreamCreated(ref mut data) => {
+                let handles = f().expect("platform_handles must be available when processing StreamCreated");
+                data.platform_handles = [PlatformHandle::new(handles[0]),
+                                         PlatformHandle::new(handles[1]),
+                                         PlatformHandle::new(handles[2])]
+            }
+            ClientMessage::ContextSetupDeviceCollectionCallback(ref mut data) => {
+                let handles = f().expect("platform_handles must be available when processing ContextSetupDeviceCollectionCallback");
+                data.platform_handles = [PlatformHandle::new(handles[0]),
+                                         PlatformHandle::new(handles[1]),
+                                         PlatformHandle::new(handles[2])]
+            }
+            _ => {}
         }
     }
 }

@@ -10,8 +10,8 @@ use audioipc::core;
 use audioipc::platformhandle_passing::FramedWithPlatformHandles;
 use audioipc::frame::{framed, Framed};
 use audioipc::messages::{
-    CallbackReq, CallbackResp, ClientMessage, Device, DeviceInfo, ServerMessage, StreamCreate,
-    StreamInitParams, StreamParams,
+    CallbackReq, CallbackResp, ClientMessage, Device, DeviceCollectionReq, DeviceCollectionResp,
+    DeviceInfo, RegisterDeviceCollectionChanged, ServerMessage, StreamCreate, StreamInitParams, StreamParams,
 };
 use audioipc::rpc;
 use audioipc::shm::{SharedMemReader, SharedMemWriter};
@@ -57,6 +57,14 @@ const SHM_AREA_SIZE: usize = 2 * 1024 * 1024;
 
 // The size in which the stream slab is grown.
 const STREAM_CONN_CHUNK_SIZE: usize = 64;
+
+struct DeviceCollectionClient;
+
+impl rpc::Client for DeviceCollectionClient {
+    type Request = DeviceCollectionReq;
+    type Response = DeviceCollectionResp;
+    type Transport = Framed<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Request, Self::Response>>;
+}
 
 struct CallbackClient;
 
@@ -141,6 +149,7 @@ pub struct CubebServer {
     cb_remote: Remote,
     streams: StreamSlab,
     remote_pid: Option<u32>,
+    rpc: Option<rpc::ClientProxy<DeviceCollectionReq, DeviceCollectionResp>>,
 }
 
 impl rpc::Server for CubebServer {
@@ -164,6 +173,7 @@ impl CubebServer {
             cb_remote: cb_remote,
             streams: StreamSlab::with_capacity(STREAM_CONN_CHUNK_SIZE),
             remote_pid: None,
+            rpc: None,
         }
     }
 
@@ -274,6 +284,79 @@ impl CubebServer {
                 .current_device()
                 .map(|device| ClientMessage::StreamCurrentDevice(Device::from(device)))
                 .unwrap_or_else(error),
+
+            ServerMessage::ContextSetupDeviceCollectionCallback => {
+                if let Ok((stm1, stm2)) = MessageStream::anonymous_ipc_pair() {
+                    debug!("Created device collection RPC pair: {:?}-{:?}", stm1, stm2);
+
+                    // This code is currently running on the Client/Server RPC
+                    // handling thread.  We need to move the registration of the
+                    // bind_client to the callback RPC handling thread.  This is
+                    // done by spawning a future on cb_remote.
+
+                    let id = core::handle().id();
+
+                    let (tx, rx) = oneshot::channel();
+                    self.cb_remote.spawn(move |handle| {
+                        // Ensure we're running on a loop different to the one
+                        // invoking spawn_fn.
+                        assert_ne!(id, handle.id());
+                        let stream = stm2.into_tokio_ipc(handle).unwrap();
+                        let transport = framed(stream, Default::default());
+                        let rpc = rpc::bind_client::<DeviceCollectionClient>(transport, handle);
+                        drop(tx.send(rpc));
+                        Ok(())
+                    });
+
+                    // TODO: The lowest comms layer expects exactly 3 PlatformHandles, but we only
+                    // need one here.  Send some dummy handles over for the other side to discard.
+                    let (dummy1, dummy2) = MessageStream::anonymous_ipc_pair().expect("need dummy IPC pair");
+                    if let Ok(rpc) = rx.wait() {
+                        self.rpc = Some(rpc);
+                        let fds = RegisterDeviceCollectionChanged {
+                            platform_handles: [
+                                PlatformHandle::from(stm1),
+                                PlatformHandle::from(dummy1),
+                                PlatformHandle::from(dummy2),
+                            ],
+                            target_pid: self.remote_pid.unwrap()
+                        };
+
+                        ClientMessage::ContextSetupDeviceCollectionCallback(fds)
+                    } else {
+                        warn!("Failed to setup RPC client");
+                        ClientMessage::Error(-1)
+                    }
+                } else {
+                    warn!("Failed to create RPC pair");
+                    ClientMessage::Error(-1)
+                }
+            },
+
+            ServerMessage::ContextRegisterDeviceCollectionChanged(device_type, enable) => {
+                if self.rpc.is_none() {
+                    panic!("RegisterDeviceCollectionChanged without Setup");
+                }
+
+                let cb = match device_type {
+                    ffi::CUBEB_DEVICE_TYPE_INPUT => device_collection_changed_input_cb_c,
+                    ffi::CUBEB_DEVICE_TYPE_OUTPUT => device_collection_changed_output_cb_c,
+                    _ => panic!("unknown device_type"),
+                };
+
+                unsafe {
+                    context
+                        .register_device_collection_changed(cubeb::DeviceType::from_bits_truncate(device_type),
+                                                            if enable {
+                                                                Some(cb)
+                                                            } else {
+                                                                None
+                                                            },
+                                                            self as *const CubebServer as *mut c_void)
+                        .map(|_| ClientMessage::ContextRegisteredDeviceCollectionChanged)
+                        .unwrap_or_else(error)
+                }
+            }
         };
 
         trace!("process_msg: req={:?}, resp={:?}", msg, resp);
@@ -416,6 +499,12 @@ impl CubebServer {
                 }).map_err(|e| e.into())
         }
     }
+
+    fn device_collection_changed_callback(&mut self, device_type: ffi::cubeb_device_type) {
+        debug!("Sending device collection ({:?}) changed event", device_type);
+        let _ = self.rpc.as_ref().expect("RPC must be set up to dispatch devcol events")
+            .call(DeviceCollectionReq::DeviceChange(device_type)).wait();
+    }
 }
 
 // C callable callbacks
@@ -456,4 +545,26 @@ unsafe extern "C" fn state_cb_c(
         cbs.state_callback(state);
     });
     ok.expect("State callback panicked");
+}
+
+unsafe extern "C" fn device_collection_changed_input_cb_c(
+    _: *mut ffi::cubeb,
+    user_ptr: *mut c_void,
+) {
+    let ok = panic::catch_unwind(|| {
+        let server = &mut *(user_ptr as *mut CubebServer);
+        server.device_collection_changed_callback(ffi::CUBEB_DEVICE_TYPE_INPUT);
+    });
+    ok.expect("Collection changed (input) callback panicked");
+}
+
+unsafe extern "C" fn device_collection_changed_output_cb_c(
+    _: *mut ffi::cubeb,
+    user_ptr: *mut c_void,
+) {
+    let ok = panic::catch_unwind(|| {
+        let server = &mut *(user_ptr as *mut CubebServer);
+        server.device_collection_changed_callback(ffi::CUBEB_DEVICE_TYPE_OUTPUT);
+    });
+    ok.expect("Collection changed (output) callback panicked");
 }
