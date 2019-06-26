@@ -52,9 +52,6 @@ where
     })
 }
 
-// TODO: Remove and let caller allocate based on cubeb backend requirements.
-const SHM_AREA_SIZE: usize = 2 * 1024 * 1024;
-
 // The size in which the stream slab is grown.
 const STREAM_CONN_CHUNK_SIZE: usize = 64;
 
@@ -394,9 +391,9 @@ impl CubebServer {
         let (stm1, stm2) = MessageStream::anonymous_ipc_pair()?;
         debug!("Created callback pair: {:?}-{:?}", stm1, stm2);
         let (input_shm, input_file) =
-            SharedMemWriter::new(&audioipc::get_shm_path("input"), SHM_AREA_SIZE)?;
+            SharedMemWriter::new(&audioipc::get_shm_path("input"), audioipc::SHM_AREA_SIZE)?;
         let (output_shm, output_file) =
-            SharedMemReader::new(&audioipc::get_shm_path("output"), SHM_AREA_SIZE)?;
+            SharedMemReader::new(&audioipc::get_shm_path("output"), audioipc::SHM_AREA_SIZE)?;
 
         // This code is currently running on the Client/Server RPC
         // handling thread.  We need to move the registration of the
