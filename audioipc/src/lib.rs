@@ -57,6 +57,9 @@ pub use messages::{ClientMessage, ServerMessage};
 use std::env::temp_dir;
 use std::path::PathBuf;
 
+// TODO: Remove hardcoded size and allow allocation based on cubeb backend requirements.
+pub const SHM_AREA_SIZE: usize = 2 * 1024 * 1024;
+
 #[cfg(windows)]
 use std::os::windows::io::{FromRawHandle, IntoRawHandle};
 #[cfg(unix)]

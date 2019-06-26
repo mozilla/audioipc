@@ -18,9 +18,6 @@ use std::sync::mpsc;
 use ClientContext;
 use {assert_not_in_callback, set_in_callback};
 
-// TODO: Remove and let caller allocate based on cubeb backend requirements.
-const SHM_AREA_SIZE: usize = 2 * 1024 * 1024;
-
 pub struct Device(ffi::cubeb_device);
 
 impl Drop for Device {
@@ -159,7 +156,7 @@ impl<'ctx> ClientStream<'ctx> {
         let input = data.platform_handles[1];
         let input_file = unsafe { input.into_file() };
         let input_shm = if has_input {
-            Some(SharedMemSlice::from(&input_file, SHM_AREA_SIZE).unwrap())
+            Some(SharedMemSlice::from(&input_file, audioipc::SHM_AREA_SIZE).unwrap())
         } else {
             None
         };
@@ -167,7 +164,7 @@ impl<'ctx> ClientStream<'ctx> {
         let output = data.platform_handles[2];
         let output_file = unsafe { output.into_file() };
         let output_shm = if has_output {
-            Some(SharedMemMutSlice::from(&output_file, SHM_AREA_SIZE).unwrap())
+            Some(SharedMemMutSlice::from(&output_file, audioipc::SHM_AREA_SIZE).unwrap())
         } else {
             None
         };
