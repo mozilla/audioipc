@@ -17,6 +17,7 @@ use std::ptr;
 use std::sync::mpsc;
 use ClientContext;
 use {assert_not_in_callback, set_in_callback};
+use std::sync::{Arc, Mutex};
 
 pub struct Device(ffi::cubeb_device);
 
@@ -43,6 +44,7 @@ pub struct ClientStream<'ctx> {
     context: &'ctx ClientContext,
     user_ptr: *mut c_void,
     token: usize,
+    device_change_cb: Arc<Mutex<ffi::cubeb_device_changed_callback>>,
 }
 
 struct CallbackServer {
@@ -52,6 +54,7 @@ struct CallbackServer {
     state_cb: ffi::cubeb_state_callback,
     user_ptr: usize,
     cpu_pool: CpuPool,
+    device_change_cb: Arc<Mutex<ffi::cubeb_device_changed_callback>>,
 }
 
 impl rpc::Server for CallbackServer {
@@ -128,6 +131,25 @@ impl rpc::Server for CallbackServer {
                     Ok(CallbackResp::State)
                 })
             }
+            CallbackReq::DeviceChange => {
+                let cb = self.device_change_cb.clone();
+                let user_ptr = self.user_ptr;
+                self.cpu_pool.spawn_fn(move || {
+                    set_in_callback(true);
+                    let cb = cb.lock().unwrap();
+                    if let Some(cb) = *cb {
+                        unsafe {
+                            cb(user_ptr as *mut _);
+                        }
+                    } else {
+                        warn!("DeviceChange received with null callback");
+                    }
+                    set_in_callback(false);
+
+                    Ok(CallbackResp::DeviceChange)
+                })
+
+            }
         }
     }
 }
@@ -173,6 +195,9 @@ impl<'ctx> ClientStream<'ctx> {
 
         let cpu_pool = ctx.cpu_pool();
 
+        let null_cb: ffi::cubeb_device_changed_callback = None;
+        let device_change_cb = Arc::new(Mutex::new(null_cb));
+
         let server = CallbackServer {
             input_shm: input_shm,
             output_shm: output_shm,
@@ -180,6 +205,7 @@ impl<'ctx> ClientStream<'ctx> {
             state_cb: state_callback,
             user_ptr: user_data,
             cpu_pool: cpu_pool,
+            device_change_cb: device_change_cb.clone(),
         };
 
         let (wait_tx, wait_rx) = mpsc::channel();
@@ -196,6 +222,7 @@ impl<'ctx> ClientStream<'ctx> {
             context: ctx,
             user_ptr: user_ptr,
             token: data.token,
+            device_change_cb: device_change_cb,
         }));
         Ok(unsafe { Stream::from_ptr(stream as *mut _) })
     }
@@ -274,13 +301,15 @@ impl<'ctx> StreamOps for ClientStream<'ctx> {
         }
     }
 
-    // TODO: How do we call this back? On what thread?
     fn register_device_changed_callback(
         &mut self,
-        _device_changed_callback: ffi::cubeb_device_changed_callback,
+        device_changed_callback: ffi::cubeb_device_changed_callback,
     ) -> Result<()> {
         assert_not_in_callback();
-        Err(Error::not_supported())
+        let rpc = self.context.rpc();
+        let enable = device_changed_callback.is_some();
+        *self.device_change_cb.lock().unwrap() = device_changed_callback;
+        send_recv!(rpc, StreamRegisterDeviceChangeCallback(self.token, enable) => StreamRegisterDeviceChangeCallback)
     }
 }
 

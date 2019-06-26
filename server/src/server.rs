@@ -120,7 +120,18 @@ impl ServerStreamCallbacks {
         match r {
             Ok(CallbackResp::State) => {}
             _ => {
-                debug!("Unexpected message {:?} during callback", r);
+                debug!("Unexpected message {:?} during state callback", r);
+            }
+        }
+    }
+
+    fn device_change_callback(&mut self) {
+        trace!("Stream device change callback");
+        let r = self.rpc.call(CallbackReq::DeviceChange).wait();
+        match r {
+            Ok(CallbackResp::DeviceChange) => {}
+            _ => {
+                debug!("Unexpected message {:?} during device change callback", r);
             }
         }
     }
@@ -280,6 +291,16 @@ impl CubebServer {
                 .stream
                 .current_device()
                 .map(|device| ClientMessage::StreamCurrentDevice(Device::from(device)))
+                .unwrap_or_else(error),
+
+            ServerMessage::StreamRegisterDeviceChangeCallback(stm_tok, enable) => self.streams[stm_tok]
+                .stream
+                .register_device_changed_callback(if enable {
+                    Some(device_change_cb_c)
+                } else {
+                    None
+                })
+                .map(|_| ClientMessage::StreamRegisterDeviceChangeCallback)
                 .unwrap_or_else(error),
 
             ServerMessage::ContextSetupDeviceCollectionCallback => {
@@ -542,6 +563,16 @@ unsafe extern "C" fn state_cb_c(
         cbs.state_callback(state);
     });
     ok.expect("State callback panicked");
+}
+
+unsafe extern "C" fn device_change_cb_c(
+    user_ptr: *mut c_void,
+) {
+    let ok = panic::catch_unwind(|| {
+        let cbs = &mut *(user_ptr as *mut ServerStreamCallbacks);
+        cbs.device_change_callback();
+    });
+    ok.expect("Device change callback panicked");
 }
 
 unsafe extern "C" fn device_collection_changed_input_cb_c(

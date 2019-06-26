@@ -207,6 +207,7 @@ pub enum ServerMessage {
     StreamSetVolume(usize, f32),
     StreamSetPanning(usize, f32),
     StreamGetCurrentDevice(usize),
+    StreamRegisterDeviceChangeCallback(usize, bool),
 }
 
 // Server -> Client messages.
@@ -235,6 +236,7 @@ pub enum ClientMessage {
     StreamVolumeSet,
     StreamPanningSet,
     StreamCurrentDevice(Device),
+    StreamRegisterDeviceChangeCallback,
 
     Error(c_int),
 }
@@ -245,12 +247,14 @@ pub enum CallbackReq {
            input_frame_size: usize,
            output_frame_size: usize },
     State(ffi::cubeb_state),
+    DeviceChange,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub enum CallbackResp {
     Data(isize),
     State,
+    DeviceChange,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
