@@ -228,10 +228,9 @@ impl ContextOps for ClientContext {
         Ok(unsafe { Context::from_ptr(Box::into_raw(ctx) as *mut _) })
     }
 
-    fn backend_id(&mut self) -> &'static CStr {
+    fn backend_id(&mut self) -> &CStr {
         assert_not_in_callback();
-        // Awful hack.  TODO: Make cubeb-rs's ContextOps::backend_id return a non-'static CStr.
-        unsafe { std::mem::transmute::<&CStr, &'static CStr>(self.backend_id.as_c_str()) }
+        self.backend_id.as_c_str()
     }
 
     fn max_channel_count(&mut self) -> Result<u32> {
