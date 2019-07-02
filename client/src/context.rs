@@ -19,6 +19,7 @@ use futures_cpupool::{CpuFuture, CpuPool};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_void;
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::{fmt, io, mem, ptr};
 use stream;
@@ -58,6 +59,8 @@ pub struct ClientContext {
     cpu_pool: CpuPool,
     backend_id: CString,
     device_collection_rpc: bool,
+    input_device_callback: Arc<Mutex<DeviceCollectionCallback>>,
+    output_device_callback: Arc<Mutex<DeviceCollectionCallback>>,
 }
 
 impl ClientContext {
@@ -131,9 +134,16 @@ cfg_if! {
         }
     }
 }
-struct DeviceCollectionServer {
+
+#[derive(Default)]
+struct DeviceCollectionCallback {
     cb: ffi::cubeb_device_collection_changed_callback,
     user_ptr: usize,
+}
+
+struct DeviceCollectionServer {
+    input: Arc<Mutex<DeviceCollectionCallback>>,
+    output: Arc<Mutex<DeviceCollectionCallback>>,
     cpu_pool: CpuPool,
 }
 
@@ -149,16 +159,28 @@ impl rpc::Server for DeviceCollectionServer {
                 trace!("ctx_thread: DeviceChange Callback: device_type={}",
                        device_type);
 
-                let user_ptr = self.user_ptr;
-                let cb = self.cb.unwrap();
+                let devtype = cubeb_backend::DeviceType::from_bits_truncate(device_type);
+
+                let (input_cb, input_user_ptr) = {
+                    let x = self.input.lock().unwrap();
+                    (x.cb.unwrap(), x.user_ptr)
+                };
+                let (output_cb, output_user_ptr) = {
+                    let x = self.output.lock().unwrap();
+                    (x.cb.unwrap(), x.user_ptr)
+                };
 
                 self.cpu_pool.spawn_fn(move || {
-                    unsafe {
-                        cb(
-                            ptr::null_mut(),
-                            user_ptr as *mut c_void,
-                        )
-                    };
+                    if devtype.contains(cubeb_backend::DeviceType::INPUT) {
+                        unsafe {
+                            input_cb(ptr::null_mut(), input_user_ptr as *mut c_void)
+                        }
+                    }
+                    if devtype.contains(cubeb_backend::DeviceType::OUTPUT) {
+                        unsafe {
+                            output_cb(ptr::null_mut(), output_user_ptr as *mut c_void)
+                        }
+                    }
 
                     Ok(DeviceCollectionResp::DeviceChange)
                 })
@@ -224,6 +246,8 @@ impl ContextOps for ClientContext {
             cpu_pool: pool,
             backend_id: backend_id,
             device_collection_rpc: false,
+            input_device_callback: Arc::new(Mutex::new(Default::default())),
+            output_device_callback: Arc::new(Mutex::new(Default::default())),
         });
         Ok(unsafe { Context::from_ptr(Box::into_raw(ctx) as *mut _) })
     }
@@ -367,8 +391,8 @@ impl ContextOps for ClientContext {
             }
 
             let server = DeviceCollectionServer {
-                cb: collection_changed_callback,
-                user_ptr: user_ptr as usize,
+                input: self.input_device_callback.clone(),
+                output: self.output_device_callback.clone(),
                 cpu_pool: self.cpu_pool(),
             };
 
@@ -382,6 +406,17 @@ impl ContextOps for ClientContext {
             });
             wait_rx.recv().unwrap();
             self.device_collection_rpc = true;
+        }
+
+        if devtype.contains(cubeb_backend::DeviceType::INPUT) {
+            let mut cb = self.input_device_callback.lock().unwrap();
+            cb.cb = collection_changed_callback;
+            cb.user_ptr = user_ptr as usize;
+        }
+        if devtype.contains(cubeb_backend::DeviceType::OUTPUT) {
+            let mut cb = self.output_device_callback.lock().unwrap();
+            cb.cb = collection_changed_callback;
+            cb.user_ptr = user_ptr as usize;
         }
 
         let enable = collection_changed_callback.is_some();

@@ -352,31 +352,49 @@ impl CubebServer {
             },
 
             ServerMessage::ContextRegisterDeviceCollectionChanged(device_type, enable) => {
-                if self.device_collection_rpc.is_none() {
-                    panic!("RegisterDeviceCollectionChanged without Setup");
-                }
+                assert!(self.device_collection_rpc.is_some());
 
-                let cb = match device_type {
-                    ffi::CUBEB_DEVICE_TYPE_INPUT => device_collection_changed_input_cb_c,
-                    ffi::CUBEB_DEVICE_TYPE_OUTPUT => device_collection_changed_output_cb_c,
-                    _ => panic!("unknown device_type"),
-                };
+                let devtype = cubeb::DeviceType::from_bits_truncate(device_type);
 
-                let cb = if enable { Some(cb) } else { None };
-                unsafe {
-                    context
-                        .register_device_collection_changed(cubeb::DeviceType::from_bits_truncate(device_type),
-                                                            cb,
-                                                            self as *const CubebServer as *mut c_void)
-                        .map(|_| ClientMessage::ContextRegisteredDeviceCollectionChanged)
-                        .unwrap_or_else(error)
-                }
+                self.process_register_device_collection_changed(context, devtype, enable)
+                    .unwrap_or_else(error)
             }
         };
 
         trace!("process_msg: req={:?}, resp={:?}", msg, resp);
 
         resp
+    }
+
+    fn process_register_device_collection_changed(&mut self,
+                                                  context: &cubeb::Context,
+                                                  devtype: cubeb::DeviceType,
+                                                  enable: bool) -> cubeb::Result<ClientMessage> {
+        let user_ptr = self as *const CubebServer as *mut c_void;
+
+        if devtype.contains(cubeb::DeviceType::INPUT) {
+            unsafe {
+                context.register_device_collection_changed(cubeb::DeviceType::INPUT,
+                                                           if enable {
+                                                               Some(device_collection_changed_input_cb_c)
+                                                           } else {
+                                                               None
+                                                           },
+                                                           user_ptr)?;
+            }
+        }
+        if devtype.contains(cubeb::DeviceType::OUTPUT) {
+            unsafe {
+                context.register_device_collection_changed(cubeb::DeviceType::OUTPUT,
+                                                           if enable {
+                                                               Some(device_collection_changed_output_cb_c)
+                                                           } else {
+                                                               None
+                                                           },
+                                                           user_ptr)?;
+            }
+        }
+        Ok(ClientMessage::ContextRegisteredDeviceCollectionChanged)
     }
 
     // Stream init is special, so it's been separated from process_msg.
