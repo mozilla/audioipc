@@ -157,7 +157,7 @@ pub struct CubebServer {
     cb_remote: Remote,
     streams: StreamSlab,
     remote_pid: Option<u32>,
-    rpc: Option<rpc::ClientProxy<DeviceCollectionReq, DeviceCollectionResp>>,
+    device_collection_rpc: Option<rpc::ClientProxy<DeviceCollectionReq, DeviceCollectionResp>>,
 }
 
 impl rpc::Server for CubebServer {
@@ -181,7 +181,7 @@ impl CubebServer {
             cb_remote: cb_remote,
             streams: StreamSlab::with_capacity(STREAM_CONN_CHUNK_SIZE),
             remote_pid: None,
-            rpc: None,
+            device_collection_rpc: None,
         }
     }
 
@@ -330,7 +330,7 @@ impl CubebServer {
                     // need one here.  Send some dummy handles over for the other side to discard.
                     let (dummy1, dummy2) = MessageStream::anonymous_ipc_pair().expect("need dummy IPC pair");
                     if let Ok(rpc) = rx.wait() {
-                        self.rpc = Some(rpc);
+                        self.device_collection_rpc = Some(rpc);
                         let fds = RegisterDeviceCollectionChanged {
                             platform_handles: [
                                 PlatformHandle::from(stm1),
@@ -352,7 +352,7 @@ impl CubebServer {
             },
 
             ServerMessage::ContextRegisterDeviceCollectionChanged(device_type, enable) => {
-                if self.rpc.is_none() {
+                if self.device_collection_rpc.is_none() {
                     panic!("RegisterDeviceCollectionChanged without Setup");
                 }
 
@@ -517,7 +517,7 @@ impl CubebServer {
 
     fn device_collection_changed_callback(&mut self, device_type: ffi::cubeb_device_type) {
         debug!("Sending device collection ({:?}) changed event", device_type);
-        let _ = self.rpc.as_ref().expect("RPC must be set up to dispatch devcol events")
+        let _ = self.device_collection_rpc.as_ref().expect("RPC must be set up to dispatch devcol events")
             .call(DeviceCollectionReq::DeviceChange(device_type)).wait();
     }
 }
