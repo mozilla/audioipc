@@ -362,14 +362,11 @@ impl CubebServer {
                     _ => panic!("unknown device_type"),
                 };
 
+                let cb = if enable { Some(cb) } else { None };
                 unsafe {
                     context
                         .register_device_collection_changed(cubeb::DeviceType::from_bits_truncate(device_type),
-                                                            if enable {
-                                                                Some(cb)
-                                                            } else {
-                                                                None
-                                                            },
+                                                            cb,
                                                             self as *const CubebServer as *mut c_void)
                         .map(|_| ClientMessage::ContextRegisteredDeviceCollectionChanged)
                         .unwrap_or_else(error)
