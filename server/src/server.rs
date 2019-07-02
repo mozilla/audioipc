@@ -343,11 +343,11 @@ impl CubebServer {
                         ClientMessage::ContextSetupDeviceCollectionCallback(fds)
                     } else {
                         warn!("Failed to setup RPC client");
-                        ClientMessage::Error(-1)
+                        error(cubeb::Error::error())
                     }
                 } else {
                     warn!("Failed to create RPC pair");
-                    ClientMessage::Error(-1)
+                    error(cubeb::Error::error())
                 }
             },
 
