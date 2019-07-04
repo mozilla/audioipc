@@ -6,7 +6,6 @@
 // Ease accessing reactor::Core handles.
 
 use futures::sync::oneshot;
-use futures::{Future, IntoFuture};
 use std::sync::mpsc;
 use std::{fmt, io, thread};
 use tokio_core::reactor::{Core, Handle, Remote};
@@ -17,21 +16,6 @@ scoped_thread_local! {
 
 pub fn handle() -> Handle {
     HANDLE.with(|handle| handle.clone())
-}
-
-pub fn spawn<F>(f: F)
-where
-    F: Future<Item = (), Error = ()> + 'static,
-{
-    HANDLE.with(|handle| handle.spawn(f))
-}
-
-pub fn spawn_fn<F, R>(f: F)
-where
-    F: FnOnce() -> R + 'static,
-    R: IntoFuture<Item = (), Error = ()> + 'static,
-{
-    HANDLE.with(|handle| handle.spawn_fn(f))
 }
 
 struct Inner {
