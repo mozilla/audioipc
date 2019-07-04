@@ -81,13 +81,14 @@ impl ClientContext {
 }
 
 // TODO: encapsulate connect, etc inside audioipc.
-fn open_server_stream() -> Result<audioipc::MessageStream> {
+fn open_server_stream() -> io::Result<audioipc::MessageStream> {
     unsafe {
         if let Some(fd) = G_SERVER_FD {
             return Ok(audioipc::MessageStream::from_raw_fd(fd.as_raw()));
         }
 
-        Err(Error::default())
+        Err(io::Error::new(io::ErrorKind::Other,
+                           "Failed to get server connection."))
     }
 }
 
@@ -195,13 +196,13 @@ impl ContextOps for ClientContext {
             stream: audioipc::AsyncMessageStream,
             handle: &Handle,
             tx_rpc: &mpsc::Sender<rpc::ClientProxy<ServerMessage, ClientMessage>>,
-        ) -> Option<()> {
+        ) -> io::Result<()> {
             let transport = framed_with_platformhandles(stream, Default::default());
             let rpc = rpc::bind_client::<CubebClient>(transport, handle);
             // If send fails then the rx end has closed
             // which is unlikely here.
             let _ = tx_rpc.send(rpc);
-            Some(())
+            Ok(())
         }
 
         assert_not_in_callback();
@@ -216,15 +217,8 @@ impl ContextOps for ClientContext {
             register_thread(params.thread_create_callback);
 
             open_server_stream()
-                .ok()
-                .and_then(|stream| stream.into_tokio_ipc(&handle).ok())
+                .and_then(|stream| stream.into_tokio_ipc(&handle))
                 .and_then(|stream| bind_and_send_client(stream, &handle, &tx_rpc))
-                .ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::Other,
-                        "Failed to open stream and create rpc.",
-                    )
-                })
         }));
 
         let rpc = t!(rx_rpc.recv());
