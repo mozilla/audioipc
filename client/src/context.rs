@@ -39,14 +39,6 @@ impl rpc::Client for CubebClient {
     type Transport = FramedWithPlatformHandles<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Request, Self::Response>>;
 }
 
-macro_rules! t(
-    ($e:expr) => (
-        match $e {
-            Ok(e) => e,
-            Err(_) => return Err(Error::default())
-        }
-    ));
-
 pub const CLIENT_OPS: Ops = capi_new!(ClientContext, ClientStream);
 
 // ClientContext's layout *must* match cubeb.c's `struct cubeb` for the
@@ -211,7 +203,7 @@ impl ContextOps for ClientContext {
 
         let params = CPUPOOL_INIT_PARAMS.with(|p| p.replace(None).unwrap());
 
-        let core = t!(core::spawn_thread("AudioIPC Client RPC", move || {
+        let core = core::spawn_thread("AudioIPC Client RPC", move || {
             let handle = core::handle();
 
             register_thread(params.thread_create_callback);
@@ -219,9 +211,9 @@ impl ContextOps for ClientContext {
             open_server_stream()
                 .and_then(|stream| stream.into_tokio_ipc(&handle))
                 .and_then(|stream| bind_and_send_client(stream, &handle, &tx_rpc))
-        }));
+        }).map_err(|_| Error::default())?;
 
-        let rpc = t!(rx_rpc.recv());
+        let rpc = rx_rpc.recv().map_err(|_| Error::default())?;
 
         // Don't let errors bubble from here.  Later calls against this context
         // will return errors the caller expects to handle.
