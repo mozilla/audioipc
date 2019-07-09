@@ -336,7 +336,7 @@ impl CubebServer {
                         // Ensure we're running on a loop different to the one
                         // invoking spawn_fn.
                         assert_ne!(id, handle.id());
-                        let stream = stm2.into_tokio_ipc(handle).unwrap();
+                        let stream = stm2.into_tokio_ipc(handle.new_tokio_handle()).unwrap();
                         let transport = framed(stream, Default::default());
                         let rpc = rpc::bind_client::<DeviceCollectionClient>(transport, handle);
                         drop(tx.send(rpc));
@@ -462,7 +462,7 @@ impl CubebServer {
             // Ensure we're running on a loop different to the one
             // invoking spawn_fn.
             assert_ne!(id, handle.id());
-            let stream = stm2.into_tokio_ipc(handle).unwrap();
+            let stream = stm2.into_tokio_ipc(handle.new_tokio_handle()).unwrap();
             let transport = framed(stream, Default::default());
             let rpc = rpc::bind_client::<CallbackClient>(transport, handle);
             drop(tx.send(rpc));

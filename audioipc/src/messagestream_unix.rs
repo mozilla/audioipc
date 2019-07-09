@@ -27,8 +27,8 @@ impl MessageStream {
         MessageStream::new(net::UnixStream::from_raw_fd(raw))
     }
 
-    pub fn into_tokio_ipc(self, handle: &tokio_core::reactor::Handle) -> std::result::Result<AsyncMessageStream, std::io::Error> {
-        Ok(AsyncMessageStream::new(tokio_uds::UnixStream::from_std(self.0, handle.new_tokio_handle())?))
+    pub fn into_tokio_ipc(self, handle: &tokio_reactor::Handle) -> std::result::Result<AsyncMessageStream, std::io::Error> {
+        Ok(AsyncMessageStream::new(tokio_uds::UnixStream::from_std(self.0, handle)?))
     }
 }
 
