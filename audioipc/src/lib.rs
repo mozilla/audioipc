@@ -30,6 +30,7 @@ extern crate tokio_io;
 extern crate tokio_uds;
 #[cfg(windows)]
 extern crate winapi;
+extern crate mio;
 
 mod async;
 #[cfg(unix)]
