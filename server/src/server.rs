@@ -6,7 +6,6 @@
 use audioipc;
 use audioipc::{MessageStream, PlatformHandle};
 use audioipc::codec::LengthDelimitedCodec;
-use audioipc::core;
 use audioipc::platformhandle_passing::FramedWithPlatformHandles;
 use audioipc::frame::{framed, Framed};
 use audioipc::messages::{
@@ -27,7 +26,8 @@ use std::ffi::CStr;
 use std::mem::{size_of, ManuallyDrop};
 use std::os::raw::{c_long, c_void};
 use std::{panic, slice};
-use tokio_core::reactor::Remote;
+use tokio::runtime::current_thread;
+use tokio::reactor;
 
 use errors::*;
 
@@ -171,7 +171,7 @@ impl CubebServerCallbacks {
 }
 
 pub struct CubebServer {
-    cb_remote: Remote,
+    cb_remote: current_thread::Handle,
     streams: StreamSlab,
     remote_pid: Option<u32>,
     cbs: Option<CubebServerCallbacks>,
@@ -193,7 +193,7 @@ impl rpc::Server for CubebServer {
 }
 
 impl CubebServer {
-    pub fn new(cb_remote: Remote) -> Self {
+    pub fn new(cb_remote: current_thread::Handle) -> Self {
         CubebServer {
             cb_remote: cb_remote,
             streams: StreamSlab::with_capacity(STREAM_CONN_CHUNK_SIZE),
@@ -329,19 +329,15 @@ impl CubebServer {
                     // bind_client to the callback RPC handling thread.  This is
                     // done by spawning a future on cb_remote.
 
-                    let id = core::handle().id();
-
                     let (tx, rx) = oneshot::channel();
-                    self.cb_remote.spawn(move |handle| {
-                        // Ensure we're running on a loop different to the one
-                        // invoking spawn_fn.
-                        assert_ne!(id, handle.id());
-                        let stream = stm2.into_tokio_ipc(handle.new_tokio_handle()).unwrap();
+                    self.cb_remote.spawn(futures::future::lazy(move || {
+                        let handle = reactor::Handle::default();
+                        let stream = stm2.into_tokio_ipc(&handle).unwrap();
                         let transport = framed(stream, Default::default());
-                        let rpc = rpc::bind_client::<DeviceCollectionClient>(transport, handle);
+                        let rpc = rpc::bind_client::<DeviceCollectionClient>(transport);
                         drop(tx.send(rpc));
                         Ok(())
-                    });
+                    })).expect("Failed to spawn DeviceCollectionClient");
 
                     // TODO: The lowest comms layer expects exactly 3 PlatformHandles, but we only
                     // need one here.  Send some dummy handles over for the other side to discard.
@@ -455,19 +451,15 @@ impl CubebServer {
         // bind_client to the callback RPC handling thread.  This is
         // done by spawning a future on cb_remote.
 
-        let id = core::handle().id();
-
         let (tx, rx) = oneshot::channel();
-        self.cb_remote.spawn(move |handle| {
-            // Ensure we're running on a loop different to the one
-            // invoking spawn_fn.
-            assert_ne!(id, handle.id());
-            let stream = stm2.into_tokio_ipc(handle.new_tokio_handle()).unwrap();
+        self.cb_remote.spawn(futures::future::lazy(move || {
+            let handle = reactor::Handle::default();
+            let stream = stm2.into_tokio_ipc(&handle).unwrap();
             let transport = framed(stream, Default::default());
-            let rpc = rpc::bind_client::<CallbackClient>(transport, handle);
+            let rpc = rpc::bind_client::<CallbackClient>(transport);
             drop(tx.send(rpc));
             Ok(())
-        });
+        })).expect("Failed to spawn CallbackClient");
 
         let rpc: rpc::ClientProxy<CallbackReq, CallbackResp> = match rx.wait() {
             Ok(rpc) => rpc,

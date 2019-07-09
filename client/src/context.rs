@@ -23,7 +23,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::{fmt, io, mem, ptr};
 use stream;
-use tokio_core::reactor::{Handle, Remote};
+use tokio::runtime::current_thread;
+use tokio::reactor;
 use {ClientStream, CpuPoolInitParams, CPUPOOL_INIT_PARAMS, G_SERVER_FD};
 cfg_if! {
     if #[cfg(target_os = "linux")] {
@@ -57,8 +58,8 @@ pub struct ClientContext {
 
 impl ClientContext {
     #[doc(hidden)]
-    pub fn remote(&self) -> Remote {
-        self.core.remote()
+    pub fn handle(&self) -> current_thread::Handle {
+        self.core.handle()
     }
 
     #[doc(hidden)]
@@ -186,11 +187,10 @@ impl ContextOps for ClientContext {
     fn init(_context_name: Option<&CStr>) -> Result<Context> {
         fn bind_and_send_client(
             stream: audioipc::AsyncMessageStream,
-            handle: &Handle,
             tx_rpc: &mpsc::Sender<rpc::ClientProxy<ServerMessage, ClientMessage>>,
         ) -> io::Result<()> {
             let transport = framed_with_platformhandles(stream, Default::default());
-            let rpc = rpc::bind_client::<CubebClient>(transport, handle);
+            let rpc = rpc::bind_client::<CubebClient>(transport);
             // If send fails then the rx end has closed
             // which is unlikely here.
             let _ = tx_rpc.send(rpc);
@@ -204,13 +204,13 @@ impl ContextOps for ClientContext {
         let params = CPUPOOL_INIT_PARAMS.with(|p| p.replace(None).unwrap());
 
         let core = core::spawn_thread("AudioIPC Client RPC", move || {
-            let handle = core::handle();
+            let handle = reactor::Handle::default();
 
             register_thread(params.thread_create_callback);
 
             open_server_stream()
-                .and_then(|stream| stream.into_tokio_ipc(&handle.new_tokio_handle()))
-                .and_then(|stream| bind_and_send_client(stream, &handle, &tx_rpc))
+                .and_then(|stream| stream.into_tokio_ipc(&handle))
+                .and_then(|stream| bind_and_send_client(stream, &tx_rpc))
         }).map_err(|_| Error::default())?;
 
         let rpc = rx_rpc.recv().map_err(|_| Error::default())?;
@@ -383,13 +383,14 @@ impl ContextOps for ClientContext {
             };
 
             let (wait_tx, wait_rx) = mpsc::channel();
-            self.remote().spawn(move |handle| {
-                let stream = stream.into_tokio_ipc(handle.new_tokio_handle()).unwrap();
+            self.handle().spawn(futures::future::lazy(move || {
+                let handle = reactor::Handle::default();
+                let stream = stream.into_tokio_ipc(&handle).unwrap();
                 let transport = framed(stream, Default::default());
-                rpc::bind_server(transport, server, handle);
+                rpc::bind_server(transport, server);
                 wait_tx.send(()).unwrap();
                 Ok(())
-            });
+            })).expect("Failed to spawn DeviceCollectionServer");
             wait_rx.recv().unwrap();
             self.device_collection_rpc = true;
         }

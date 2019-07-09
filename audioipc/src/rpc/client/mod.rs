@@ -45,7 +45,7 @@ use rpc::driver::Driver;
 use rpc::Handler;
 use std::collections::VecDeque;
 use std::io;
-use tokio_core::reactor::Handle;
+use tokio::runtime::current_thread;
 
 mod proxy;
 
@@ -53,7 +53,6 @@ pub use self::proxy::{ClientProxy, Response};
 
 pub fn bind_client<C>(
     transport: C::Transport,
-    handle: &Handle,
 ) -> proxy::ClientProxy<C::Request, C::Response>
 where
     C: Client,
@@ -70,7 +69,7 @@ where
     };
 
     // Spawn the RPC driver into task
-    handle.spawn(Box::new(fut.map_err(|_| ())));
+    current_thread::spawn(fut.map_err(|_| ()));
 
     tx
 }

@@ -21,14 +21,11 @@ extern crate futures;
 extern crate iovec;
 extern crate libc;
 extern crate memmap;
-#[macro_use]
-extern crate scoped_tls;
 extern crate serde;
-extern crate tokio_core;
 #[macro_use]
 extern crate tokio_io;
 extern crate tokio_uds;
-extern crate tokio_reactor;
+extern crate tokio;
 #[cfg(windows)]
 extern crate winapi;
 extern crate mio;
