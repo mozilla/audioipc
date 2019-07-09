@@ -28,6 +28,7 @@ extern crate tokio_core;
 #[macro_use]
 extern crate tokio_io;
 extern crate tokio_uds;
+extern crate tokio_reactor;
 #[cfg(windows)]
 extern crate winapi;
 extern crate mio;

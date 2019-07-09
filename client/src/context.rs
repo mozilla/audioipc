@@ -209,7 +209,7 @@ impl ContextOps for ClientContext {
             register_thread(params.thread_create_callback);
 
             open_server_stream()
-                .and_then(|stream| stream.into_tokio_ipc(&handle))
+                .and_then(|stream| stream.into_tokio_ipc(&handle.new_tokio_handle()))
                 .and_then(|stream| bind_and_send_client(stream, &handle, &tx_rpc))
         }).map_err(|_| Error::default())?;
 
@@ -384,7 +384,7 @@ impl ContextOps for ClientContext {
 
             let (wait_tx, wait_rx) = mpsc::channel();
             self.remote().spawn(move |handle| {
-                let stream = stream.into_tokio_ipc(handle).unwrap();
+                let stream = stream.into_tokio_ipc(handle.new_tokio_handle()).unwrap();
                 let transport = framed(stream, Default::default());
                 rpc::bind_server(transport, server, handle);
                 wait_tx.send(()).unwrap();

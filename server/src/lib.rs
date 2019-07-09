@@ -141,7 +141,7 @@ pub extern "C" fn audioipc_server_new_client(p: *mut c_void) -> PlatformHandleTy
             // via remote handle.
             wrapper.core_thread.remote().spawn(|handle| {
                 trace!("Incoming connection");
-                sock2.into_tokio_ipc(handle)
+                sock2.into_tokio_ipc(handle.new_tokio_handle())
                     .and_then(|sock| {
                         let transport = framed_with_platformhandles(sock, Default::default());
                         rpc::bind_server(transport, server::CubebServer::new(cb_remote), handle);
