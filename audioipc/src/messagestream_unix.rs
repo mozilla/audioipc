@@ -6,6 +6,8 @@
 use std::os::unix::io::{IntoRawFd, FromRawFd, AsRawFd, RawFd};
 use std::os::unix::net;
 use tokio_io::{AsyncRead, AsyncWrite};
+use mio::Ready;
+use futures::Poll;
 
 #[derive(Debug)]
 pub struct MessageStream(net::UnixStream);
@@ -26,7 +28,7 @@ impl MessageStream {
     }
 
     pub fn into_tokio_ipc(self, handle: &tokio_core::reactor::Handle) -> std::result::Result<AsyncMessageStream, std::io::Error> {
-        Ok(AsyncMessageStream::new(tokio_uds::UnixStream::from_stream(self.0, handle)?))
+        Ok(AsyncMessageStream::new(tokio_uds::UnixStream::from_std(self.0, handle.new_tokio_handle())?))
     }
 }
 
@@ -35,20 +37,20 @@ impl AsyncMessageStream {
         AsyncMessageStream(stream)
     }
 
-    pub fn poll_read(&self) -> futures::Async<()> {
-        self.0.poll_read()
+    pub fn poll_read_ready(&self, ready: Ready) -> Poll<Ready, std::io::Error> {
+        self.0.poll_read_ready(ready)
     }
 
-    pub fn poll_write(&self) -> futures::Async<()> {
-        self.0.poll_write()
+    pub fn clear_read_ready(&self, ready: Ready) -> Result<(), std::io::Error> {
+        self.0.clear_read_ready(ready)
     }
 
-    pub fn need_read(&self) {
-        self.0.need_read()
+    pub fn poll_write_ready(&self) -> Poll<Ready, std::io::Error> {
+        self.0.poll_write_ready()
     }
 
-    pub fn need_write(&self) {
-        self.0.need_write()
+    pub fn clear_write_ready(&self) -> Result<(), std::io::Error> {
+        self.0.clear_write_ready()
     }
 }
 

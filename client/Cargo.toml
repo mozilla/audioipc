@@ -16,7 +16,7 @@ futures-cpupool = { version="0.1.8", default-features=false }
 libc = "0.2"
 log = "0.4"
 tokio-core = "0.1"
-tokio-uds = "0.1.7"
+tokio-uds = "0.2.5"
 audio_thread_priority = "0.15.0"
 lazy_static = "1.2.0"
 cfg-if = "0.1.0"
