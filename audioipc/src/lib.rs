@@ -29,6 +29,10 @@ extern crate tokio;
 #[cfg(windows)]
 extern crate winapi;
 extern crate mio;
+#[cfg(windows)]
+extern crate mio_named_pipes;
+#[cfg(windows)]
+extern crate tokio_named_pipes;
 
 mod async;
 #[cfg(unix)]
@@ -195,5 +199,3 @@ pub use messagestream_unix::*;
 pub mod messagestream_win;
 #[cfg(windows)]
 pub use messagestream_win::*;
-#[cfg(windows)]
-mod tokio_named_pipes;

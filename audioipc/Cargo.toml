@@ -24,7 +24,8 @@ tokio-uds = "0.2.5"
 tokio = "0.1"
 winapi = "0.3.6"
 mio = "0.6.19"
-mio-named-pipes = "=0.1.5"
+mio-named-pipes = { git = "https://github.com/alexcrichton/mio-named-pipes" }
+tokio-named-pipes = { git = "https://github.com/NikVolf/tokio-named-pipes", branch = "stable" }
 
 [dependencies.error-chain]
 version = "0.11.0"
