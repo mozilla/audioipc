@@ -16,8 +16,8 @@ extern crate futures;
 extern crate lazycell;
 extern crate libc;
 extern crate slab;
-extern crate tokio_core;
 extern crate tokio_uds;
+extern crate tokio;
 extern crate audio_thread_priority;
 #[macro_use]
 extern crate lazy_static;
@@ -34,6 +34,7 @@ use std::ptr;
 use audio_thread_priority::promote_current_thread_to_real_time;
 use std::ffi::{CStr, CString};
 use std::sync::Mutex;
+use tokio::reactor;
 
 mod server;
 
@@ -130,7 +131,7 @@ pub extern "C" fn audioipc_server_new_client(p: *mut c_void) -> PlatformHandleTy
     let (wait_tx, wait_rx) = oneshot::channel();
     let wrapper: &ServerWrapper = unsafe { &*(p as *mut _) };
 
-    let cb_remote = wrapper.callback_thread.remote();
+    let cb_remote = wrapper.callback_thread.handle();
 
     // We create a connected pair of anonymous IPC endpoints. One side
     // is registered with the reactor core, the other side is returned
@@ -139,17 +140,18 @@ pub extern "C" fn audioipc_server_new_client(p: *mut c_void) -> PlatformHandleTy
         .and_then(|(sock1, sock2)| {
             // Spawn closure to run on same thread as reactor::Core
             // via remote handle.
-            wrapper.core_thread.remote().spawn(|handle| {
+            wrapper.core_thread.handle().spawn(futures::future::lazy(|| {
                 trace!("Incoming connection");
-                sock2.into_tokio_ipc(handle.new_tokio_handle())
+                let handle = reactor::Handle::default();
+                sock2.into_tokio_ipc(&handle)
                     .and_then(|sock| {
                         let transport = framed_with_platformhandles(sock, Default::default());
-                        rpc::bind_server(transport, server::CubebServer::new(cb_remote), handle);
+                        rpc::bind_server(transport, server::CubebServer::new(cb_remote));
                         Ok(())
                     }).map_err(|_| ())
                     // Notify waiting thread that sock2 has been registered.
                     .and_then(|_| wait_tx.send(()))
-            });
+            })).expect("Failed to spawn CubebServer");
             // Wait for notification that sock2 has been registered
             // with reactor::Core.
             let _ = wait_rx.wait();

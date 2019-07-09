@@ -8,15 +8,7 @@
 use futures::sync::oneshot;
 use std::sync::mpsc;
 use std::{fmt, io, thread};
-use tokio_core::reactor::{Core, Handle, Remote};
-
-scoped_thread_local! {
-    static HANDLE: Handle
-}
-
-pub fn handle() -> Handle {
-    HANDLE.with(|handle| handle.clone())
-}
+use tokio::runtime::current_thread;
 
 struct Inner {
     join: thread::JoinHandle<()>,
@@ -25,12 +17,12 @@ struct Inner {
 
 pub struct CoreThread {
     inner: Option<Inner>,
-    remote: Remote,
+    handle: current_thread::Handle,
 }
 
 impl CoreThread {
-    pub fn remote(&self) -> Remote {
-        self.remote.clone()
+    pub fn handle(&self) -> current_thread::Handle {
+        self.handle.clone()
     }
 }
 
@@ -47,7 +39,7 @@ impl Drop for CoreThread {
 impl fmt::Debug for CoreThread {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // f.debug_tuple("CoreThread").field(&"...").finish()
-        f.debug_tuple("CoreThread").field(&self.remote).finish()
+        f.debug_tuple("CoreThread").field(&self.handle).finish()
     }
 }
 
@@ -57,24 +49,23 @@ where
     F: FnOnce() -> io::Result<()> + Send + 'static,
 {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-    let (remote_tx, remote_rx) = mpsc::channel::<Remote>();
+    let (remote_tx, remote_rx) = mpsc::channel::<current_thread::Handle>();
 
     let join = try!(thread::Builder::new().name(name.into()).spawn(move || {
-        let mut core = Core::new().expect("Failed to create reactor::Core");
-        let handle = core.handle();
-        let remote = handle.remote().clone();
-        drop(remote_tx.send(remote));
+        let mut rt = current_thread::Runtime::new().expect("Failed to create current_thread::Runtime");
+        let handle = rt.handle();
+        drop(remote_tx.send(handle.clone()));
 
-        drop(HANDLE.set(&handle, || {
-            f().and_then(|_| {
-                let _ = core.run(shutdown_rx);
-                Ok(())
-            })
+        rt.spawn(futures::future::lazy(|| {
+            let _ = f();
+            Ok(())
         }));
+
+        let _ = rt.block_on(shutdown_rx);
         trace!("thread shutdown...");
     }));
 
-    let remote = try!(remote_rx.recv().or_else(|_| Err(io::Error::new(
+    let handle = try!(remote_rx.recv().or_else(|_| Err(io::Error::new(
         io::ErrorKind::Other,
         "Failed to receive remote handle from spawned thread"
     ))));
@@ -84,6 +75,6 @@ where
             join: join,
             shutdown: shutdown_tx,
         }),
-        remote: remote,
+        handle: handle,
     })
 }

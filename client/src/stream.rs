@@ -18,6 +18,7 @@ use std::sync::mpsc;
 use ClientContext;
 use {assert_not_in_callback, set_in_callback};
 use std::sync::{Arc, Mutex};
+use tokio::reactor;
 
 pub struct Device(ffi::cubeb_device);
 
@@ -209,13 +210,14 @@ impl<'ctx> ClientStream<'ctx> {
         };
 
         let (wait_tx, wait_rx) = mpsc::channel();
-        ctx.remote().spawn(move |handle| {
-            let stream = stream.into_tokio_ipc(handle.new_tokio_handle()).unwrap();
+        ctx.handle().spawn(futures::future::lazy(move || {
+            let handle = reactor::Handle::default();
+            let stream = stream.into_tokio_ipc(&handle).unwrap();
             let transport = framed(stream, Default::default());
-            rpc::bind_server(transport, server, handle);
+            rpc::bind_server(transport, server);
             wait_tx.send(()).unwrap();
             Ok(())
-        });
+        })).expect("Failed to spawn CallbackServer");
         wait_rx.recv().unwrap();
 
         let stream = Box::into_raw(Box::new(ClientStream {
