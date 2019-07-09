@@ -15,6 +15,7 @@ use iovec::IoVec;
 use msg::{RecvMsg, SendMsg};
 use std::io;
 use tokio_io::{AsyncRead, AsyncWrite};
+#[cfg(unix)]
 use mio::Ready;
 
 pub trait AsyncRecvMsg: AsyncRead {
