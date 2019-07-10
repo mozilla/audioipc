@@ -370,28 +370,30 @@ impl CubebServer {
                                                   context: &cubeb::Context,
                                                   devtype: cubeb::DeviceType,
                                                   enable: bool) -> cubeb::Result<ClientMessage> {
+        if devtype == cubeb::DeviceType::UNKNOWN {
+            return Err(cubeb::Error::invalid_parameter());
+        }
+
         let user_ptr = self as *const CubebServer as *mut c_void;
 
         if devtype.contains(cubeb::DeviceType::INPUT) {
+            let cb: ffi::cubeb_device_collection_changed_callback = if enable {
+                Some(device_collection_changed_input_cb_c)
+            } else {
+                None
+            };
             unsafe {
-                context.register_device_collection_changed(cubeb::DeviceType::INPUT,
-                                                           if enable {
-                                                               Some(device_collection_changed_input_cb_c)
-                                                           } else {
-                                                               None
-                                                           },
-                                                           user_ptr)?;
+                context.register_device_collection_changed(cubeb::DeviceType::INPUT, cb, user_ptr)?;
             }
         }
         if devtype.contains(cubeb::DeviceType::OUTPUT) {
+            let cb: ffi::cubeb_device_collection_changed_callback = if enable {
+                Some(device_collection_changed_output_cb_c)
+            } else {
+                None
+            };
             unsafe {
-                context.register_device_collection_changed(cubeb::DeviceType::OUTPUT,
-                                                           if enable {
-                                                               Some(device_collection_changed_output_cb_c)
-                                                           } else {
-                                                               None
-                                                           },
-                                                           user_ptr)?;
+                context.register_device_collection_changed(cubeb::DeviceType::OUTPUT, cb, user_ptr)?;
             }
         }
         Ok(ClientMessage::ContextRegisteredDeviceCollectionChanged)
