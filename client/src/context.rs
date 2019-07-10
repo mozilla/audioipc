@@ -142,8 +142,8 @@ struct DeviceCollectionCallback {
 }
 
 struct DeviceCollectionServer {
-    input: Arc<Mutex<DeviceCollectionCallback>>,
-    output: Arc<Mutex<DeviceCollectionCallback>>,
+    input_device_callback: Arc<Mutex<DeviceCollectionCallback>>,
+    output_device_callback: Arc<Mutex<DeviceCollectionCallback>>,
     cpu_pool: CpuPool,
 }
 
@@ -162,23 +162,23 @@ impl rpc::Server for DeviceCollectionServer {
                 let devtype = cubeb_backend::DeviceType::from_bits_truncate(device_type);
 
                 let (input_cb, input_user_ptr) = {
-                    let x = self.input.lock().unwrap();
-                    (x.cb.unwrap(), x.user_ptr)
+                    let dcb = self.input_device_callback.lock().unwrap();
+                    (dcb.cb, dcb.user_ptr)
                 };
                 let (output_cb, output_user_ptr) = {
-                    let x = self.output.lock().unwrap();
-                    (x.cb.unwrap(), x.user_ptr)
+                    let dcb = self.output_device_callback.lock().unwrap();
+                    (dcb.cb, dcb.user_ptr)
                 };
 
                 self.cpu_pool.spawn_fn(move || {
                     if devtype.contains(cubeb_backend::DeviceType::INPUT) {
                         unsafe {
-                            input_cb(ptr::null_mut(), input_user_ptr as *mut c_void)
+                            input_cb.unwrap()(ptr::null_mut(), input_user_ptr as *mut c_void)
                         }
                     }
                     if devtype.contains(cubeb_backend::DeviceType::OUTPUT) {
                         unsafe {
-                            output_cb(ptr::null_mut(), output_user_ptr as *mut c_void)
+                            output_cb.unwrap()(ptr::null_mut(), output_user_ptr as *mut c_void)
                         }
                     }
 
@@ -391,8 +391,8 @@ impl ContextOps for ClientContext {
             }
 
             let server = DeviceCollectionServer {
-                input: self.input_device_callback.clone(),
-                output: self.output_device_callback.clone(),
+                input_device_callback: self.input_device_callback.clone(),
+                output_device_callback: self.output_device_callback.clone(),
                 cpu_pool: self.cpu_pool(),
             };
 
