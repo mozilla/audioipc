@@ -153,11 +153,22 @@ impl Drop for ServerStream {
 
 type StreamSlab = slab::Slab<ServerStream, usize>;
 
+struct CubebServerCallbacks {
+    rpc: rpc::ClientProxy<DeviceCollectionReq, DeviceCollectionResp>,
+}
+
+impl CubebServerCallbacks {
+    fn device_collection_changed_callback(&mut self, device_type: ffi::cubeb_device_type) {
+        debug!("Sending device collection ({:?}) changed event", device_type);
+        let _ = self.rpc.call(DeviceCollectionReq::DeviceChange(device_type)).wait();
+    }
+}
+
 pub struct CubebServer {
     cb_remote: Remote,
     streams: StreamSlab,
     remote_pid: Option<u32>,
-    device_collection_rpc: Option<rpc::ClientProxy<DeviceCollectionReq, DeviceCollectionResp>>,
+    cbs: Option<CubebServerCallbacks>,
 }
 
 impl rpc::Server for CubebServer {
@@ -181,7 +192,7 @@ impl CubebServer {
             cb_remote: cb_remote,
             streams: StreamSlab::with_capacity(STREAM_CONN_CHUNK_SIZE),
             remote_pid: None,
-            device_collection_rpc: None,
+            cbs: None,
         }
     }
 
@@ -330,7 +341,9 @@ impl CubebServer {
                     // need one here.  Send some dummy handles over for the other side to discard.
                     let (dummy1, dummy2) = MessageStream::anonymous_ipc_pair().expect("need dummy IPC pair");
                     if let Ok(rpc) = rx.wait() {
-                        self.device_collection_rpc = Some(rpc);
+                        self.cbs = Some(CubebServerCallbacks {
+                            rpc: rpc,
+                        });
                         let fds = RegisterDeviceCollectionChanged {
                             platform_handles: [
                                 PlatformHandle::from(stm1),
@@ -351,14 +364,11 @@ impl CubebServer {
                 }
             },
 
-            ServerMessage::ContextRegisterDeviceCollectionChanged(device_type, enable) => {
-                assert!(self.device_collection_rpc.is_some());
-
-                let devtype = cubeb::DeviceType::from_bits_truncate(device_type);
-
-                self.process_register_device_collection_changed(context, devtype, enable)
-                    .unwrap_or_else(error)
-            }
+            ServerMessage::ContextRegisterDeviceCollectionChanged(device_type, enable) =>
+                self.process_register_device_collection_changed(context,
+                                                                cubeb::DeviceType::from_bits_truncate(device_type),
+                                                                enable)
+                    .unwrap_or_else(error),
         };
 
         trace!("process_msg: req={:?}, resp={:?}", msg, resp);
@@ -374,7 +384,8 @@ impl CubebServer {
             return Err(cubeb::Error::invalid_parameter());
         }
 
-        let user_ptr = self as *const CubebServer as *mut c_void;
+        assert!(self.cbs.is_some());
+        let user_ptr = self.cbs.as_ref().unwrap() as *const CubebServerCallbacks as *mut c_void;
 
         if devtype.contains(cubeb::DeviceType::INPUT) {
             let cb: ffi::cubeb_device_collection_changed_callback = if enable {
@@ -534,12 +545,6 @@ impl CubebServer {
                 }).map_err(|e| e.into())
         }
     }
-
-    fn device_collection_changed_callback(&mut self, device_type: ffi::cubeb_device_type) {
-        debug!("Sending device collection ({:?}) changed event", device_type);
-        let _ = self.device_collection_rpc.as_ref().expect("RPC must be set up to dispatch devcol events")
-            .call(DeviceCollectionReq::DeviceChange(device_type)).wait();
-    }
 }
 
 // C callable callbacks
@@ -597,7 +602,7 @@ unsafe extern "C" fn device_collection_changed_input_cb_c(
     user_ptr: *mut c_void,
 ) {
     let ok = panic::catch_unwind(|| {
-        let server = &mut *(user_ptr as *mut CubebServer);
+        let server = &mut *(user_ptr as *mut CubebServerCallbacks);
         server.device_collection_changed_callback(ffi::CUBEB_DEVICE_TYPE_INPUT);
     });
     ok.expect("Collection changed (input) callback panicked");
@@ -608,7 +613,7 @@ unsafe extern "C" fn device_collection_changed_output_cb_c(
     user_ptr: *mut c_void,
 ) {
     let ok = panic::catch_unwind(|| {
-        let server = &mut *(user_ptr as *mut CubebServer);
+        let server = &mut *(user_ptr as *mut CubebServerCallbacks);
         server.device_collection_changed_callback(ffi::CUBEB_DEVICE_TYPE_OUTPUT);
     });
     ok.expect("Collection changed (output) callback panicked");
