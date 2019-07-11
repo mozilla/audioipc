@@ -75,11 +75,11 @@ impl rpc::Server for CallbackServer {
 
                 // Clone values that need to be moved into the cpu pool thread.
                 let input_shm = match self.input_shm {
-                    Some(ref shm) => unsafe { Some(shm.clone_view()) },
+                    Some(ref shm) => unsafe { Some(shm.clone()) },
                     None => None,
                 };
                 let mut output_shm = match self.output_shm {
-                    Some(ref shm) => unsafe { Some(shm.clone_view()) },
+                    Some(ref shm) => unsafe { Some(shm.clone()) },
                     None => None,
                 };
                 let user_ptr = self.user_ptr;
