@@ -23,7 +23,7 @@ use futures::Future;
 use slab;
 use std::cell::RefCell;
 use std::convert::From;
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::mem::{size_of, ManuallyDrop};
 use std::os::raw::{c_long, c_void};
 use std::{panic, slice};
@@ -45,14 +45,14 @@ where
     CONTEXT_KEY.with(|k| {
         let mut context = k.borrow_mut();
         if context.is_none() {
-            let name = CString::new("AudioIPC Server").unwrap();
-            let backend_name = super::G_CUBEB_BACKEND.lock().unwrap();
-            let backend_name = if let Some(ref name) = *backend_name {
+            let params = super::G_CUBEB_CONTEXT_PARAMS.lock().unwrap();
+            let context_name = Some(params.context_name.as_c_str());
+            let backend_name = if let Some(ref name) = params.backend_name {
                 Some(name.as_c_str())
             } else {
                 None
             };
-            *context = Some(cubeb::Context::init(Some(name.as_c_str()), backend_name));
+            *context = Some(cubeb::Context::init(context_name, backend_name));
         }
         f(context.as_ref().unwrap())
     })

@@ -36,7 +36,7 @@ use errors::*;
 // Run with 'RUST_LOG=run,audioipc cargo run -p ipctest'
 #[cfg(unix)]
 fn run() -> Result<()> {
-    let handle = server::audioipc_server_start(std::ptr::null());
+    let handle = server::audioipc_server_start(std::ptr::null(), std::ptr::null());
     let fd = server::audioipc_server_new_client(handle);
 
     match unsafe { libc::fork() } {
