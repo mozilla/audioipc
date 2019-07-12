@@ -36,7 +36,7 @@ fn error(error: cubeb::Error) -> ClientMessage {
 }
 
 type ContextKey = RefCell<Option<cubeb::Result<cubeb::Context>>>;
-thread_local!(static CONTEXT_KEY:ContextKey = RefCell::new(None));
+thread_local!(static CONTEXT_KEY: ContextKey = RefCell::new(None));
 
 fn with_local_context<T, F>(f: F) -> T
 where
@@ -46,7 +46,13 @@ where
         let mut context = k.borrow_mut();
         if context.is_none() {
             let name = CString::new("AudioIPC Server").unwrap();
-            *context = Some(cubeb::Context::init(Some(name.as_c_str()), None));
+            let backend_name = super::G_CUBEB_BACKEND.lock().unwrap();
+            let backend_name = if let Some(ref name) = *backend_name {
+                Some(name.as_c_str())
+            } else {
+                None
+            };
+            *context = Some(cubeb::Context::init(Some(name.as_c_str()), backend_name));
         }
         f(context.as_ref().unwrap())
     })

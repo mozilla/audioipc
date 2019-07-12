@@ -19,6 +19,8 @@ extern crate slab;
 extern crate tokio_core;
 extern crate tokio_uds;
 extern crate audio_thread_priority;
+#[macro_use]
+extern crate lazy_static;
 
 use audioipc::core;
 use audioipc::platformhandle_passing::framed_with_platformhandles;
@@ -30,8 +32,14 @@ use std::error::Error;
 use std::os::raw::c_void;
 use std::ptr;
 use audio_thread_priority::promote_current_thread_to_real_time;
+use std::ffi::{CStr, CString};
+use std::sync::Mutex;
 
 mod server;
+
+lazy_static! {
+    static ref G_CUBEB_BACKEND: Mutex<Option<CString>> = Mutex::new(None);
+}
 
 #[allow(deprecated)]
 pub mod errors {
@@ -93,7 +101,13 @@ fn run() -> Result<ServerWrapper> {
 }
 
 #[no_mangle]
-pub extern "C" fn audioipc_server_start() -> *mut c_void {
+pub extern "C" fn audioipc_server_start(backend_name: *const std::os::raw::c_char) -> *mut c_void {
+    let mut cubeb_backend = G_CUBEB_BACKEND.lock().unwrap();
+    assert_eq!(*cubeb_backend, None);
+    if !backend_name.is_null() {
+        let backend_string = unsafe { CStr::from_ptr(backend_name) }.to_owned();
+        *cubeb_backend = Some(backend_string);
+    }
     match run() {
         Ok(server) => Box::into_raw(Box::new(server)) as *mut _,
         Err(_) => ptr::null_mut() as *mut _,
