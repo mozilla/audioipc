@@ -1,2 +1,7 @@
 [workspace]
 members = ["audioipc", "client", "server", "ipctest"]
+
+[patch.crates-io]
+tokio = { git = "https://github.com/kinetiknz/tokio", branch = "v0.1.x-uds" }
+tokio-io = { git = "https://github.com/kinetiknz/tokio", branch = "v0.1.x-uds" }
+tokio-uds = { git = "https://github.com/kinetiknz/tokio", branch = "v0.1.x-uds" }
