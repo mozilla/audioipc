@@ -37,8 +37,16 @@ use std::sync::Mutex;
 
 mod server;
 
+struct CubebContextParams {
+    context_name: CString,
+    backend_name: Option<CString>,
+}
+
 lazy_static! {
-    static ref G_CUBEB_BACKEND: Mutex<Option<CString>> = Mutex::new(None);
+    static ref G_CUBEB_CONTEXT_PARAMS: Mutex<CubebContextParams> = Mutex::new(CubebContextParams {
+        context_name: CString::new("AudioIPC Server").unwrap(),
+        backend_name: None,
+    });
 }
 
 #[allow(deprecated)]
@@ -101,12 +109,15 @@ fn run() -> Result<ServerWrapper> {
 }
 
 #[no_mangle]
-pub extern "C" fn audioipc_server_start(backend_name: *const std::os::raw::c_char) -> *mut c_void {
-    let mut cubeb_backend = G_CUBEB_BACKEND.lock().unwrap();
-    assert_eq!(*cubeb_backend, None);
+pub extern "C" fn audioipc_server_start(context_name: *const std::os::raw::c_char,
+                                        backend_name: *const std::os::raw::c_char) -> *mut c_void {
+    let mut params = G_CUBEB_CONTEXT_PARAMS.lock().unwrap();
+    if !context_name.is_null() {
+        params.context_name = unsafe { CStr::from_ptr(context_name) }.to_owned();
+    }
     if !backend_name.is_null() {
         let backend_string = unsafe { CStr::from_ptr(backend_name) }.to_owned();
-        *cubeb_backend = Some(backend_string);
+        params.backend_name = Some(backend_string);
     }
     match run() {
         Ok(server) => Box::into_raw(Box::new(server)) as *mut _,
