@@ -26,6 +26,7 @@ use std::convert::From;
 use std::ffi::CStr;
 use std::mem::{size_of, ManuallyDrop};
 use std::os::raw::{c_long, c_void};
+use std::rc::Rc;
 use std::{panic, slice};
 use tokio::reactor;
 use tokio::runtime::current_thread;
@@ -36,16 +37,148 @@ fn error(error: cubeb::Error) -> ClientMessage {
     ClientMessage::Error(error.raw_code())
 }
 
-type ContextKey = RefCell<Option<cubeb::Result<cubeb::Context>>>;
-thread_local!(static CONTEXT_KEY: ContextKey = RefCell::new(None));
+struct CubebDeviceCollectionManager {
+    servers: Vec<Rc<RefCell<CubebServerCallbacks>>>,
+    input_registered: bool,
+    output_registered: bool,
+}
+
+impl CubebDeviceCollectionManager {
+    fn new() -> CubebDeviceCollectionManager {
+        CubebDeviceCollectionManager {
+            servers: Vec::new(),
+            input_registered: false,
+            output_registered: false,
+        }
+    }
+
+    fn register(&mut self, context: &cubeb::Context, server: &Rc<RefCell<CubebServerCallbacks>>) {
+        if self
+            .servers
+            .iter()
+            .find(|s| Rc::ptr_eq(s, server))
+            .is_none()
+        {
+            self.servers.push(server.clone());
+        }
+        self.update(context);
+    }
+
+    fn unregister(&mut self, context: &cubeb::Context, server: &Rc<RefCell<CubebServerCallbacks>>) {
+        self.servers
+            .retain(|s| !(Rc::ptr_eq(&s, server) && s.borrow().devtype.is_empty()));
+        self.update(context);
+    }
+
+    fn update(&mut self, context: &cubeb::Context) {
+        let mut devtype = cubeb::DeviceType::empty();
+        for s in &self.servers {
+            devtype |= s.borrow().devtype;
+        }
+        match (
+            devtype.contains(cubeb::DeviceType::INPUT),
+            self.input_registered,
+        ) {
+            (true, false) => self.internal_register(context, cubeb::DeviceType::INPUT),
+            (false, true) => self.internal_unregister(context, cubeb::DeviceType::INPUT),
+            _ => {}
+        }
+        match (
+            devtype.contains(cubeb::DeviceType::OUTPUT),
+            self.output_registered,
+        ) {
+            (true, false) => self.internal_register(context, cubeb::DeviceType::OUTPUT),
+            (false, true) => self.internal_unregister(context, cubeb::DeviceType::OUTPUT),
+            _ => {}
+        }
+    }
+
+    fn internal_register(&mut self, context: &cubeb::Context, devtype: cubeb::DeviceType) {
+        let user_ptr = self as *const CubebDeviceCollectionManager as *mut c_void;
+        unsafe {
+            if devtype.contains(cubeb::DeviceType::INPUT) {
+                assert_eq!(self.input_registered, false);
+                context
+                    .register_device_collection_changed(
+                        cubeb::DeviceType::INPUT,
+                        Some(device_collection_changed_input_cb_c),
+                        user_ptr,
+                    )
+                    .expect("input devcol register failed");
+                self.input_registered = true;
+            }
+            if devtype.contains(cubeb::DeviceType::OUTPUT) {
+                assert_eq!(self.output_registered, false);
+                context
+                    .register_device_collection_changed(
+                        cubeb::DeviceType::OUTPUT,
+                        Some(device_collection_changed_output_cb_c),
+                        user_ptr,
+                    )
+                    .expect("output devcol register failed");
+                self.output_registered = true;
+            }
+        }
+    }
+
+    fn internal_unregister(&mut self, context: &cubeb::Context, devtype: cubeb::DeviceType) {
+        unsafe {
+            if devtype.contains(cubeb::DeviceType::INPUT) {
+                assert_eq!(self.input_registered, true);
+                context
+                    .register_device_collection_changed(
+                        cubeb::DeviceType::INPUT,
+                        None,
+                        std::ptr::null_mut(),
+                    )
+                    .expect("input devcol unregister failed");
+                self.input_registered = false;
+            }
+            if devtype.contains(cubeb::DeviceType::OUTPUT) {
+                assert_eq!(self.output_registered, true);
+                context
+                    .register_device_collection_changed(
+                        cubeb::DeviceType::OUTPUT,
+                        None,
+                        std::ptr::null_mut(),
+                    )
+                    .expect("output devcol unregister failed");
+                self.output_registered = false;
+            }
+        }
+    }
+
+    // Warning: this is called from an internal cubeb thread, so we must not mutate unprotected shared state.
+    unsafe fn device_collection_changed_callback(&self, device_type: ffi::cubeb_device_type) {
+        self.servers.iter().for_each(|server| {
+            if server
+                .borrow()
+                .devtype
+                .contains(cubeb::DeviceType::from_bits_truncate(device_type))
+            {
+                server
+                    .borrow_mut()
+                    .device_collection_changed_callback(device_type)
+            }
+        });
+    }
+}
+
+struct CubebContextState {
+    context: cubeb::Result<cubeb::Context>,
+    manager: CubebDeviceCollectionManager,
+}
+
+type ContextKey = RefCell<Option<CubebContextState>>;
+thread_local!(static CONTEXT_KEY:ContextKey = RefCell::new(None));
 
 fn with_local_context<T, F>(f: F) -> T
 where
-    F: FnOnce(&cubeb::Result<cubeb::Context>) -> T,
+    F: FnOnce(&cubeb::Result<cubeb::Context>, &mut CubebDeviceCollectionManager) -> T,
 {
     CONTEXT_KEY.with(|k| {
-        let mut context = k.borrow_mut();
-        if context.is_none() {
+        let mut state = k.borrow_mut();
+        if state.is_none() {
             let params = super::G_CUBEB_CONTEXT_PARAMS.lock().unwrap();
             let context_name = Some(params.context_name.as_c_str());
             let backend_name = if let Some(ref name) = params.backend_name {
@@ -53,9 +186,12 @@ where
             } else {
                 None
             };
-            *context = Some(cubeb::Context::init(context_name, backend_name));
+            let context = cubeb::Context::init(context_name, backend_name);
+            let manager = CubebDeviceCollectionManager::new();
+            *state = Some(CubebContextState { context, manager });
         }
-        f(context.as_ref().unwrap())
+        let state = state.as_mut().unwrap();
+        f(&state.context, &mut state.manager)
     })
 }
 
@@ -170,10 +306,12 @@ type StreamSlab = slab::Slab<ServerStream, usize>;
 
 struct CubebServerCallbacks {
     rpc: rpc::ClientProxy<DeviceCollectionReq, DeviceCollectionResp>,
+    devtype: cubeb::DeviceType,
 }
 
 impl CubebServerCallbacks {
     fn device_collection_changed_callback(&mut self, device_type: ffi::cubeb_device_type) {
+        // TODO: Assert device_type is in devtype.
         debug!(
             "Sending device collection ({:?}) changed event",
             device_type
@@ -189,7 +327,7 @@ pub struct CubebServer {
     handle: current_thread::Handle,
     streams: StreamSlab,
     remote_pid: Option<u32>,
-    cbs: Option<CubebServerCallbacks>,
+    cbs: Option<Rc<RefCell<CubebServerCallbacks>>>,
 }
 
 impl rpc::Server for CubebServer {
@@ -202,9 +340,9 @@ impl rpc::Server for CubebServer {
     >;
 
     fn process(&mut self, req: Self::Request) -> Self::Future {
-        let resp = with_local_context(|context| match *context {
+        let resp = with_local_context(|context, manager| match *context {
             Err(_) => error(cubeb::Error::error()),
-            Ok(ref context) => self.process_msg(context, &req),
+            Ok(ref context) => self.process_msg(context, manager, &req),
         });
         future::ok(resp)
     }
@@ -221,7 +359,12 @@ impl CubebServer {
     }
 
     // Process a request coming from the client.
-    fn process_msg(&mut self, context: &cubeb::Context, msg: &ServerMessage) -> ClientMessage {
+    fn process_msg(
+        &mut self,
+        context: &cubeb::Context,
+        manager: &mut CubebDeviceCollectionManager,
+        msg: &ServerMessage,
+    ) -> ClientMessage {
         let resp: ClientMessage = match *msg {
             ServerMessage::ClientConnect(pid) => {
                 self.remote_pid = Some(pid);
@@ -367,7 +510,10 @@ impl CubebServer {
                     let (dummy1, dummy2) =
                         MessageStream::anonymous_ipc_pair().expect("need dummy IPC pair");
                     if let Ok(rpc) = rx.wait() {
-                        self.cbs = Some(CubebServerCallbacks { rpc });
+                        self.cbs = Some(Rc::new(RefCell::new(CubebServerCallbacks {
+                            rpc,
+                            devtype: cubeb::DeviceType::empty(),
+                        })));
                         let fds = RegisterDeviceCollectionChanged {
                             platform_handles: [
                                 PlatformHandle::from(stm1),
@@ -391,6 +537,7 @@ impl CubebServer {
             ServerMessage::ContextRegisterDeviceCollectionChanged(device_type, enable) => self
                 .process_register_device_collection_changed(
                     context,
+                    manager,
                     cubeb::DeviceType::from_bits_truncate(device_type),
                     enable,
                 )
@@ -405,6 +552,7 @@ impl CubebServer {
     fn process_register_device_collection_changed(
         &mut self,
         context: &cubeb::Context,
+        manager: &mut CubebDeviceCollectionManager,
         devtype: cubeb::DeviceType,
         enable: bool,
     ) -> cubeb::Result<ClientMessage> {
@@ -413,35 +561,14 @@ impl CubebServer {
         }
 
         assert!(self.cbs.is_some());
-        let user_ptr = self.cbs.as_ref().unwrap() as *const CubebServerCallbacks as *mut c_void;
+        let cbs = self.cbs.as_ref().unwrap();
 
-        if devtype.contains(cubeb::DeviceType::INPUT) {
-            let cb: ffi::cubeb_device_collection_changed_callback = if enable {
-                Some(device_collection_changed_input_cb_c)
-            } else {
-                None
-            };
-            unsafe {
-                context.register_device_collection_changed(
-                    cubeb::DeviceType::INPUT,
-                    cb,
-                    user_ptr,
-                )?;
-            }
-        }
-        if devtype.contains(cubeb::DeviceType::OUTPUT) {
-            let cb: ffi::cubeb_device_collection_changed_callback = if enable {
-                Some(device_collection_changed_output_cb_c)
-            } else {
-                None
-            };
-            unsafe {
-                context.register_device_collection_changed(
-                    cubeb::DeviceType::OUTPUT,
-                    cb,
-                    user_ptr,
-                )?;
-            }
+        if enable {
+            cbs.borrow_mut().devtype.insert(devtype);
+            manager.register(context, cbs);
+        } else {
+            cbs.borrow_mut().devtype.remove(devtype);
+            manager.unregister(context, cbs);
         }
         Ok(ClientMessage::ContextRegisteredDeviceCollectionChanged)
     }
@@ -638,8 +765,8 @@ unsafe extern "C" fn device_collection_changed_input_cb_c(
     user_ptr: *mut c_void,
 ) {
     let ok = panic::catch_unwind(|| {
-        let server = &mut *(user_ptr as *mut CubebServerCallbacks);
-        server.device_collection_changed_callback(ffi::CUBEB_DEVICE_TYPE_INPUT);
+        let manager = &mut *(user_ptr as *mut CubebDeviceCollectionManager);
+        manager.device_collection_changed_callback(ffi::CUBEB_DEVICE_TYPE_INPUT);
     });
     ok.expect("Collection changed (input) callback panicked");
 }
@@ -649,8 +776,8 @@ unsafe extern "C" fn device_collection_changed_output_cb_c(
     user_ptr: *mut c_void,
 ) {
     let ok = panic::catch_unwind(|| {
-        let server = &mut *(user_ptr as *mut CubebServerCallbacks);
-        server.device_collection_changed_callback(ffi::CUBEB_DEVICE_TYPE_OUTPUT);
+        let manager = &mut *(user_ptr as *mut CubebDeviceCollectionManager);
+        manager.device_collection_changed_callback(ffi::CUBEB_DEVICE_TYPE_OUTPUT);
     });
     ok.expect("Collection changed (output) callback panicked");
 }
