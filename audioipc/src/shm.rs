@@ -45,14 +45,14 @@ impl SharedMemReader {
 }
 
 pub struct SharedMemSlice {
-    mmap: Arc<UnsafeCell<Mmap>>,
+    mmap: Arc<Mmap>,
 }
 
 impl SharedMemSlice {
     pub fn from(file: &File, size: usize) -> Result<SharedMemSlice> {
         let mmap = unsafe { MmapOptions::new().map(file)? };
         assert_eq!(mmap.len(), size);
-        let mmap = Arc::new(UnsafeCell::new(mmap));
+        let mmap = Arc::new(mmap);
         Ok(SharedMemSlice { mmap })
     }
 
@@ -61,9 +61,9 @@ impl SharedMemSlice {
             return Ok(&[]);
         }
         // TODO: Track how much is in the shm area.
-        if size <= self.inner().len() {
+        if size <= self.mmap.len() {
             atomic::fence(atomic::Ordering::Acquire);
-            let buf = &self.inner_mut()[..size];
+            let buf = &self.mmap[..size];
             Ok(buf)
         } else {
             bail!("mmap size");
@@ -80,13 +80,6 @@ impl SharedMemSlice {
         }
     }
 
-    fn inner(&self) -> &Mmap {
-        unsafe { &*self.mmap.get() }
-    }
-
-    fn inner_mut(&self) -> &mut Mmap {
-        unsafe { &mut *self.mmap.get() }
-    }
 }
 
 unsafe impl Send for SharedMemSlice {}
