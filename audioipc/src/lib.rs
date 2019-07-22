@@ -24,11 +24,13 @@ extern crate memmap;
 extern crate serde;
 #[macro_use]
 extern crate tokio_io;
-extern crate tokio_uds;
 extern crate tokio;
+extern crate tokio_reactor;
 #[cfg(windows)]
 extern crate winapi;
 extern crate mio;
+#[cfg(unix)]
+extern crate mio_uds;
 #[cfg(windows)]
 extern crate mio_named_pipes;
 #[cfg(windows)]
@@ -55,6 +57,10 @@ pub mod messages;
 mod msg;
 pub mod rpc;
 pub mod shm;
+
+// TODO: Remove local fork when https://github.com/tokio-rs/tokio/pull/1294 is resolved.
+#[cfg(unix)]
+mod tokio_uds_stream;
 
 pub use messages::{ClientMessage, ServerMessage};
 use std::env::temp_dir;

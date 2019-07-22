@@ -16,7 +16,6 @@ extern crate futures;
 extern crate lazycell;
 extern crate libc;
 extern crate slab;
-extern crate tokio_uds;
 extern crate tokio;
 extern crate audio_thread_priority;
 #[macro_use]
