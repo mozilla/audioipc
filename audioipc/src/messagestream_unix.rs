@@ -8,6 +8,7 @@ use std::os::unix::net;
 use tokio_io::{AsyncRead, AsyncWrite};
 use mio::Ready;
 use futures::Poll;
+use super::tokio_uds_stream as tokio_uds;
 
 #[derive(Debug)]
 pub struct MessageStream(net::UnixStream);

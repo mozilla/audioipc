@@ -20,10 +20,11 @@ scoped-tls = "0.1"
 serde = "1.*.*"
 serde_derive = "1.*.*"
 tokio-io = "0.1"
-tokio-uds = "0.2.5"
 tokio = "0.1"
+tokio-reactor = "0.1"
 winapi = "0.3.6"
 mio = "0.6.19"
+mio-uds = "0.6.7"
 mio-named-pipes = { git = "https://github.com/alexcrichton/mio-named-pipes" }
 tokio-named-pipes = { git = "https://github.com/NikVolf/tokio-named-pipes", branch = "stable" }
 

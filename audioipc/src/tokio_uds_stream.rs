@@ -1,4 +1,7 @@
-use ucred::{self, UCred};
+// Copied from tokio-uds/src/stream.rs revision 25e835c5b7e2cfeb9c22b1fd576844f6814a9477 (tokio-uds 0.2.5)
+// License MIT per upstream: https://github.com/tokio-rs/tokio/blob/master/tokio-uds/LICENSE
+// - Removed ucred for build simplicity
+// - Added clear_{read,write}_ready per: https://github.com/tokio-rs/tokio/pull/1294
 
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_reactor::{Handle, PollEvented};
@@ -96,9 +99,19 @@ impl UnixStream {
         self.io.poll_read_ready(ready)
     }
 
+    /// Clear read ready state.
+    pub fn clear_read_ready(&self, ready: mio::Ready) -> io::Result<()> {
+        self.io.clear_read_ready(ready)
+    }
+
     /// Test whether this socket is ready to be written to or not.
     pub fn poll_write_ready(&self) -> Poll<Ready, io::Error> {
         self.io.poll_write_ready()
+    }
+
+    /// Clear write ready state.
+    pub fn clear_write_ready(&self) -> io::Result<()> {
+        self.io.clear_write_ready()
     }
 
     /// Returns the socket address of the local half of this connection.
@@ -109,11 +122,6 @@ impl UnixStream {
     /// Returns the socket address of the remote half of this connection.
     pub fn peer_addr(&self) -> io::Result<SocketAddr> {
         self.io.get_ref().peer_addr()
-    }
-
-    /// Returns effective credentials of the process which called `connect` or `pair`.
-    pub fn peer_cred(&self) -> io::Result<UCred> {
-        ucred::get_peer_cred(self)
     }
 
     /// Returns the value of the `SO_ERROR` option.

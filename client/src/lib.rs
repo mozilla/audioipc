@@ -12,7 +12,6 @@ extern crate futures_cpupool;
 extern crate libc;
 #[macro_use]
 extern crate log;
-extern crate tokio_uds;
 extern crate tokio;
 extern crate audio_thread_priority;
 #[macro_use]
