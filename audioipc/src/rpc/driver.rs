@@ -3,8 +3,8 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details
 
-use futures::{Async, AsyncSink, Future, Poll, Sink, Stream};
 use crate::rpc::Handler;
+use futures::{Async, AsyncSink, Future, Poll, Sink, Stream};
 use std::fmt;
 use std::io;
 

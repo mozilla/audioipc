@@ -3,12 +3,12 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details
 
-use crate::r#async::{AsyncRecvMsg, AsyncSendMsg};
-use bytes::{Bytes, BytesMut, IntoBuf};
 use crate::cmsg;
 use crate::codec::Codec;
-use futures::{AsyncSink, Poll, Sink, StartSend, Stream};
 use crate::messages::AssocRawPlatformHandle;
+use crate::r#async::{AsyncRecvMsg, AsyncSendMsg};
+use bytes::{Bytes, BytesMut, IntoBuf};
+use futures::{AsyncSink, Poll, Sink, StartSend, Stream};
 use std::collections::VecDeque;
 use std::os::unix::io::RawFd;
 use std::{fmt, io, mem};

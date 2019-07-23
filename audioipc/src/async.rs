@@ -5,6 +5,8 @@
 
 //! Various async helpers modelled after futures-rs and tokio-io.
 
+#[cfg(unix)]
+use crate::msg::{RecvMsg, SendMsg};
 use bytes::{Buf, BufMut};
 #[cfg(unix)]
 use futures::Async;
@@ -13,8 +15,6 @@ use futures::Poll;
 use iovec::IoVec;
 #[cfg(unix)]
 use mio::Ready;
-#[cfg(unix)]
-use crate::msg::{RecvMsg, SendMsg};
 use std::io;
 use tokio_io::{AsyncRead, AsyncWrite};
 

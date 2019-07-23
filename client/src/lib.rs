@@ -18,14 +18,14 @@ mod send_recv;
 mod context;
 mod stream;
 
+use crate::context::ClientContext;
+use crate::stream::ClientStream;
 use audio_thread_priority::RtPriorityHandle;
 use audioipc::{PlatformHandle, PlatformHandleType};
-use crate::context::ClientContext;
 use cubeb_backend::{capi, ffi};
 use futures_cpupool::CpuPool;
 use std::os::raw::{c_char, c_int};
 use std::sync::Mutex;
-use crate::stream::ClientStream;
 cfg_if! {
     if #[cfg(target_os = "linux")] {
         use std::sync::{Arc, Condvar};
