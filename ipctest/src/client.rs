@@ -19,7 +19,7 @@ mod errors {
     }
 }
 
-use errors::*;
+use crate::errors::*;
 
 const SAMPLE_RATE: u32 = 48000;
 const STREAM_FORMAT: cubeb::SampleFormat = cubeb::SampleFormat::S16LE;

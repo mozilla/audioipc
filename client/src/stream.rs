@@ -17,8 +17,8 @@ use std::ptr;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use tokio::reactor;
-use ClientContext;
-use {assert_not_in_callback, set_in_callback};
+use crate::ClientContext;
+use crate::{assert_not_in_callback, set_in_callback};
 
 pub struct Device(ffi::cubeb_device);
 

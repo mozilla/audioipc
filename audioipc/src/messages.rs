@@ -7,8 +7,8 @@ use cubeb::{self, ffi};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_uint};
 use std::ptr;
-use PlatformHandle;
-use PlatformHandleType;
+use crate::PlatformHandle;
+use crate::PlatformHandleType;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Device {

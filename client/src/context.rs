@@ -3,7 +3,7 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details
 
-use assert_not_in_callback;
+use crate::assert_not_in_callback;
 use audio_thread_priority::promote_current_thread_to_real_time;
 use audioipc::codec::LengthDelimitedCodec;
 use audioipc::frame::{framed, Framed};
@@ -25,10 +25,10 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::{fmt, io, mem, ptr};
-use stream;
+use crate::stream;
 use tokio::reactor;
 use tokio::runtime::current_thread;
-use {ClientStream, CpuPoolInitParams, CPUPOOL_INIT_PARAMS, G_SERVER_FD};
+use crate::{ClientStream, CpuPoolInitParams, CPUPOOL_INIT_PARAMS, G_SERVER_FD};
 cfg_if! {
     if #[cfg(target_os = "linux")] {
         use {G_THREAD_POOL};

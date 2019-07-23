@@ -4,9 +4,9 @@
 // accompanying file LICENSE for details
 
 use bytes::{Bytes, BytesMut, IntoBuf};
-use codec::Codec;
+use crate::codec::Codec;
 use futures::{AsyncSink, Poll, Sink, StartSend, Stream};
-use messages::AssocRawPlatformHandle;
+use crate::messages::AssocRawPlatformHandle;
 use std::collections::VecDeque;
 use std::{fmt, io};
 use tokio_io::{AsyncRead, AsyncWrite};

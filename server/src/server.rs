@@ -15,8 +15,8 @@ use audioipc::platformhandle_passing::FramedWithPlatformHandles;
 use audioipc::rpc;
 use audioipc::shm::{SharedMemReader, SharedMemWriter};
 use audioipc::{MessageStream, PlatformHandle};
-use cubeb;
-use cubeb::ffi;
+use cubeb_core as cubeb;
+use cubeb_core::ffi;
 use futures::future::{self, FutureResult};
 use futures::sync::oneshot;
 use futures::Future;
@@ -30,7 +30,7 @@ use std::{panic, slice};
 use tokio::reactor;
 use tokio::runtime::current_thread;
 
-use errors::*;
+use crate::errors::*;
 
 fn error(error: cubeb::Error) -> ClientMessage {
     ClientMessage::Error(error.raw_code())
