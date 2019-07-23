@@ -27,7 +27,8 @@ use crate::errors::*;
 // Run with 'RUST_LOG=run,audioipc cargo run -p ipctest'
 #[cfg(unix)]
 fn run() -> Result<()> {
-    let handle = unsafe { audioipc_server::audioipc_server_start(std::ptr::null(), std::ptr::null()) };
+    let handle =
+        unsafe { audioipc_server::audioipc_server_start(std::ptr::null(), std::ptr::null()) };
     let fd = audioipc_server::audioipc_server_new_client(handle);
 
     match unsafe { libc::fork() } {
@@ -65,7 +66,8 @@ fn run_client(_pid: u32, _handle: usize) -> Result<()> {
 
 #[cfg(windows)]
 fn run() -> Result<()> {
-    let handle = unsafe { audioipc_server::audioipc_server_start(std::ptr::null(), std::ptr::null()) };
+    let handle =
+        unsafe { audioipc_server::audioipc_server_start(std::ptr::null(), std::ptr::null()) };
     let fd = audioipc_server::audioipc_server_new_client(handle);
 
     let args: Vec<String> = std::env::args().collect();

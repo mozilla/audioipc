@@ -3,12 +3,12 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details
 
+use crate::PlatformHandle;
+use crate::PlatformHandleType;
 use cubeb::{self, ffi};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_uint};
 use std::ptr;
-use crate::PlatformHandle;
-use crate::PlatformHandleType;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Device {

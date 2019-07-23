@@ -39,9 +39,9 @@
 // IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use futures::{Async, Future, Poll, Sink, Stream};
 use crate::rpc::driver::Driver;
 use crate::rpc::Handler;
+use futures::{Async, Future, Poll, Sink, Stream};
 use std::collections::VecDeque;
 use std::io;
 use tokio::runtime::current_thread;

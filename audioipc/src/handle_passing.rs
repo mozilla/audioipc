@@ -3,10 +3,10 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details
 
-use bytes::{Bytes, BytesMut, IntoBuf};
 use crate::codec::Codec;
-use futures::{AsyncSink, Poll, Sink, StartSend, Stream};
 use crate::messages::AssocRawPlatformHandle;
+use bytes::{Bytes, BytesMut, IntoBuf};
+use futures::{AsyncSink, Poll, Sink, StartSend, Stream};
 use std::collections::VecDeque;
 use std::{fmt, io};
 use tokio_io::{AsyncRead, AsyncWrite};
