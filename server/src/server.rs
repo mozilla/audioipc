@@ -186,7 +186,7 @@ impl CubebServerCallbacks {
 }
 
 pub struct CubebServer {
-    cb_remote: current_thread::Handle,
+    handle: current_thread::Handle,
     streams: StreamSlab,
     remote_pid: Option<u32>,
     cbs: Option<CubebServerCallbacks>,
@@ -211,9 +211,9 @@ impl rpc::Server for CubebServer {
 }
 
 impl CubebServer {
-    pub fn new(cb_remote: current_thread::Handle) -> Self {
+    pub fn new(handle: current_thread::Handle) -> Self {
         CubebServer {
-            cb_remote,
+            handle,
             streams: StreamSlab::with_capacity(STREAM_CONN_CHUNK_SIZE),
             remote_pid: None,
             cbs: None,
@@ -348,10 +348,10 @@ impl CubebServer {
                     // This code is currently running on the Client/Server RPC
                     // handling thread.  We need to move the registration of the
                     // bind_client to the callback RPC handling thread.  This is
-                    // done by spawning a future on cb_remote.
+                    // done by spawning a future on `handle`.
 
                     let (tx, rx) = oneshot::channel();
-                    self.cb_remote
+                    self.handle
                         .spawn(futures::future::lazy(move || {
                             let handle = reactor::Handle::default();
                             let stream = stm2.into_tokio_ipc(&handle).unwrap();
@@ -484,10 +484,10 @@ impl CubebServer {
         // This code is currently running on the Client/Server RPC
         // handling thread.  We need to move the registration of the
         // bind_client to the callback RPC handling thread.  This is
-        // done by spawning a future on cb_remote.
+        // done by spawning a future on `handle`.
 
         let (tx, rx) = oneshot::channel();
-        self.cb_remote
+        self.handle
             .spawn(futures::future::lazy(move || {
                 let handle = reactor::Handle::default();
                 let stream = stm2.into_tokio_ipc(&handle).unwrap();

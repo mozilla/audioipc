@@ -119,7 +119,7 @@ pub extern "C" fn audioipc_server_new_client(p: *mut c_void) -> PlatformHandleTy
     let (wait_tx, wait_rx) = oneshot::channel();
     let wrapper: &ServerWrapper = unsafe { &*(p as *mut _) };
 
-    let cb_remote = wrapper.callback_thread.handle();
+    let core_handle = wrapper.callback_thread.handle();
 
     // We create a connected pair of anonymous IPC endpoints. One side
     // is registered with the reactor core, the other side is returned
@@ -137,7 +137,7 @@ pub extern "C" fn audioipc_server_new_client(p: *mut c_void) -> PlatformHandleTy
                     sock2.into_tokio_ipc(&handle)
                     .and_then(|sock| {
                         let transport = framed_with_platformhandles(sock, Default::default());
-                        rpc::bind_server(transport, server::CubebServer::new(cb_remote));
+                        rpc::bind_server(transport, server::CubebServer::new(core_handle));
                         Ok(())
                     }).map_err(|_| ())
                     // Notify waiting thread that sock2 has been registered.
