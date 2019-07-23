@@ -3,7 +3,6 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details.
 #![warn(unused_extern_crates)]
-
 #![recursion_limit = "1024"]
 #[macro_use]
 extern crate error_chain;
@@ -97,23 +96,23 @@ fn run() -> Result<()> {
 
 #[cfg(windows)]
 fn run_client(pid: u32, handle: usize) -> Result<()> {
-    use winapi::um::{processthreadsapi, winnt, handleapi, winnt::HANDLE};
     use winapi::shared::minwindef::FALSE;
+    use winapi::um::{handleapi, processthreadsapi, winnt, winnt::HANDLE};
 
     let mut target_handle = std::ptr::null_mut();
     unsafe {
-        let source = processthreadsapi::OpenProcess(winnt::PROCESS_DUP_HANDLE,
-                                                    FALSE,
-                                                    pid);
+        let source = processthreadsapi::OpenProcess(winnt::PROCESS_DUP_HANDLE, FALSE, pid);
         let target = processthreadsapi::GetCurrentProcess();
 
-        let ok = handleapi::DuplicateHandle(source,
-                                            handle as HANDLE,
-                                            target,
-                                            &mut target_handle,
-                                            0,
-                                            FALSE,
-                                            winnt::DUPLICATE_SAME_ACCESS);
+        let ok = handleapi::DuplicateHandle(
+            source,
+            handle as HANDLE,
+            target,
+            &mut target_handle,
+            0,
+            FALSE,
+            winnt::DUPLICATE_SAME_ACCESS,
+        );
         if ok == FALSE {
             bail!("DuplicateHandle failed");
         }

@@ -3,11 +3,11 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details
 
-use std::os::windows::io::{IntoRawHandle, FromRawHandle, AsRawHandle, RawHandle};
+use mio_named_pipes;
+use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, RawHandle};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_named_pipes;
-use mio_named_pipes;
 
 #[derive(Debug)]
 pub struct MessageStream(mio_named_pipes::NamedPipe);
@@ -18,7 +18,8 @@ impl MessageStream {
         MessageStream(stream)
     }
 
-    pub fn anonymous_ipc_pair() -> std::result::Result<(MessageStream, MessageStream), std::io::Error> {
+    pub fn anonymous_ipc_pair(
+    ) -> std::result::Result<(MessageStream, MessageStream), std::io::Error> {
         let pipe1 = mio_named_pipes::NamedPipe::new(get_pipe_name())?;
         let pipe2 = unsafe { mio_named_pipes::NamedPipe::from_raw_handle(pipe1.as_raw_handle()) };
         Ok((MessageStream::new(pipe1), MessageStream::new(pipe2)))
@@ -28,8 +29,13 @@ impl MessageStream {
         MessageStream::new(mio_named_pipes::NamedPipe::from_raw_handle(raw))
     }
 
-    pub fn into_tokio_ipc(self, handle: &tokio::reactor::Handle) -> std::result::Result<AsyncMessageStream, std::io::Error> {
-        Ok(AsyncMessageStream::new(tokio_named_pipes::NamedPipe::from_pipe(self.0, handle)?))
+    pub fn into_tokio_ipc(
+        self,
+        handle: &tokio::reactor::Handle,
+    ) -> std::result::Result<AsyncMessageStream, std::io::Error> {
+        Ok(AsyncMessageStream::new(
+            tokio_named_pipes::NamedPipe::from_pipe(self.0, handle)?,
+        ))
     }
 }
 

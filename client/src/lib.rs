@@ -11,8 +11,8 @@ extern crate futures;
 extern crate futures_cpupool;
 #[macro_use]
 extern crate log;
-extern crate tokio;
 extern crate audio_thread_priority;
+extern crate tokio;
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
@@ -23,14 +23,14 @@ mod send_recv;
 mod context;
 mod stream;
 
-use audioipc::{PlatformHandleType, PlatformHandle};
+use audio_thread_priority::RtPriorityHandle;
+use audioipc::{PlatformHandle, PlatformHandleType};
 use context::ClientContext;
 use cubeb_backend::{capi, ffi};
-use std::os::raw::{c_char, c_int};
-use stream::ClientStream;
-use std::sync::{Mutex};
 use futures_cpupool::CpuPool;
-use audio_thread_priority::RtPriorityHandle;
+use std::os::raw::{c_char, c_int};
+use std::sync::Mutex;
+use stream::ClientStream;
 cfg_if! {
     if #[cfg(target_os = "linux")] {
         use std::sync::{Arc, Condvar};

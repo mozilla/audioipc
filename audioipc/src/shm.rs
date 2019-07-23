@@ -5,10 +5,10 @@
 
 use errors::*;
 use memmap::{Mmap, MmapMut, MmapOptions};
+use std::cell::UnsafeCell;
 use std::fs::{remove_file, File, OpenOptions};
 use std::path::Path;
 use std::sync::{atomic, Arc};
-use std::cell::UnsafeCell;
 
 pub struct SharedMemReader {
     mmap: Mmap,
@@ -79,7 +79,6 @@ impl SharedMemSlice {
             mmap: self.mmap.clone(),
         }
     }
-
 }
 
 unsafe impl Send for SharedMemSlice {}

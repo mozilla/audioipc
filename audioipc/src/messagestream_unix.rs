@@ -3,12 +3,12 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details
 
-use std::os::unix::io::{IntoRawFd, FromRawFd, AsRawFd, RawFd};
+use super::tokio_uds_stream as tokio_uds;
+use futures::Poll;
+use mio::Ready;
+use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, RawFd};
 use std::os::unix::net;
 use tokio_io::{AsyncRead, AsyncWrite};
-use mio::Ready;
-use futures::Poll;
-use super::tokio_uds_stream as tokio_uds;
 
 #[derive(Debug)]
 pub struct MessageStream(net::UnixStream);
@@ -19,7 +19,8 @@ impl MessageStream {
         MessageStream(stream)
     }
 
-    pub fn anonymous_ipc_pair() -> std::result::Result<(MessageStream, MessageStream), std::io::Error> {
+    pub fn anonymous_ipc_pair(
+    ) -> std::result::Result<(MessageStream, MessageStream), std::io::Error> {
         let pair = net::UnixStream::pair()?;
         Ok((MessageStream::new(pair.0), MessageStream::new(pair.1)))
     }
@@ -28,8 +29,13 @@ impl MessageStream {
         MessageStream::new(net::UnixStream::from_raw_fd(raw))
     }
 
-    pub fn into_tokio_ipc(self, handle: &tokio::reactor::Handle) -> std::result::Result<AsyncMessageStream, std::io::Error> {
-        Ok(AsyncMessageStream::new(tokio_uds::UnixStream::from_std(self.0, handle)?))
+    pub fn into_tokio_ipc(
+        self,
+        handle: &tokio::reactor::Handle,
+    ) -> std::result::Result<AsyncMessageStream, std::io::Error> {
+        Ok(AsyncMessageStream::new(tokio_uds::UnixStream::from_std(
+            self.0, handle,
+        )?))
     }
 }
 

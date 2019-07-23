@@ -84,9 +84,7 @@ pub fn recv_msg_with_flags(
     msghdr.msg_control = control;
     msghdr.msg_controllen = controllen as _;
 
-    let n = try!(cvt_r(|| unsafe {
-        libc::recvmsg(socket, &mut msghdr as *mut _, flags)
-    }));
+    let n = cvt_r(|| unsafe { libc::recvmsg(socket, &mut msghdr as *mut _, flags) })?;
 
     let controllen = msghdr.msg_controllen as usize;
     Ok((n, controllen, msghdr.msg_flags))

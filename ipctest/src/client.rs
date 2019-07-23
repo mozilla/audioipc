@@ -184,7 +184,7 @@ pub fn client_test(fd: audioipc::PlatformHandleType) -> Result<()> {
     println!("Min Latency: {}", latency);
     println!("Preferred Rate: {}", rate);
 
-    try!(enumerate_devices(&ctx));
+    enumerate_devices(&ctx)?;
 
     let params = cubeb::StreamParamsBuilder::new()
         .format(STREAM_FORMAT)
@@ -213,7 +213,8 @@ pub fn client_test(fd: audioipc::PlatformHandleType) -> Result<()> {
             }
 
             output.len() as isize
-        }).state_callback(|state| println!("stream {:?}", state));
+        })
+        .state_callback(|state| println!("stream {:?}", state));
 
     let stream = query!(builder.init(&ctx));
 

@@ -3,7 +3,6 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details
 #![warn(unused_extern_crates)]
-
 #![recursion_limit = "1024"]
 #[macro_use]
 extern crate error_chain;
@@ -27,19 +26,19 @@ extern crate memmap;
 extern crate serde;
 #[macro_use]
 extern crate tokio_io;
+#[cfg(unix)]
+extern crate mio;
+#[cfg(windows)]
+extern crate mio_named_pipes;
+#[cfg(unix)]
+extern crate mio_uds;
 extern crate tokio;
+#[cfg(windows)]
+extern crate tokio_named_pipes;
 #[cfg(unix)]
 extern crate tokio_reactor;
 #[cfg(windows)]
 extern crate winapi;
-#[cfg(unix)]
-extern crate mio;
-#[cfg(unix)]
-extern crate mio_uds;
-#[cfg(windows)]
-extern crate mio_named_pipes;
-#[cfg(windows)]
-extern crate tokio_named_pipes;
 
 mod async;
 #[cfg(unix)]
@@ -74,10 +73,10 @@ use std::path::PathBuf;
 // TODO: Remove hardcoded size and allow allocation based on cubeb backend requirements.
 pub const SHM_AREA_SIZE: usize = 2 * 1024 * 1024;
 
-#[cfg(windows)]
-use std::os::windows::io::{FromRawHandle, IntoRawHandle};
 #[cfg(unix)]
 use std::os::unix::io::{FromRawFd, IntoRawFd};
+#[cfg(windows)]
+use std::os::windows::io::{FromRawHandle, IntoRawHandle};
 
 // This must match the definition of
 // ipc::FileDescriptor::PlatformHandleType in Gecko.

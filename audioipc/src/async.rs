@@ -12,11 +12,11 @@ use futures::Poll;
 #[cfg(unix)]
 use iovec::IoVec;
 #[cfg(unix)]
+use mio::Ready;
+#[cfg(unix)]
 use msg::{RecvMsg, SendMsg};
 use std::io;
 use tokio_io::{AsyncRead, AsyncWrite};
-#[cfg(unix)]
-use mio::Ready;
 
 pub trait AsyncRecvMsg: AsyncRead {
     /// Pull some bytes from this source into the specified `Buf`, returning
@@ -65,7 +65,9 @@ impl AsyncRecvMsg for super::AsyncMessageStream {
     where
         B: BufMut,
     {
-        if let Async::NotReady = <super::AsyncMessageStream>::poll_read_ready(self, Ready::readable())? {
+        if let Async::NotReady =
+            <super::AsyncMessageStream>::poll_read_ready(self, Ready::readable())?
+        {
             return Ok(Async::NotReady);
         }
         let r = unsafe {
