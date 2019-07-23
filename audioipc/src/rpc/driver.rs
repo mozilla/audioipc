@@ -163,7 +163,7 @@ impl<T> fmt::Debug for Driver<T>
 where
     T: Handler + fmt::Debug,
 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("rpc::Handler")
             .field("handler", &self.handler)
             .field("run", &self.run)

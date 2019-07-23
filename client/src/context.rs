@@ -437,7 +437,7 @@ impl Drop for ClientContext {
 }
 
 impl fmt::Debug for ClientContext {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ClientContext")
             .field("_ops", &self._ops)
             .field("rpc", &self.rpc)
