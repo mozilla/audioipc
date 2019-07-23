@@ -49,13 +49,13 @@ where
     F: FnOnce() -> io::Result<()> + Send + 'static,
 {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-    let (remote_tx, remote_rx) = mpsc::channel::<current_thread::Handle>();
+    let (handle_tx, handle_rx) = mpsc::channel::<current_thread::Handle>();
 
     let join = thread::Builder::new().name(name.into()).spawn(move || {
         let mut rt =
             current_thread::Runtime::new().expect("Failed to create current_thread::Runtime");
         let handle = rt.handle();
-        drop(remote_tx.send(handle.clone()));
+        drop(handle_tx.send(handle.clone()));
 
         rt.spawn(futures::future::lazy(|| {
             let _ = f();
@@ -66,7 +66,7 @@ where
         trace!("thread shutdown...");
     })?;
 
-    let handle = remote_rx.recv().or_else(|_| {
+    let handle = handle_rx.recv().or_else(|_| {
         Err(io::Error::new(
             io::ErrorKind::Other,
             "Failed to receive remote handle from spawned thread",
