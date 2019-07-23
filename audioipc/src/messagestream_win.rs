@@ -7,6 +7,7 @@ use std::os::windows::io::{IntoRawHandle, FromRawHandle, AsRawHandle, RawHandle}
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio_io::{AsyncRead, AsyncWrite};
 use tokio_named_pipes;
+use mio_named_pipes;
 
 #[derive(Debug)]
 pub struct MessageStream(mio_named_pipes::NamedPipe);

@@ -13,10 +13,11 @@ extern crate audioipc_client;
 extern crate audioipc_server as server;
 extern crate cubeb;
 extern crate env_logger;
-extern crate futures;
+#[cfg(unix)]
 extern crate libc;
 #[macro_use]
 extern crate log;
+#[cfg(windows)]
 extern crate winapi;
 
 use std::process::exit;

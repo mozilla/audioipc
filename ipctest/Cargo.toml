@@ -10,7 +10,10 @@ audioipc-client= { path = "../client" }
 cubeb = "0.5.5"
 env_logger = "0.4.3"
 error-chain = "0.11.0"
-futures = "0.1"
-libc = "0.2"
 log = "0.3.8"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
 winapi = "0.3.6"

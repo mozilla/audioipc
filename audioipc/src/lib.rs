@@ -19,16 +19,20 @@ extern crate bytes;
 extern crate cubeb;
 #[macro_use]
 extern crate futures;
+#[cfg(unix)]
 extern crate iovec;
+#[cfg(unix)]
 extern crate libc;
 extern crate memmap;
 extern crate serde;
 #[macro_use]
 extern crate tokio_io;
 extern crate tokio;
+#[cfg(unix)]
 extern crate tokio_reactor;
 #[cfg(windows)]
 extern crate winapi;
+#[cfg(unix)]
 extern crate mio;
 #[cfg(unix)]
 extern crate mio_uds;
