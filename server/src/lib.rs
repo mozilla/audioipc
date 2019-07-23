@@ -2,6 +2,7 @@
 //
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details
+#![warn(unused_extern_crates)]
 
 #[macro_use]
 extern crate error_chain;
