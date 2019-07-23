@@ -11,11 +11,8 @@ extern crate error_chain;
 extern crate log;
 
 extern crate audioipc;
-extern crate bytes;
 extern crate cubeb_core as cubeb;
 extern crate futures;
-extern crate lazycell;
-extern crate libc;
 extern crate slab;
 extern crate tokio;
 extern crate audio_thread_priority;

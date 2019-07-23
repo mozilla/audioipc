@@ -7,10 +7,8 @@
 extern crate audioipc;
 #[macro_use]
 extern crate cubeb_backend;
-extern crate foreign_types;
 extern crate futures;
 extern crate futures_cpupool;
-extern crate libc;
 #[macro_use]
 extern crate log;
 extern crate tokio;
