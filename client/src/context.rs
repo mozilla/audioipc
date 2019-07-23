@@ -9,7 +9,10 @@ use audioipc::codec::LengthDelimitedCodec;
 use audioipc::frame::{framed, Framed};
 use audioipc::platformhandle_passing::{framed_with_platformhandles, FramedWithPlatformHandles};
 use audioipc::{core, rpc};
-use audioipc::{messages, ClientMessage, ServerMessage, messages::DeviceCollectionReq, messages::DeviceCollectionResp};
+use audioipc::{
+    messages, messages::DeviceCollectionReq, messages::DeviceCollectionResp, ClientMessage,
+    ServerMessage,
+};
 use cubeb_backend::{
     ffi, Context, ContextOps, DeviceCollectionRef, DeviceId, DeviceType, Error, Ops, Result,
     Stream, StreamParams, StreamParamsRef,
@@ -23,8 +26,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::{fmt, io, mem, ptr};
 use stream;
-use tokio::runtime::current_thread;
 use tokio::reactor;
+use tokio::runtime::current_thread;
 use {ClientStream, CpuPoolInitParams, CPUPOOL_INIT_PARAMS, G_SERVER_FD};
 cfg_if! {
     if #[cfg(target_os = "linux")] {
@@ -37,7 +40,10 @@ struct CubebClient;
 impl rpc::Client for CubebClient {
     type Request = ServerMessage;
     type Response = ClientMessage;
-    type Transport = FramedWithPlatformHandles<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Request, Self::Response>>;
+    type Transport = FramedWithPlatformHandles<
+        audioipc::AsyncMessageStream,
+        LengthDelimitedCodec<Self::Request, Self::Response>,
+    >;
 }
 
 pub const CLIENT_OPS: Ops = capi_new!(ClientContext, ClientStream);
@@ -80,8 +86,10 @@ fn open_server_stream() -> io::Result<audioipc::MessageStream> {
             return Ok(audioipc::MessageStream::from_raw_fd(fd.as_raw()));
         }
 
-        Err(io::Error::new(io::ErrorKind::Other,
-                           "Failed to get server connection."))
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Failed to get server connection.",
+        ))
     }
 }
 
@@ -145,13 +153,16 @@ impl rpc::Server for DeviceCollectionServer {
     type Request = DeviceCollectionReq;
     type Response = DeviceCollectionResp;
     type Future = CpuFuture<Self::Response, ()>;
-    type Transport = Framed<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Response, Self::Request>>;
+    type Transport =
+        Framed<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Response, Self::Request>>;
 
     fn process(&mut self, req: Self::Request) -> Self::Future {
         match req {
             DeviceCollectionReq::DeviceChange(device_type) => {
-                trace!("ctx_thread: DeviceChange Callback: device_type={}",
-                       device_type);
+                trace!(
+                    "ctx_thread: DeviceChange Callback: device_type={}",
+                    device_type
+                );
 
                 let devtype = cubeb_backend::DeviceType::from_bits_truncate(device_type);
 
@@ -166,9 +177,7 @@ impl rpc::Server for DeviceCollectionServer {
 
                 self.cpu_pool.spawn_fn(move || {
                     if devtype.contains(cubeb_backend::DeviceType::INPUT) {
-                        unsafe {
-                            input_cb.unwrap()(ptr::null_mut(), input_user_ptr as *mut c_void)
-                        }
+                        unsafe { input_cb.unwrap()(ptr::null_mut(), input_user_ptr as *mut c_void) }
                     }
                     if devtype.contains(cubeb_backend::DeviceType::OUTPUT) {
                         unsafe {
@@ -211,7 +220,8 @@ impl ContextOps for ClientContext {
             open_server_stream()
                 .and_then(|stream| stream.into_tokio_ipc(&handle))
                 .and_then(|stream| bind_and_send_client(stream, &tx_rpc))
-        }).map_err(|_| Error::default())?;
+        })
+        .map_err(|_| Error::default())?;
 
         let rpc = rx_rpc.recv().map_err(|_| Error::default())?;
 
@@ -365,9 +375,8 @@ impl ContextOps for ClientContext {
                                  ContextSetupDeviceCollectionCallback =>
                                  ContextSetupDeviceCollectionCallback())?;
 
-            let stream = unsafe {
-                audioipc::MessageStream::from_raw_fd(fds.platform_handles[0].as_raw())
-            };
+            let stream =
+                unsafe { audioipc::MessageStream::from_raw_fd(fds.platform_handles[0].as_raw()) };
 
             // TODO: The lowest comms layer expects exactly 3 PlatformHandles, but we only
             // need one here.  Drop the dummy handles the other side sent us to discard.
@@ -383,14 +392,16 @@ impl ContextOps for ClientContext {
             };
 
             let (wait_tx, wait_rx) = mpsc::channel();
-            self.handle().spawn(futures::future::lazy(move || {
-                let handle = reactor::Handle::default();
-                let stream = stream.into_tokio_ipc(&handle).unwrap();
-                let transport = framed(stream, Default::default());
-                rpc::bind_server(transport, server);
-                wait_tx.send(()).unwrap();
-                Ok(())
-            })).expect("Failed to spawn DeviceCollectionServer");
+            self.handle()
+                .spawn(futures::future::lazy(move || {
+                    let handle = reactor::Handle::default();
+                    let stream = stream.into_tokio_ipc(&handle).unwrap();
+                    let transport = framed(stream, Default::default());
+                    rpc::bind_server(transport, server);
+                    wait_tx.send(()).unwrap();
+                    Ok(())
+                }))
+                .expect("Failed to spawn DeviceCollectionServer");
             wait_rx.recv().unwrap();
             self.device_collection_rpc = true;
         }

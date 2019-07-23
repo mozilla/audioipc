@@ -4,16 +4,17 @@
 // accompanying file LICENSE for details
 
 use audioipc;
-use audioipc::{MessageStream, PlatformHandle};
 use audioipc::codec::LengthDelimitedCodec;
-use audioipc::platformhandle_passing::FramedWithPlatformHandles;
 use audioipc::frame::{framed, Framed};
 use audioipc::messages::{
     CallbackReq, CallbackResp, ClientMessage, Device, DeviceCollectionReq, DeviceCollectionResp,
-    DeviceInfo, RegisterDeviceCollectionChanged, ServerMessage, StreamCreate, StreamInitParams, StreamParams,
+    DeviceInfo, RegisterDeviceCollectionChanged, ServerMessage, StreamCreate, StreamInitParams,
+    StreamParams,
 };
+use audioipc::platformhandle_passing::FramedWithPlatformHandles;
 use audioipc::rpc;
 use audioipc::shm::{SharedMemReader, SharedMemWriter};
+use audioipc::{MessageStream, PlatformHandle};
 use cubeb;
 use cubeb::ffi;
 use futures::future::{self, FutureResult};
@@ -26,8 +27,8 @@ use std::ffi::CStr;
 use std::mem::{size_of, ManuallyDrop};
 use std::os::raw::{c_long, c_void};
 use std::{panic, slice};
-use tokio::runtime::current_thread;
 use tokio::reactor;
+use tokio::runtime::current_thread;
 
 use errors::*;
 
@@ -66,7 +67,8 @@ struct DeviceCollectionClient;
 impl rpc::Client for DeviceCollectionClient {
     type Request = DeviceCollectionReq;
     type Response = DeviceCollectionResp;
-    type Transport = Framed<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Request, Self::Response>>;
+    type Transport =
+        Framed<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Request, Self::Response>>;
 }
 
 struct CallbackClient;
@@ -74,7 +76,8 @@ struct CallbackClient;
 impl rpc::Client for CallbackClient {
     type Request = CallbackReq;
     type Response = CallbackResp;
-    type Transport = Framed<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Request, Self::Response>>;
+    type Transport =
+        Framed<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Request, Self::Response>>;
 }
 
 struct ServerStreamCallbacks {
@@ -92,7 +95,12 @@ struct ServerStreamCallbacks {
 
 impl ServerStreamCallbacks {
     fn data_callback(&mut self, input: &[u8], output: &mut [u8], nframes: isize) -> isize {
-        trace!("Stream data callback: {} {} {}", nframes, input.len(), output.len());
+        trace!(
+            "Stream data callback: {} {} {}",
+            nframes,
+            input.len(),
+            output.len()
+        );
 
         self.input_shm.write(input).unwrap();
 
@@ -102,7 +110,8 @@ impl ServerStreamCallbacks {
                 nframes,
                 input_frame_size: self.input_frame_size as usize,
                 output_frame_size: self.output_frame_size as usize,
-            }).wait();
+            })
+            .wait();
 
         match r {
             Ok(CallbackResp::Data(frames)) => {
@@ -165,8 +174,14 @@ struct CubebServerCallbacks {
 
 impl CubebServerCallbacks {
     fn device_collection_changed_callback(&mut self, device_type: ffi::cubeb_device_type) {
-        debug!("Sending device collection ({:?}) changed event", device_type);
-        let _ = self.rpc.call(DeviceCollectionReq::DeviceChange(device_type)).wait();
+        debug!(
+            "Sending device collection ({:?}) changed event",
+            device_type
+        );
+        let _ = self
+            .rpc
+            .call(DeviceCollectionReq::DeviceChange(device_type))
+            .wait();
     }
 }
 
@@ -181,7 +196,10 @@ impl rpc::Server for CubebServer {
     type Request = ServerMessage;
     type Response = ClientMessage;
     type Future = FutureResult<Self::Response, ()>;
-    type Transport = FramedWithPlatformHandles<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Response, Self::Request>>;
+    type Transport = FramedWithPlatformHandles<
+        audioipc::AsyncMessageStream,
+        LengthDelimitedCodec<Self::Response, Self::Request>,
+    >;
 
     fn process(&mut self, req: Self::Request) -> Self::Future {
         let resp = with_local_context(|context| match *context {
@@ -216,8 +234,9 @@ impl CubebServer {
                 ClientMessage::ClientDisconnected
             }
 
-            ServerMessage::ContextGetBackendId =>
-                ClientMessage::ContextBackendId(context.backend_id().to_string()),
+            ServerMessage::ContextGetBackendId => {
+                ClientMessage::ContextBackendId(context.backend_id().to_string())
+            }
 
             ServerMessage::ContextGetMaxChannelCount => context
                 .max_channel_count()
@@ -251,7 +270,8 @@ impl CubebServer {
                 .map(|devices| {
                     let v: Vec<DeviceInfo> = devices.iter().map(|i| i.as_ref().into()).collect();
                     ClientMessage::ContextEnumeratedDevices(v)
-                }).unwrap_or_else(error),
+                })
+                .unwrap_or_else(error),
 
             ServerMessage::StreamInit(ref params) => self
                 .process_stream_init(context, params)
@@ -310,7 +330,8 @@ impl CubebServer {
                 .map(|device| ClientMessage::StreamCurrentDevice(Device::from(device)))
                 .unwrap_or_else(error),
 
-            ServerMessage::StreamRegisterDeviceChangeCallback(stm_tok, enable) => self.streams[stm_tok]
+            ServerMessage::StreamRegisterDeviceChangeCallback(stm_tok, enable) => self.streams
+                [stm_tok]
                 .stream
                 .register_device_changed_callback(if enable {
                     Some(device_change_cb_c)
@@ -330,29 +351,30 @@ impl CubebServer {
                     // done by spawning a future on cb_remote.
 
                     let (tx, rx) = oneshot::channel();
-                    self.cb_remote.spawn(futures::future::lazy(move || {
-                        let handle = reactor::Handle::default();
-                        let stream = stm2.into_tokio_ipc(&handle).unwrap();
-                        let transport = framed(stream, Default::default());
-                        let rpc = rpc::bind_client::<DeviceCollectionClient>(transport);
-                        drop(tx.send(rpc));
-                        Ok(())
-                    })).expect("Failed to spawn DeviceCollectionClient");
+                    self.cb_remote
+                        .spawn(futures::future::lazy(move || {
+                            let handle = reactor::Handle::default();
+                            let stream = stm2.into_tokio_ipc(&handle).unwrap();
+                            let transport = framed(stream, Default::default());
+                            let rpc = rpc::bind_client::<DeviceCollectionClient>(transport);
+                            drop(tx.send(rpc));
+                            Ok(())
+                        }))
+                        .expect("Failed to spawn DeviceCollectionClient");
 
                     // TODO: The lowest comms layer expects exactly 3 PlatformHandles, but we only
                     // need one here.  Send some dummy handles over for the other side to discard.
-                    let (dummy1, dummy2) = MessageStream::anonymous_ipc_pair().expect("need dummy IPC pair");
+                    let (dummy1, dummy2) =
+                        MessageStream::anonymous_ipc_pair().expect("need dummy IPC pair");
                     if let Ok(rpc) = rx.wait() {
-                        self.cbs = Some(CubebServerCallbacks {
-                            rpc,
-                        });
+                        self.cbs = Some(CubebServerCallbacks { rpc });
                         let fds = RegisterDeviceCollectionChanged {
                             platform_handles: [
                                 PlatformHandle::from(stm1),
                                 PlatformHandle::from(dummy1),
                                 PlatformHandle::from(dummy2),
                             ],
-                            target_pid: self.remote_pid.unwrap()
+                            target_pid: self.remote_pid.unwrap(),
                         };
 
                         ClientMessage::ContextSetupDeviceCollectionCallback(fds)
@@ -364,13 +386,15 @@ impl CubebServer {
                     warn!("Failed to create RPC pair");
                     error(cubeb::Error::error())
                 }
-            },
+            }
 
-            ServerMessage::ContextRegisterDeviceCollectionChanged(device_type, enable) =>
-                self.process_register_device_collection_changed(context,
-                                                                cubeb::DeviceType::from_bits_truncate(device_type),
-                                                                enable)
-                    .unwrap_or_else(error),
+            ServerMessage::ContextRegisterDeviceCollectionChanged(device_type, enable) => self
+                .process_register_device_collection_changed(
+                    context,
+                    cubeb::DeviceType::from_bits_truncate(device_type),
+                    enable,
+                )
+                .unwrap_or_else(error),
         };
 
         trace!("process_msg: req={:?}, resp={:?}", msg, resp);
@@ -378,10 +402,12 @@ impl CubebServer {
         resp
     }
 
-    fn process_register_device_collection_changed(&mut self,
-                                                  context: &cubeb::Context,
-                                                  devtype: cubeb::DeviceType,
-                                                  enable: bool) -> cubeb::Result<ClientMessage> {
+    fn process_register_device_collection_changed(
+        &mut self,
+        context: &cubeb::Context,
+        devtype: cubeb::DeviceType,
+        enable: bool,
+    ) -> cubeb::Result<ClientMessage> {
         if devtype == cubeb::DeviceType::UNKNOWN {
             return Err(cubeb::Error::invalid_parameter());
         }
@@ -396,7 +422,11 @@ impl CubebServer {
                 None
             };
             unsafe {
-                context.register_device_collection_changed(cubeb::DeviceType::INPUT, cb, user_ptr)?;
+                context.register_device_collection_changed(
+                    cubeb::DeviceType::INPUT,
+                    cb,
+                    user_ptr,
+                )?;
             }
         }
         if devtype.contains(cubeb::DeviceType::OUTPUT) {
@@ -406,7 +436,11 @@ impl CubebServer {
                 None
             };
             unsafe {
-                context.register_device_collection_changed(cubeb::DeviceType::OUTPUT, cb, user_ptr)?;
+                context.register_device_collection_changed(
+                    cubeb::DeviceType::OUTPUT,
+                    cb,
+                    user_ptr,
+                )?;
             }
         }
         Ok(ClientMessage::ContextRegisteredDeviceCollectionChanged)
@@ -432,7 +466,8 @@ impl CubebServer {
                     };
                     let channel_count = p.channels as u16;
                     sample_size * channel_count
-                }).unwrap_or(0u16)
+                })
+                .unwrap_or(0u16)
         }
 
         // Create the callback handling struct which is attached the cubeb stream.
@@ -452,14 +487,16 @@ impl CubebServer {
         // done by spawning a future on cb_remote.
 
         let (tx, rx) = oneshot::channel();
-        self.cb_remote.spawn(futures::future::lazy(move || {
-            let handle = reactor::Handle::default();
-            let stream = stm2.into_tokio_ipc(&handle).unwrap();
-            let transport = framed(stream, Default::default());
-            let rpc = rpc::bind_client::<CallbackClient>(transport);
-            drop(tx.send(rpc));
-            Ok(())
-        })).expect("Failed to spawn CallbackClient");
+        self.cb_remote
+            .spawn(futures::future::lazy(move || {
+                let handle = reactor::Handle::default();
+                let stream = stm2.into_tokio_ipc(&handle).unwrap();
+                let transport = framed(stream, Default::default());
+                let rpc = rpc::bind_client::<CallbackClient>(transport);
+                drop(tx.send(rpc));
+                Ok(())
+            }))
+            .expect("Failed to spawn CallbackClient");
 
         let rpc: rpc::ClientProxy<CallbackReq, CallbackResp> = match rx.wait() {
             Ok(rpc) => rpc,
@@ -506,7 +543,8 @@ impl CubebServer {
                     Some(data_cb_c),
                     Some(state_cb_c),
                     user_ptr,
-                ).and_then(|stream| {
+                )
+                .and_then(|stream| {
                     if !self.streams.has_available() {
                         trace!(
                             "server connection ran out of stream slots. reserving {} more.",
@@ -523,7 +561,8 @@ impl CubebServer {
                                 .insert(ServerStream {
                                     stream: ManuallyDrop::new(stream),
                                     cbs: ManuallyDrop::new(cbs),
-                                }).index()
+                                })
+                                .index()
                         }
                         None => {
                             // TODO: Turn into error
@@ -538,9 +577,10 @@ impl CubebServer {
                             PlatformHandle::from(input_file),
                             PlatformHandle::from(output_file),
                         ],
-                        target_pid: self.remote_pid.unwrap()
+                        target_pid: self.remote_pid.unwrap(),
                     }))
-                }).map_err(|e| e.into())
+                })
+                .map_err(|e| e.into())
         }
     }
 }
@@ -585,9 +625,7 @@ unsafe extern "C" fn state_cb_c(
     ok.expect("State callback panicked");
 }
 
-unsafe extern "C" fn device_change_cb_c(
-    user_ptr: *mut c_void,
-) {
+unsafe extern "C" fn device_change_cb_c(user_ptr: *mut c_void) {
     let ok = panic::catch_unwind(|| {
         let cbs = &mut *(user_ptr as *mut ServerStreamCallbacks);
         cbs.device_change_callback();

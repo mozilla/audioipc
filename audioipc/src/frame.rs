@@ -79,13 +79,13 @@ where
             // readable again, at which point the stream is terminated.
             if self.is_readable {
                 if self.eof {
-                    let frame = try!(self.codec.decode_eof(&mut self.read_buf));
+                    let frame = self.codec.decode_eof(&mut self.read_buf)?;
                     return Ok(Some(frame).into());
                 }
 
                 trace!("attempting to decode a frame");
 
-                if let Some(frame) = try!(self.codec.decode(&mut self.read_buf)) {
+                if let Some(frame) = self.codec.decode(&mut self.read_buf)? {
                     trace!("frame decoded from buffer");
                     return Ok(Some(frame).into());
                 }
@@ -120,13 +120,13 @@ where
         // then attempt to flush it. If after flush it's *still*
         // over BACKPRESSURE_THRESHOLD, then reject the send.
         if self.write_buf.len() > BACKPRESSURE_THRESHOLD {
-            try!(self.poll_complete());
+            self.poll_complete()?;
             if self.write_buf.len() > BACKPRESSURE_THRESHOLD {
                 return Ok(AsyncSink::NotReady(item));
             }
         }
 
-        try!(self.codec.encode(item, &mut self.write_buf));
+        self.codec.encode(item, &mut self.write_buf)?;
         Ok(AsyncSink::Ready)
     }
 

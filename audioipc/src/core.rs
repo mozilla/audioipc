@@ -51,8 +51,9 @@ where
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let (remote_tx, remote_rx) = mpsc::channel::<current_thread::Handle>();
 
-    let join = try!(thread::Builder::new().name(name.into()).spawn(move || {
-        let mut rt = current_thread::Runtime::new().expect("Failed to create current_thread::Runtime");
+    let join = thread::Builder::new().name(name.into()).spawn(move || {
+        let mut rt =
+            current_thread::Runtime::new().expect("Failed to create current_thread::Runtime");
         let handle = rt.handle();
         drop(remote_tx.send(handle.clone()));
 
@@ -63,12 +64,14 @@ where
 
         let _ = rt.block_on(shutdown_rx);
         trace!("thread shutdown...");
-    }));
+    })?;
 
-    let handle = try!(remote_rx.recv().or_else(|_| Err(io::Error::new(
-        io::ErrorKind::Other,
-        "Failed to receive remote handle from spawned thread"
-    ))));
+    let handle = remote_rx.recv().or_else(|_| {
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Failed to receive remote handle from spawned thread",
+        ))
+    })?;
 
     Ok(CoreThread {
         inner: Some(Inner {

@@ -3,12 +3,12 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details
 
-use PlatformHandle;
-use PlatformHandleType;
 use cubeb::{self, ffi};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_uint};
 use std::ptr;
+use PlatformHandle;
+use PlatformHandleType;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Device {
@@ -243,9 +243,11 @@ pub enum ClientMessage {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub enum CallbackReq {
-    Data { nframes: isize,
-           input_frame_size: usize,
-           output_frame_size: usize },
+    Data {
+        nframes: isize,
+        input_frame_size: usize,
+        output_frame_size: usize,
+    },
     State(ffi::cubeb_state),
     DeviceChange,
 }
@@ -274,7 +276,8 @@ pub trait AssocRawPlatformHandle {
 
     fn take_platform_handles<F>(&mut self, f: F)
     where
-        F: FnOnce() -> Option<[PlatformHandleType; 3]> {
+        F: FnOnce() -> Option<[PlatformHandleType; 3]>,
+    {
         assert!(f().is_none());
     }
 }
@@ -284,14 +287,22 @@ impl AssocRawPlatformHandle for ServerMessage {}
 impl AssocRawPlatformHandle for ClientMessage {
     fn platform_handles(&self) -> Option<([PlatformHandleType; 3], u32)> {
         match *self {
-            ClientMessage::StreamCreated(ref data) => Some(([data.platform_handles[0].as_raw(),
-                                                             data.platform_handles[1].as_raw(),
-                                                             data.platform_handles[2].as_raw()],
-                                                            data.target_pid)),
-            ClientMessage::ContextSetupDeviceCollectionCallback(ref data) =>
-                Some(([data.platform_handles[0].as_raw(),
-                       data.platform_handles[1].as_raw(),
-                       data.platform_handles[2].as_raw()], data.target_pid)),
+            ClientMessage::StreamCreated(ref data) => Some((
+                [
+                    data.platform_handles[0].as_raw(),
+                    data.platform_handles[1].as_raw(),
+                    data.platform_handles[2].as_raw(),
+                ],
+                data.target_pid,
+            )),
+            ClientMessage::ContextSetupDeviceCollectionCallback(ref data) => Some((
+                [
+                    data.platform_handles[0].as_raw(),
+                    data.platform_handles[1].as_raw(),
+                    data.platform_handles[2].as_raw(),
+                ],
+                data.target_pid,
+            )),
             _ => None,
         }
     }
@@ -302,16 +313,21 @@ impl AssocRawPlatformHandle for ClientMessage {
     {
         match *self {
             ClientMessage::StreamCreated(ref mut data) => {
-                let handles = f().expect("platform_handles must be available when processing StreamCreated");
-                data.platform_handles = [PlatformHandle::new(handles[0]),
-                                         PlatformHandle::new(handles[1]),
-                                         PlatformHandle::new(handles[2])]
+                let handles =
+                    f().expect("platform_handles must be available when processing StreamCreated");
+                data.platform_handles = [
+                    PlatformHandle::new(handles[0]),
+                    PlatformHandle::new(handles[1]),
+                    PlatformHandle::new(handles[2]),
+                ]
             }
             ClientMessage::ContextSetupDeviceCollectionCallback(ref mut data) => {
                 let handles = f().expect("platform_handles must be available when processing ContextSetupDeviceCollectionCallback");
-                data.platform_handles = [PlatformHandle::new(handles[0]),
-                                         PlatformHandle::new(handles[1]),
-                                         PlatformHandle::new(handles[2])]
+                data.platform_handles = [
+                    PlatformHandle::new(handles[0]),
+                    PlatformHandle::new(handles[1]),
+                    PlatformHandle::new(handles[2]),
+                ]
             }
             _ => {}
         }

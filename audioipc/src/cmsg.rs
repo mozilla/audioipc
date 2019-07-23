@@ -123,7 +123,7 @@ impl ControlMsgBuilder {
                 slice::from_raw_parts(&cmsghdr as *const _ as *const _, mem::size_of::<cmsghdr>())
             };
             cmsg.put_slice(cmsghdr);
-            let mut cmsg = try!(align_buf(cmsg));
+            let mut cmsg = align_buf(cmsg)?;
             cmsg.put_slice(msg);
 
             Ok(cmsg)

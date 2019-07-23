@@ -51,9 +51,7 @@ mod proxy;
 
 pub use self::proxy::{ClientProxy, Response};
 
-pub fn bind_client<C>(
-    transport: C::Transport,
-) -> proxy::ClientProxy<C::Request, C::Response>
+pub fn bind_client<C>(transport: C::Transport) -> proxy::ClientProxy<C::Request, C::Response>
 where
     C: Client,
 {

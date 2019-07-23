@@ -15,10 +15,10 @@ use std::ffi::CString;
 use std::os::raw::c_void;
 use std::ptr;
 use std::sync::mpsc;
-use ClientContext;
-use {assert_not_in_callback, set_in_callback};
 use std::sync::{Arc, Mutex};
 use tokio::reactor;
+use ClientContext;
+use {assert_not_in_callback, set_in_callback};
 
 pub struct Device(ffi::cubeb_device);
 
@@ -62,11 +62,16 @@ impl rpc::Server for CallbackServer {
     type Request = CallbackReq;
     type Response = CallbackResp;
     type Future = CpuFuture<Self::Response, ()>;
-    type Transport = Framed<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Response, Self::Request>>;
+    type Transport =
+        Framed<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Response, Self::Request>>;
 
     fn process(&mut self, req: Self::Request) -> Self::Future {
         match req {
-            CallbackReq::Data { nframes, input_frame_size, output_frame_size } => {
+            CallbackReq::Data {
+                nframes,
+                input_frame_size,
+                output_frame_size,
+            } => {
                 trace!(
                     "stream_thread: Data Callback: nframes={} input_fs={} output_fs={}",
                     nframes,
@@ -149,7 +154,6 @@ impl rpc::Server for CallbackServer {
 
                     Ok(CallbackResp::DeviceChange)
                 })
-
             }
         }
     }
@@ -169,9 +173,12 @@ impl<'ctx> ClientStream<'ctx> {
         let has_output = init_params.output_stream_params.is_some();
 
         let rpc = ctx.rpc();
-        let data = try!(send_recv!(rpc, StreamInit(init_params) => StreamCreated()));
+        let data = send_recv!(rpc, StreamInit(init_params) => StreamCreated())?;
 
-        debug!("token = {}, handles = {:?}", data.token, data.platform_handles);
+        debug!(
+            "token = {}, handles = {:?}",
+            data.token, data.platform_handles
+        );
 
         let stm = data.platform_handles[0];
         let stream = unsafe { audioipc::MessageStream::from_raw_fd(stm.as_raw()) };
@@ -210,14 +217,16 @@ impl<'ctx> ClientStream<'ctx> {
         };
 
         let (wait_tx, wait_rx) = mpsc::channel();
-        ctx.handle().spawn(futures::future::lazy(move || {
-            let handle = reactor::Handle::default();
-            let stream = stream.into_tokio_ipc(&handle).unwrap();
-            let transport = framed(stream, Default::default());
-            rpc::bind_server(transport, server);
-            wait_tx.send(()).unwrap();
-            Ok(())
-        })).expect("Failed to spawn CallbackServer");
+        ctx.handle()
+            .spawn(futures::future::lazy(move || {
+                let handle = reactor::Handle::default();
+                let stream = stream.into_tokio_ipc(&handle).unwrap();
+                let transport = framed(stream, Default::default());
+                rpc::bind_server(transport, server);
+                wait_tx.send(()).unwrap();
+                Ok(())
+            }))
+            .expect("Failed to spawn CallbackServer");
         wait_rx.recv().unwrap();
 
         let stream = Box::into_raw(Box::new(ClientStream {
@@ -322,13 +331,7 @@ pub fn init(
     state_callback: ffi::cubeb_state_callback,
     user_ptr: *mut c_void,
 ) -> Result<Stream> {
-    let stm = try!(ClientStream::init(
-        ctx,
-        init_params,
-        data_callback,
-        state_callback,
-        user_ptr
-    ));
+    let stm = ClientStream::init(ctx, init_params, data_callback, state_callback, user_ptr)?;
     debug_assert_eq!(stm.user_ptr(), user_ptr);
     Ok(stm)
 }
