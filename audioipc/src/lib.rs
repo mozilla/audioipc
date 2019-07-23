@@ -175,7 +175,7 @@ impl PlatformHandle {
         std::fs::File::from_raw_fd(self.0)
     }
 
-    pub fn as_raw(&self) -> PlatformHandleType {
+    pub fn as_raw(self) -> PlatformHandleType {
         self.0
     }
 

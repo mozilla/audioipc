@@ -53,8 +53,8 @@ where
 {
     let fut = {
         let handler = ServerHandler {
-            server: server,
-            transport: transport,
+            server,
+            transport,
             in_flight: VecDeque::with_capacity(32),
         };
         Driver::new(handler)

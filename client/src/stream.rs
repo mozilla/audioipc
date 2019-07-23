@@ -76,11 +76,11 @@ impl rpc::Server for CallbackServer {
 
                 // Clone values that need to be moved into the cpu pool thread.
                 let input_shm = match self.input_shm {
-                    Some(ref shm) => unsafe { Some(shm.clone()) },
+                    Some(ref shm) => unsafe { Some(shm.unsafe_clone()) },
                     None => None,
                 };
                 let mut output_shm = match self.output_shm {
-                    Some(ref shm) => unsafe { Some(shm.clone()) },
+                    Some(ref shm) => unsafe { Some(shm.unsafe_clone()) },
                     None => None,
                 };
                 let user_ptr = self.user_ptr;
@@ -200,12 +200,12 @@ impl<'ctx> ClientStream<'ctx> {
         let device_change_cb = Arc::new(Mutex::new(null_cb));
 
         let server = CallbackServer {
-            input_shm: input_shm,
-            output_shm: output_shm,
+            input_shm,
+            output_shm,
             data_cb: data_callback,
             state_cb: state_callback,
             user_ptr: user_data,
-            cpu_pool: cpu_pool,
+            cpu_pool,
             device_change_cb: device_change_cb.clone(),
         };
 
@@ -222,9 +222,9 @@ impl<'ctx> ClientStream<'ctx> {
 
         let stream = Box::into_raw(Box::new(ClientStream {
             context: ctx,
-            user_ptr: user_ptr,
+            user_ptr,
             token: data.token,
-            device_change_cb: device_change_cb,
+            device_change_cb,
         }));
         Ok(unsafe { Stream::from_ptr(stream as *mut _) })
     }

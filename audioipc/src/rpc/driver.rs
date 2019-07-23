@@ -29,7 +29,7 @@ where
     /// Create a new rpc driver with the given service and transport.
     pub fn new(handler: T) -> Driver<T> {
         Driver {
-            handler: handler,
+            handler,
             run: true,
             is_flushed: true,
         }

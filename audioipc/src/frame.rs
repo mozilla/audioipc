@@ -149,8 +149,8 @@ where
 
 pub fn framed<A, C>(io: A, codec: C) -> Framed<A, C> {
     Framed {
-        io: io,
-        codec: codec,
+        io,
+        codec,
         read_buf: BytesMut::with_capacity(INITIAL_CAPACITY),
         write_buf: BytesMut::with_capacity(INITIAL_CAPACITY),
         frame: None,

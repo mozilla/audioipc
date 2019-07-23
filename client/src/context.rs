@@ -223,14 +223,14 @@ impl ContextOps for ClientContext {
             .unwrap_or_else(|_| "(remote error)".to_string());
         let backend_id = CString::new(backend_id).expect("backend_id query failed");
 
-        let pool = get_thread_pool(params);
+        let cpu_pool = get_thread_pool(params);
 
         let ctx = Box::new(ClientContext {
             _ops: &CLIENT_OPS as *const _,
-            rpc: rpc,
-            core: core,
-            cpu_pool: pool,
-            backend_id: backend_id,
+            rpc,
+            core,
+            cpu_pool,
+            backend_id,
             device_collection_rpc: false,
             input_device_callback: Arc::new(Mutex::new(Default::default())),
             output_device_callback: Arc::new(Mutex::new(Default::default())),
@@ -318,7 +318,7 @@ impl ContextOps for ClientContext {
         input_stream_params: Option<&StreamParamsRef>,
         output_device: DeviceId,
         output_stream_params: Option<&StreamParamsRef>,
-        latency_frame: u32,
+        latency_frames: u32,
         // These params aren't sent to the server
         data_callback: ffi::cubeb_data_callback,
         state_callback: ffi::cubeb_state_callback,
@@ -342,12 +342,12 @@ impl ContextOps for ClientContext {
         let output_stream_params = opt_stream_params(output_stream_params);
 
         let init_params = messages::StreamInitParams {
-            stream_name: stream_name,
+            stream_name,
             input_device: input_device as usize,
-            input_stream_params: input_stream_params,
+            input_stream_params,
             output_device: output_device as usize,
-            output_stream_params: output_stream_params,
-            latency_frames: latency_frame,
+            output_stream_params,
+            latency_frames,
         };
         stream::init(self, init_params, data_callback, state_callback, user_ptr)
     }

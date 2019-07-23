@@ -99,7 +99,7 @@ impl ServerStreamCallbacks {
         let r = self
             .rpc
             .call(CallbackReq::Data {
-                nframes: nframes,
+                nframes,
                 input_frame_size: self.input_frame_size as usize,
                 output_frame_size: self.output_frame_size as usize,
             }).wait();
@@ -195,7 +195,7 @@ impl rpc::Server for CubebServer {
 impl CubebServer {
     pub fn new(cb_remote: current_thread::Handle) -> Self {
         CubebServer {
-            cb_remote: cb_remote,
+            cb_remote,
             streams: StreamSlab::with_capacity(STREAM_CONN_CHUNK_SIZE),
             remote_pid: None,
             cbs: None,
@@ -230,8 +230,8 @@ impl CubebServer {
 
                 let params = cubeb::StreamParamsBuilder::new()
                     .format(format)
-                    .rate(u32::from(params.rate))
-                    .channels(u32::from(params.channels))
+                    .rate(params.rate)
+                    .channels(params.channels)
                     .layout(layout)
                     .take();
 
@@ -344,7 +344,7 @@ impl CubebServer {
                     let (dummy1, dummy2) = MessageStream::anonymous_ipc_pair().expect("need dummy IPC pair");
                     if let Ok(rpc) = rx.wait() {
                         self.cbs = Some(CubebServerCallbacks {
-                            rpc: rpc,
+                            rpc,
                         });
                         let fds = RegisterDeviceCollectionChanged {
                             platform_handles: [
@@ -558,13 +558,13 @@ unsafe extern "C" fn data_cb_c(
         let input = if input_buffer.is_null() {
             &[]
         } else {
-            let nbytes = nframes * cbs.input_frame_size as c_long;
+            let nbytes = nframes * c_long::from(cbs.input_frame_size);
             slice::from_raw_parts(input_buffer as *const u8, nbytes as usize)
         };
         let output: &mut [u8] = if output_buffer.is_null() {
             &mut []
         } else {
-            let nbytes = nframes * cbs.output_frame_size as c_long;
+            let nbytes = nframes * c_long::from(cbs.output_frame_size);
             slice::from_raw_parts_mut(output_buffer as *mut u8, nbytes as usize)
         };
         cbs.data_callback(input, output, nframes as isize) as c_long

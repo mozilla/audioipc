@@ -214,8 +214,8 @@ where
 
 pub fn framed_with_platformhandles<A, C>(io: A, codec: C) -> FramedWithPlatformHandles<A, C> {
     FramedWithPlatformHandles {
-        io: io,
-        codec: codec,
+        io,
+        codec,
         read_buf: BytesMut::with_capacity(INITIAL_CAPACITY),
         is_readable: false,
         eof: false,

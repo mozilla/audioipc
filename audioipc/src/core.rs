@@ -72,9 +72,9 @@ where
 
     Ok(CoreThread {
         inner: Some(Inner {
-            join: join,
+            join,
             shutdown: shutdown_tx,
         }),
-        handle: handle,
+        handle,
     })
 }

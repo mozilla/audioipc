@@ -111,6 +111,7 @@ impl ControlMsgBuilder {
             // that, just use a pre-zeroed struct to fill out any
             // fields we don't care about.
             let zeroed = unsafe { mem::zeroed() };
+            #[allow(clippy::needless_update)]
             let cmsghdr = cmsghdr {
                 cmsg_len: cmsg_len as _,
                 cmsg_level: level,
