@@ -84,7 +84,7 @@ struct PlatformHandleVisitor;
 impl<'de> serde::de::Visitor<'de> for PlatformHandleVisitor {
     type Value = PlatformHandle;
 
-    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("an integer between -2^63 and 2^63")
     }
 

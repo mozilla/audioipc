@@ -246,7 +246,7 @@ impl<'a> AsyncWrite for &'a UnixStream {
 }
 
 impl fmt::Debug for UnixStream {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.io.get_ref().fmt(f)
     }
 }

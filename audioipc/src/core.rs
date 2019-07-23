@@ -37,7 +37,7 @@ impl Drop for CoreThread {
 }
 
 impl fmt::Debug for CoreThread {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // f.debug_tuple("CoreThread").field(&"...").finish()
         f.debug_tuple("CoreThread").field(&self.handle).finish()
     }
