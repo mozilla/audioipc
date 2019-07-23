@@ -15,7 +15,7 @@ extern crate futures;
 #[macro_use]
 extern crate tokio_io;
 
-mod r#async;
+mod async_msg;
 #[cfg(unix)]
 mod cmsg;
 pub mod codec;
