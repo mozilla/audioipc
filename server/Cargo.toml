@@ -6,6 +6,7 @@ authors = [
         "Dan Glastonbury <dan.glastonbury@gmail.com>"
         ]
 description = "Remote cubeb server"
+edition = "2018"
 
 [dependencies]
 audioipc = { path = "../audioipc" }

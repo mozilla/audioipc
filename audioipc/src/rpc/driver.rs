@@ -4,7 +4,7 @@
 // accompanying file LICENSE for details
 
 use futures::{Async, AsyncSink, Future, Poll, Sink, Stream};
-use rpc::Handler;
+use crate::rpc::Handler;
 use std::fmt;
 use std::io;
 

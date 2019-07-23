@@ -6,6 +6,7 @@ authors = [
         "Dan Glastonbury <dan.glastonbury@gmail.com>"
         ]
 description = "Remote Cubeb IPC"
+edition = "2018"
 
 [dependencies]
 cubeb = "0.5.5"

@@ -3,7 +3,7 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details.
 
-use errors::*;
+use crate::errors::*;
 use memmap::{Mmap, MmapMut, MmapOptions};
 use std::cell::UnsafeCell;
 use std::fs::{remove_file, File, OpenOptions};

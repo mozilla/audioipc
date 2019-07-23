@@ -6,18 +6,8 @@
 #![recursion_limit = "1024"]
 #[macro_use]
 extern crate error_chain;
-
-extern crate audioipc;
-extern crate audioipc_client;
-extern crate audioipc_server as server;
-extern crate cubeb;
-extern crate env_logger;
-#[cfg(unix)]
-extern crate libc;
 #[macro_use]
 extern crate log;
-#[cfg(windows)]
-extern crate winapi;
 
 use std::process::exit;
 
@@ -27,18 +17,18 @@ mod errors {
     error_chain! {
         links {
             AudioIPC(::audioipc::errors::Error, ::audioipc::errors::ErrorKind);
-            Server(::server::errors::Error, ::server::errors::ErrorKind);
+            Server(::audioipc_server::errors::Error, ::audioipc_server::errors::ErrorKind);
         }
     }
 }
 
-use errors::*;
+use crate::errors::*;
 
 // Run with 'RUST_LOG=run,audioipc cargo run -p ipctest'
 #[cfg(unix)]
 fn run() -> Result<()> {
-    let handle = unsafe { server::audioipc_server_start(std::ptr::null(), std::ptr::null()) };
-    let fd = server::audioipc_server_new_client(handle);
+    let handle = unsafe { audioipc_server::audioipc_server_start(std::ptr::null(), std::ptr::null()) };
+    let fd = audioipc_server::audioipc_server_new_client(handle);
 
     match unsafe { libc::fork() } {
         -1 => bail!("fork() failed"),
@@ -63,7 +53,7 @@ fn run() -> Result<()> {
         },
     };
 
-    server::audioipc_server_stop(handle);
+    audioipc_server::audioipc_server_stop(handle);
 
     Ok(())
 }
@@ -75,8 +65,8 @@ fn run_client(_pid: u32, _handle: usize) -> Result<()> {
 
 #[cfg(windows)]
 fn run() -> Result<()> {
-    let handle = unsafe { server::audioipc_server_start(std::ptr::null(), std::ptr::null()) };
-    let fd = server::audioipc_server_new_client(handle);
+    let handle = unsafe { audioipc_server::audioipc_server_start(std::ptr::null(), std::ptr::null()) };
+    let fd = audioipc_server::audioipc_server_new_client(handle);
 
     let args: Vec<String> = std::env::args().collect();
 
@@ -89,7 +79,7 @@ fn run() -> Result<()> {
 
     child.wait().expect("child process wait failed");
 
-    server::audioipc_server_stop(handle);
+    audioipc_server::audioipc_server_stop(handle);
 
     Ok(())
 }

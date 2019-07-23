@@ -6,41 +6,16 @@
 #![recursion_limit = "1024"]
 #[macro_use]
 extern crate error_chain;
-
 #[macro_use]
 extern crate log;
-
 #[macro_use]
 extern crate serde_derive;
-
-extern crate bincode;
-extern crate bytes;
-extern crate cubeb;
 #[macro_use]
 extern crate futures;
-#[cfg(unix)]
-extern crate iovec;
-#[cfg(unix)]
-extern crate libc;
-extern crate memmap;
-extern crate serde;
 #[macro_use]
 extern crate tokio_io;
-#[cfg(unix)]
-extern crate mio;
-#[cfg(windows)]
-extern crate mio_named_pipes;
-#[cfg(unix)]
-extern crate mio_uds;
-extern crate tokio;
-#[cfg(windows)]
-extern crate tokio_named_pipes;
-#[cfg(unix)]
-extern crate tokio_reactor;
-#[cfg(windows)]
-extern crate winapi;
 
-mod async;
+mod r#async;
 #[cfg(unix)]
 mod cmsg;
 pub mod codec;
@@ -50,7 +25,7 @@ pub mod errors;
 #[cfg(unix)]
 pub mod fd_passing;
 #[cfg(unix)]
-pub use fd_passing as platformhandle_passing;
+pub use crate::fd_passing as platformhandle_passing;
 #[cfg(windows)]
 pub mod handle_passing;
 #[cfg(windows)]
@@ -66,7 +41,7 @@ pub mod shm;
 #[cfg(unix)]
 mod tokio_uds_stream;
 
-pub use messages::{ClientMessage, ServerMessage};
+pub use crate::messages::{ClientMessage, ServerMessage};
 use std::env::temp_dir;
 use std::path::PathBuf;
 
@@ -203,7 +178,7 @@ pub fn get_shm_path(dir: &str) -> PathBuf {
 #[cfg(unix)]
 pub mod messagestream_unix;
 #[cfg(unix)]
-pub use messagestream_unix::*;
+pub use crate::messagestream_unix::*;
 
 #[cfg(windows)]
 pub mod messagestream_win;

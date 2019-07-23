@@ -6,16 +6,8 @@
 
 #[macro_use]
 extern crate error_chain;
-
 #[macro_use]
 extern crate log;
-
-extern crate audio_thread_priority;
-extern crate audioipc;
-extern crate cubeb_core as cubeb;
-extern crate futures;
-extern crate slab;
-extern crate tokio;
 #[macro_use]
 extern crate lazy_static;
 
@@ -54,14 +46,14 @@ pub mod errors {
             AudioIPC(::audioipc::errors::Error, ::audioipc::errors::ErrorKind);
         }
         foreign_links {
-            Cubeb(::cubeb::Error);
+            Cubeb(cubeb_core::Error);
             Io(::std::io::Error);
             Canceled(::futures::sync::oneshot::Canceled);
         }
     }
 }
 
-use errors::*;
+use crate::errors::*;
 
 struct ServerWrapper {
     core_thread: core::CoreThread,

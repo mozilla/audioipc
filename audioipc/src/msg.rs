@@ -3,7 +3,7 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details.
 
-use iovec::unix as iovec;
+use iovec::unix;
 use iovec::IoVec;
 use libc;
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -68,7 +68,7 @@ pub fn recv_msg_with_flags(
     cmsg: &mut [u8],
     flags: libc::c_int,
 ) -> io::Result<(usize, usize, libc::c_int)> {
-    let slice = iovec::as_os_slice_mut(bufs);
+    let slice = unix::as_os_slice_mut(bufs);
     let len = cmp::min(<libc::c_int>::max_value() as usize, slice.len());
     let (control, controllen) = if cmsg.is_empty() {
         (ptr::null_mut(), 0)
@@ -96,7 +96,7 @@ pub fn send_msg_with_flags(
     cmsg: &[u8],
     flags: libc::c_int,
 ) -> io::Result<usize> {
-    let slice = iovec::as_os_slice(bufs);
+    let slice = unix::as_os_slice(bufs);
     let len = cmp::min(<libc::c_int>::max_value() as usize, slice.len());
     let (control, controllen) = if cmsg.is_empty() {
         (ptr::null_mut(), 0)

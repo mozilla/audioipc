@@ -4,15 +4,10 @@
 // accompanying file LICENSE for details.
 #![warn(unused_extern_crates)]
 
-extern crate audioipc;
 #[macro_use]
 extern crate cubeb_backend;
-extern crate futures;
-extern crate futures_cpupool;
 #[macro_use]
 extern crate log;
-extern crate audio_thread_priority;
-extern crate tokio;
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
@@ -25,12 +20,12 @@ mod stream;
 
 use audio_thread_priority::RtPriorityHandle;
 use audioipc::{PlatformHandle, PlatformHandleType};
-use context::ClientContext;
+use crate::context::ClientContext;
 use cubeb_backend::{capi, ffi};
 use futures_cpupool::CpuPool;
 use std::os::raw::{c_char, c_int};
 use std::sync::Mutex;
-use stream::ClientStream;
+use crate::stream::ClientStream;
 cfg_if! {
     if #[cfg(target_os = "linux")] {
         use std::sync::{Arc, Condvar};
