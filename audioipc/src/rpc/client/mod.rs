@@ -61,7 +61,7 @@ where
 
     let fut = {
         let handler = ClientHandler::<C> {
-            transport: transport,
+            transport,
             requests: rx,
             in_flight: VecDeque::with_capacity(32),
         };

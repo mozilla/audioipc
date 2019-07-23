@@ -101,20 +101,20 @@ fn run() -> Result<ServerWrapper> {
     );
 
     Ok(ServerWrapper {
-        core_thread: core_thread,
-        callback_thread: callback_thread,
+        core_thread,
+        callback_thread,
     })
 }
 
 #[no_mangle]
-pub extern "C" fn audioipc_server_start(context_name: *const std::os::raw::c_char,
-                                        backend_name: *const std::os::raw::c_char) -> *mut c_void {
+pub unsafe extern "C" fn audioipc_server_start(context_name: *const std::os::raw::c_char,
+                                               backend_name: *const std::os::raw::c_char) -> *mut c_void {
     let mut params = G_CUBEB_CONTEXT_PARAMS.lock().unwrap();
     if !context_name.is_null() {
-        params.context_name = unsafe { CStr::from_ptr(context_name) }.to_owned();
+        params.context_name = CStr::from_ptr(context_name).to_owned();
     }
     if !backend_name.is_null() {
-        let backend_string = unsafe { CStr::from_ptr(backend_name) }.to_owned();
+        let backend_string = CStr::from_ptr(backend_name).to_owned();
         params.backend_name = Some(backend_string);
     }
     match run() {

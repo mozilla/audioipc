@@ -74,7 +74,7 @@ impl SharedMemSlice {
     ///
     /// The underlying memory map is shared, and thus the caller must
     /// ensure that the memory is not illegally aliased.
-    pub unsafe fn clone(&self) -> Self {
+    pub unsafe fn unsafe_clone(&self) -> Self {
         SharedMemSlice {
             mmap: self.mmap.clone(),
         }
@@ -146,7 +146,7 @@ impl SharedMemMutSlice {
     ///
     /// The underlying memory map is shared, and thus the caller must
     /// ensure that the memory is not illegally aliased.
-    pub unsafe fn clone(&self) -> Self {
+    pub unsafe fn unsafe_clone(&self) -> Self {
         SharedMemMutSlice {
             mmap: self.mmap.clone(),
         }
@@ -156,7 +156,7 @@ impl SharedMemMutSlice {
         unsafe { &*self.mmap.get() }
     }
 
-    fn inner_mut(&self) -> &mut MmapMut {
+    fn inner_mut(&mut self) -> &mut MmapMut {
         unsafe { &mut *self.mmap.get() }
     }
 }
