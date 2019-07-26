@@ -39,16 +39,14 @@ fn error(error: cubeb::Error) -> ClientMessage {
 
 struct CubebDeviceCollectionManager {
     servers: Vec<Rc<RefCell<CubebServerCallbacks>>>,
-    input_registered: bool,
-    output_registered: bool,
+    devtype: cubeb::DeviceType,
 }
 
 impl CubebDeviceCollectionManager {
     fn new() -> CubebDeviceCollectionManager {
         CubebDeviceCollectionManager {
             servers: Vec::new(),
-            input_registered: false,
-            output_registered: false,
+            devtype: cubeb::DeviceType::empty(),
         }
     }
 
@@ -75,75 +73,52 @@ impl CubebDeviceCollectionManager {
         for s in &self.servers {
             devtype |= s.borrow().devtype;
         }
-        match (
-            devtype.contains(cubeb::DeviceType::INPUT),
-            self.input_registered,
-        ) {
-            (true, false) => self.internal_register(context, cubeb::DeviceType::INPUT),
-            (false, true) => self.internal_unregister(context, cubeb::DeviceType::INPUT),
-            _ => {}
-        }
-        match (
-            devtype.contains(cubeb::DeviceType::OUTPUT),
-            self.output_registered,
-        ) {
-            (true, false) => self.internal_register(context, cubeb::DeviceType::OUTPUT),
-            (false, true) => self.internal_unregister(context, cubeb::DeviceType::OUTPUT),
-            _ => {}
-        }
-    }
-
-    fn internal_register(&mut self, context: &cubeb::Context, devtype: cubeb::DeviceType) {
-        let user_ptr = self as *const CubebDeviceCollectionManager as *mut c_void;
-        unsafe {
-            if devtype.contains(cubeb::DeviceType::INPUT) {
-                assert_eq!(self.input_registered, false);
-                context
-                    .register_device_collection_changed(
-                        cubeb::DeviceType::INPUT,
-                        Some(device_collection_changed_input_cb_c),
-                        user_ptr,
-                    )
-                    .expect("input devcol register failed");
-                self.input_registered = true;
-            }
-            if devtype.contains(cubeb::DeviceType::OUTPUT) {
-                assert_eq!(self.output_registered, false);
-                context
-                    .register_device_collection_changed(
-                        cubeb::DeviceType::OUTPUT,
-                        Some(device_collection_changed_output_cb_c),
-                        user_ptr,
-                    )
-                    .expect("output devcol register failed");
-                self.output_registered = true;
+        for &dir in &[cubeb::DeviceType::INPUT, cubeb::DeviceType::OUTPUT] {
+            match (devtype.contains(dir), self.devtype.contains(dir)) {
+                (true, false) => self.internal_register(context, dir, true),
+                (false, true) => self.internal_register(context, dir, false),
+                _ => {}
             }
         }
     }
 
-    fn internal_unregister(&mut self, context: &cubeb::Context, devtype: cubeb::DeviceType) {
-        unsafe {
-            if devtype.contains(cubeb::DeviceType::INPUT) {
-                assert_eq!(self.input_registered, true);
-                context
-                    .register_device_collection_changed(
-                        cubeb::DeviceType::INPUT,
-                        None,
-                        std::ptr::null_mut(),
-                    )
-                    .expect("input devcol unregister failed");
-                self.input_registered = false;
-            }
-            if devtype.contains(cubeb::DeviceType::OUTPUT) {
-                assert_eq!(self.output_registered, true);
-                context
-                    .register_device_collection_changed(
-                        cubeb::DeviceType::OUTPUT,
-                        None,
-                        std::ptr::null_mut(),
-                    )
-                    .expect("output devcol unregister failed");
-                self.output_registered = false;
+    fn internal_register(
+        &mut self,
+        context: &cubeb::Context,
+        devtype: cubeb::DeviceType,
+        enable: bool,
+    ) {
+        let user_ptr = if enable {
+            self as *const CubebDeviceCollectionManager as *mut c_void
+        } else {
+            std::ptr::null_mut()
+        };
+        for &(dir, cb) in &[
+            (
+                cubeb::DeviceType::INPUT,
+                device_collection_changed_input_cb_c as _,
+            ),
+            (
+                cubeb::DeviceType::OUTPUT,
+                device_collection_changed_output_cb_c as _,
+            ),
+        ] {
+            if devtype.contains(dir) {
+                assert_eq!(self.devtype.contains(dir), !enable);
+                unsafe {
+                    context
+                        .register_device_collection_changed(
+                            dir,
+                            if enable { Some(cb) } else { None },
+                            user_ptr,
+                        )
+                        .expect("devcol register failed");
+                }
+                if enable {
+                    self.devtype.insert(dir);
+                } else {
+                    self.devtype.remove(dir);
+                }
             }
         }
     }
