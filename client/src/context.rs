@@ -5,6 +5,8 @@
 
 use crate::assert_not_in_callback;
 use crate::stream;
+#[cfg(target_os = "linux")]
+use crate::G_THREAD_POOL;
 use crate::{ClientStream, CpuPoolInitParams, CPUPOOL_INIT_PARAMS, G_SERVER_FD};
 use audio_thread_priority::promote_current_thread_to_real_time;
 use audioipc::codec::LengthDelimitedCodec;
@@ -29,11 +31,6 @@ use std::thread;
 use std::{fmt, io, mem, ptr};
 use tokio::reactor;
 use tokio::runtime::current_thread;
-cfg_if! {
-    if #[cfg(target_os = "linux")] {
-        use crate::G_THREAD_POOL;
-    }
-}
 
 struct CubebClient;
 
@@ -118,23 +115,21 @@ fn create_thread_pool(init_params: CpuPoolInitParams) -> CpuPool {
         .create()
 }
 
-cfg_if! {
-    if #[cfg(target_os = "linux")] {
-        fn get_thread_pool(init_params: CpuPoolInitParams) -> CpuPool {
-            let mut guard = G_THREAD_POOL.lock().unwrap();
-            if guard.is_some() {
-                // Sandbox is on, and the thread pool was created earlier, before the lockdown.
-                guard.take().unwrap()
-            } else {
-                // Sandbox is off, let's create the pool now, promoting the threads will work.
-                create_thread_pool(init_params)
-            }
-        }
+#[cfg(target_os = "linux")]
+fn get_thread_pool(init_params: CpuPoolInitParams) -> CpuPool {
+    let mut guard = G_THREAD_POOL.lock().unwrap();
+    if guard.is_some() {
+        // Sandbox is on, and the thread pool was created earlier, before the lockdown.
+        guard.take().unwrap()
     } else {
-        fn get_thread_pool(init_params: CpuPoolInitParams) -> CpuPool {
-            create_thread_pool(init_params)
-        }
+        // Sandbox is off, let's create the pool now, promoting the threads will work.
+        create_thread_pool(init_params)
     }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn get_thread_pool(init_params: CpuPoolInitParams) -> CpuPool {
+    create_thread_pool(init_params)
 }
 
 #[derive(Default)]
