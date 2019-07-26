@@ -31,7 +31,7 @@ use tokio::reactor;
 use tokio::runtime::current_thread;
 cfg_if! {
     if #[cfg(target_os = "linux")] {
-        use {G_THREAD_POOL};
+        use crate::G_THREAD_POOL;
     }
 }
 
