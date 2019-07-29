@@ -82,10 +82,8 @@ impl CubebDeviceCollectionManager {
             devtype |= s.borrow().devtype;
         }
         for &dir in &[cubeb::DeviceType::INPUT, cubeb::DeviceType::OUTPUT] {
-            match (devtype.contains(dir), self.devtype.contains(dir)) {
-                (true, false) => self.internal_register(context, dir, true)?,
-                (false, true) => self.internal_register(context, dir, false)?,
-                _ => {}
+            if devtype.contains(dir) != self.devtype.contains(dir) {
+                self.internal_register(context, dir, devtype.contains(dir))?;
             }
         }
         Ok(())
