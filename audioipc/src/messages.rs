@@ -205,7 +205,6 @@ pub enum ServerMessage {
     StreamGetPosition(usize),
     StreamGetLatency(usize),
     StreamSetVolume(usize, f32),
-    StreamSetPanning(usize, f32),
     StreamGetCurrentDevice(usize),
     StreamRegisterDeviceChangeCallback(usize, bool),
 }
@@ -234,7 +233,6 @@ pub enum ClientMessage {
     StreamPosition(u64),
     StreamLatency(u32),
     StreamVolumeSet,
-    StreamPanningSet,
     StreamCurrentDevice(Device),
     StreamRegisterDeviceChangeCallback,
 
