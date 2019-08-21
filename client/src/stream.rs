@@ -284,12 +284,6 @@ impl<'ctx> StreamOps for ClientStream<'ctx> {
         send_recv!(rpc, StreamSetVolume(self.token, volume) => StreamVolumeSet)
     }
 
-    fn set_panning(&mut self, panning: f32) -> Result<()> {
-        assert_not_in_callback();
-        let rpc = self.context.rpc();
-        send_recv!(rpc, StreamSetPanning(self.token, panning) => StreamPanningSet)
-    }
-
     fn current_device(&mut self) -> Result<&DeviceRef> {
         assert_not_in_callback();
         let rpc = self.context.rpc();

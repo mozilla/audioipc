@@ -442,12 +442,6 @@ impl CubebServer {
                 .map(|_| ClientMessage::StreamVolumeSet)
                 .unwrap_or_else(error),
 
-            ServerMessage::StreamSetPanning(stm_tok, panning) => self.streams[stm_tok]
-                .stream
-                .set_panning(panning)
-                .map(|_| ClientMessage::StreamPanningSet)
-                .unwrap_or_else(error),
-
             ServerMessage::StreamGetCurrentDevice(stm_tok) => self.streams[stm_tok]
                 .stream
                 .current_device()
