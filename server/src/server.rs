@@ -283,7 +283,7 @@ impl Drop for ServerStream {
     }
 }
 
-type StreamSlab = slab::Slab<ServerStream, usize>;
+type StreamSlab = slab::Slab<ServerStream>;
 
 struct CubebServerCallbacks {
     rpc: rpc::ClientProxy<DeviceCollectionReq, DeviceCollectionResp>,
@@ -647,7 +647,7 @@ impl CubebServer {
                     user_ptr,
                 )
                 .and_then(|stream| {
-                    if !self.streams.has_available() {
+                    if self.streams.len() == self.streams.capacity() {
                         trace!(
                             "server connection ran out of stream slots. reserving {} more.",
                             STREAM_CONN_CHUNK_SIZE
@@ -655,25 +655,17 @@ impl CubebServer {
                         self.streams.reserve_exact(STREAM_CONN_CHUNK_SIZE);
                     }
 
-                    let stm_tok = match self.streams.vacant_entry() {
-                        Some(entry) => {
-                            debug!("Registering stream {:?}", entry.index(),);
+                    let entry = self.streams.vacant_entry();
+                    let key = entry.key();
+                    debug!("Registering stream {:?}", key);
 
-                            entry
-                                .insert(ServerStream {
-                                    stream: ManuallyDrop::new(stream),
-                                    cbs: ManuallyDrop::new(cbs),
-                                })
-                                .index()
-                        }
-                        None => {
-                            // TODO: Turn into error
-                            panic!("Failed to insert stream into slab. No entries")
-                        }
-                    };
+                    entry.insert(ServerStream {
+                        stream: ManuallyDrop::new(stream),
+                        cbs: ManuallyDrop::new(cbs),
+                    });
 
                     Ok(ClientMessage::StreamCreated(StreamCreate {
-                        token: stm_tok,
+                        token: key,
                         platform_handles: [
                             PlatformHandle::from(stm1),
                             PlatformHandle::from(input_file),

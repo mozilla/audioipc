@@ -15,7 +15,7 @@ cubeb-core = "0.6.0"
 futures = "0.1.18"
 lazy_static = "1.2.0"
 log = "0.4"
-slab = "0.3.0"
+slab = "0.4"
 tokio = "0.1"
 
 [dependencies.error-chain]
