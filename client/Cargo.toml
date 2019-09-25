@@ -14,6 +14,5 @@ audioipc = { path="../audioipc" }
 cubeb-backend = "0.6.0"
 futures = { version="0.1.18", default-features=false, features=["use_std"] }
 futures-cpupool = { version="0.1.8", default-features=false }
-lazy_static = "1.2.0"
 log = "0.4"
 tokio = "0.1"

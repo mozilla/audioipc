@@ -6,9 +6,11 @@
 use crate::assert_not_in_callback;
 use crate::stream;
 #[cfg(target_os = "linux")]
-use crate::G_THREAD_POOL;
-use crate::{ClientStream, CpuPoolInitParams, CPUPOOL_INIT_PARAMS, G_SERVER_FD};
+use crate::{ClientStream, G_SERVER_FD, CPUPOOL_INIT_PARAMS};
+#[cfg(not(target_os = "linux"))]
 use audio_thread_priority::promote_current_thread_to_real_time;
+#[cfg(target_os = "linux")]
+use audio_thread_priority::get_current_thread_info;
 use audioipc::codec::LengthDelimitedCodec;
 use audioipc::frame::{framed, Framed};
 use audioipc::platformhandle_passing::{framed_with_platformhandles, FramedWithPlatformHandles};
@@ -90,7 +92,30 @@ fn open_server_stream() -> io::Result<audioipc::MessageStream> {
     }
 }
 
-fn register_thread(callback: Option<extern "C" fn(*const ::std::os::raw::c_char)>) {
+#[cfg(target_os = "linux")]
+fn promote_thread(rpc: &rpc::ClientProxy<ServerMessage, ClientMessage>)
+{
+    match get_current_thread_info() {
+        Ok(info) => {
+            let bytes = info.serialize();
+            match send_recv!(rpc, PromoteThreadToRealTime(bytes) => ThreadPromoted) {
+                Ok(_) => {
+                    info!("Audio thread promoted to real-time.");
+                }
+                Err(_) => {
+                    warn!("Could not promote thread to real-time.");
+                }
+            };
+        }
+        Err(_) => {
+            warn!("Could not remotely promote thread to RT.");
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn promote_thread()
+{
     match promote_current_thread_to_real_time(0, 48000) {
         Ok(_) => {
             info!("Audio thread promoted to real-time.");
@@ -99,6 +124,9 @@ fn register_thread(callback: Option<extern "C" fn(*const ::std::os::raw::c_char)
             warn!("Could not promote thread to real-time.");
         }
     }
+}
+
+fn register_thread(callback: Option<extern "C" fn(*const ::std::os::raw::c_char)>) {
     if let Some(func) = callback {
         let thr = thread::current();
         let name = CString::new(thr.name().unwrap()).unwrap();
@@ -106,30 +134,10 @@ fn register_thread(callback: Option<extern "C" fn(*const ::std::os::raw::c_char)
     }
 }
 
-fn create_thread_pool(init_params: CpuPoolInitParams) -> CpuPool {
-    futures_cpupool::Builder::new()
-        .name_prefix("AudioIPC")
-        .after_start(move || register_thread(init_params.thread_create_callback))
-        .pool_size(init_params.pool_size)
-        .stack_size(init_params.stack_size)
-        .create()
-}
-
-#[cfg(target_os = "linux")]
-fn get_thread_pool(init_params: CpuPoolInitParams) -> CpuPool {
-    let mut guard = G_THREAD_POOL.lock().unwrap();
-    if guard.is_some() {
-        // Sandbox is on, and the thread pool was created earlier, before the lockdown.
-        guard.take().unwrap()
-    } else {
-        // Sandbox is off, let's create the pool now, promoting the threads will work.
-        create_thread_pool(init_params)
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-fn get_thread_pool(init_params: CpuPoolInitParams) -> CpuPool {
-    create_thread_pool(init_params)
+fn promote_and_register_thread(rpc: &rpc::ClientProxy<ServerMessage, ClientMessage>,
+    callback: Option<extern "C" fn(*const ::std::os::raw::c_char)>) {
+    promote_thread(rpc);
+    register_thread(callback);
 }
 
 #[derive(Default)]
@@ -219,6 +227,7 @@ impl ContextOps for ClientContext {
         .map_err(|_| Error::default())?;
 
         let rpc = rx_rpc.recv().map_err(|_| Error::default())?;
+        let rpc2 = rpc.clone();
 
         // Don't let errors bubble from here.  Later calls against this context
         // will return errors the caller expects to handle.
@@ -228,7 +237,12 @@ impl ContextOps for ClientContext {
             .unwrap_or_else(|_| "(remote error)".to_string());
         let backend_id = CString::new(backend_id).expect("backend_id query failed");
 
-        let cpu_pool = get_thread_pool(params);
+        let cpu_pool = futures_cpupool::Builder::new()
+            .name_prefix("AudioIPC")
+            .after_start(move || promote_and_register_thread(&rpc2, params.thread_create_callback))
+            .pool_size(params.pool_size)
+            .stack_size(params.stack_size)
+            .create();
 
         let ctx = Box::new(ClientContext {
             _ops: &CLIENT_OPS as *const _,

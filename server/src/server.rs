@@ -30,6 +30,8 @@ use std::rc::Rc;
 use std::{panic, slice};
 use tokio::reactor;
 use tokio::runtime::current_thread;
+#[cfg(target_os = "linux")]
+use audio_thread_priority::{RtPriorityThreadInfo, promote_thread_to_real_time};
 
 use crate::errors::*;
 
@@ -509,14 +511,29 @@ impl CubebServer {
                 }
             }
 
-            ServerMessage::ContextRegisterDeviceCollectionChanged(device_type, enable) => self
-                .process_register_device_collection_changed(
+            ServerMessage::ContextRegisterDeviceCollectionChanged(device_type, enable) => {
+                self.process_register_device_collection_changed(
                     context,
                     manager,
                     cubeb::DeviceType::from_bits_truncate(device_type),
                     enable,
                 )
-                .unwrap_or_else(error),
+                .unwrap_or_else(error)
+            },
+
+            ServerMessage::PromoteThreadToRealTime(thread_info) => {
+                let info = RtPriorityThreadInfo::deserialize(thread_info);
+                match promote_thread_to_real_time(info, 0, 48000) {
+                    Ok(_) => {
+                        info!("Promotion of content process thread to real-time OK");
+                    }
+                    Err(_) => {
+                        warn!("Promotion of content process thread to real-time error");
+                    }
+                }
+                ClientMessage::ThreadPromoted
+            },
+
         };
 
         trace!("process_msg: req={:?}, resp={:?}", msg, resp);
