@@ -9,6 +9,8 @@ use cubeb::{self, ffi};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_uint};
 use std::ptr;
+#[cfg(target_os = "linux")]
+use audio_thread_priority::RtPriorityThreadInfo;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Device {
@@ -207,6 +209,9 @@ pub enum ServerMessage {
     StreamSetVolume(usize, f32),
     StreamGetCurrentDevice(usize),
     StreamRegisterDeviceChangeCallback(usize, bool),
+
+    #[cfg(target_os = "linux")]
+    PromoteThreadToRealTime([u8; std::mem::size_of::<RtPriorityThreadInfo>()]),
 }
 
 // Server -> Client messages.
@@ -235,6 +240,9 @@ pub enum ClientMessage {
     StreamVolumeSet,
     StreamCurrentDevice(Device),
     StreamRegisterDeviceChangeCallback,
+
+    #[cfg(target_os = "linux")]
+    ThreadPromoted,
 
     Error(c_int),
 }
