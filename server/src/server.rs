@@ -521,6 +521,7 @@ impl CubebServer {
                 .unwrap_or_else(error)
             },
 
+            #[cfg(target_os = "linux")]
             ServerMessage::PromoteThreadToRealTime(thread_info) => {
                 let info = RtPriorityThreadInfo::deserialize(thread_info);
                 match promote_thread_to_real_time(info, 0, 48000) {
