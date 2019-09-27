@@ -5,7 +5,6 @@
 
 use crate::assert_not_in_callback;
 use crate::stream;
-#[cfg(target_os = "linux")]
 use crate::{ClientStream, G_SERVER_FD, CPUPOOL_INIT_PARAMS};
 #[cfg(not(target_os = "linux"))]
 use audio_thread_priority::promote_current_thread_to_real_time;
@@ -114,7 +113,7 @@ fn promote_thread(rpc: &rpc::ClientProxy<ServerMessage, ClientMessage>)
 }
 
 #[cfg(not(target_os = "linux"))]
-fn promote_thread()
+fn promote_thread(_rpc: &rpc::ClientProxy<ServerMessage, ClientMessage>)
 {
     match promote_current_thread_to_real_time(0, 48000) {
         Ok(_) => {

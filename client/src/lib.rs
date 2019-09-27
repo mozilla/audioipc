@@ -16,7 +16,6 @@ mod stream;
 
 use crate::context::ClientContext;
 use crate::stream::ClientStream;
-#[cfg(target_os = "linux")]
 use audioipc::{PlatformHandle, PlatformHandleType};
 use cubeb_backend::{capi, ffi};
 use std::os::raw::{c_char, c_int};
