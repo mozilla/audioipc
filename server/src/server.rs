@@ -169,6 +169,7 @@ where
             } else {
                 None
             };
+            audioipc::server_platform_init();
             let context = cubeb::Context::init(context_name, backend_name);
             let manager = CubebDeviceCollectionManager::new();
             *state = Some(CubebContextState { context, manager });
