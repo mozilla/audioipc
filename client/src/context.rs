@@ -3,7 +3,7 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details
 
-use crate::assert_not_in_callback;
+use crate::{assert_not_in_callback, run_in_callback};
 use crate::stream;
 use crate::{ClientStream, G_SERVER_FD, CPUPOOL_INIT_PARAMS};
 #[cfg(not(target_os = "linux"))]
@@ -178,14 +178,17 @@ impl rpc::Server for DeviceCollectionServer {
                 };
 
                 self.cpu_pool.spawn_fn(move || {
-                    if devtype.contains(cubeb_backend::DeviceType::INPUT) {
-                        unsafe { input_cb.unwrap()(ptr::null_mut(), input_user_ptr as *mut c_void) }
-                    }
-                    if devtype.contains(cubeb_backend::DeviceType::OUTPUT) {
-                        unsafe {
-                            output_cb.unwrap()(ptr::null_mut(), output_user_ptr as *mut c_void)
+                    run_in_callback(|| {
+
+                        if devtype.contains(cubeb_backend::DeviceType::INPUT) {
+                            unsafe { input_cb.unwrap()(ptr::null_mut(), input_user_ptr as *mut c_void) }
                         }
-                    }
+                        if devtype.contains(cubeb_backend::DeviceType::OUTPUT) {
+                            unsafe {
+                                output_cb.unwrap()(ptr::null_mut(), output_user_ptr as *mut c_void)
+                            }
+                        }
+                    });
 
                     Ok(DeviceCollectionResp::DeviceChange)
                 })
