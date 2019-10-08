@@ -61,6 +61,19 @@ fn set_in_callback(in_callback: bool) {
     });
 }
 
+fn run_in_callback<F, R>(f: F) -> R
+where
+    F: FnOnce() -> R
+{
+    set_in_callback(true);
+
+    let r = f();
+
+    set_in_callback(false);
+
+    r
+}
+
 fn assert_not_in_callback() {
     IN_CALLBACK.with(|b| {
         assert_eq!(*b.borrow(), false);
