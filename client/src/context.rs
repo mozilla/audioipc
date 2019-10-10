@@ -97,14 +97,8 @@ fn promote_thread(rpc: &rpc::ClientProxy<ServerMessage, ClientMessage>)
     match get_current_thread_info() {
         Ok(info) => {
             let bytes = info.serialize();
-            match send_recv!(rpc, PromoteThreadToRealTime(bytes) => ThreadPromoted) {
-                Ok(_) => {
-                    info!("Audio thread promoted to real-time.");
-                }
-                Err(_) => {
-                    warn!("Could not promote thread to real-time.");
-                }
-            };
+            // Don't wait for the response, this is on the callback thread, which must not block.
+            rpc.call(ServerMessage::PromoteThreadToRealTime(bytes));
         }
         Err(_) => {
             warn!("Could not remotely promote thread to RT.");
