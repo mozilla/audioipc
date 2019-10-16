@@ -597,10 +597,13 @@ impl CubebServer {
 
         let (stm1, stm2) = MessageStream::anonymous_ipc_pair()?;
         debug!("Created callback pair: {:?}-{:?}", stm1, stm2);
+        let mut shm_path = audioipc::get_shm_path();
+        shm_path.set_extension("input");
         let (input_shm, input_file) =
-            SharedMemWriter::new(&audioipc::get_shm_path("input"), audioipc::SHM_AREA_SIZE)?;
+            SharedMemWriter::new(&shm_path, audioipc::SHM_AREA_SIZE)?;
+        shm_path.set_extension("output");
         let (output_shm, output_file) =
-            SharedMemReader::new(&audioipc::get_shm_path("output"), audioipc::SHM_AREA_SIZE)?;
+            SharedMemReader::new(&shm_path, audioipc::SHM_AREA_SIZE)?;
 
         // This code is currently running on the Client/Server RPC
         // handling thread.  We need to move the registration of the
