@@ -80,7 +80,7 @@ impl ClientContext {
 // TODO: encapsulate connect, etc inside audioipc.
 fn open_server_stream() -> io::Result<audioipc::MessageStream> {
     unsafe {
-        if let Some(fd) = G_SERVER_FD {
+        if let Some(fd) = G_SERVER_FD.take() {
             return Ok(audioipc::MessageStream::from_raw_fd(fd.as_raw()));
         }
 
@@ -434,8 +434,8 @@ impl Drop for ClientContext {
         debug!("ClientContext dropped...");
         let _ = send_recv!(self.rpc(), ClientDisconnect => ClientDisconnected);
         unsafe {
-            if G_SERVER_FD.is_some() {
-                G_SERVER_FD.take().unwrap().close();
+            if let Some(fd) = G_SERVER_FD.take() {
+                fd.close();
             }
         }
     }
