@@ -5,7 +5,7 @@
 
 use crate::{assert_not_in_callback, run_in_callback};
 use crate::stream;
-use crate::{ClientStream, G_SERVER_FD, CPUPOOL_INIT_PARAMS};
+use crate::{ClientStream, AUDIOIPC_INIT_PARAMS};
 #[cfg(not(target_os = "linux"))]
 use audio_thread_priority::promote_current_thread_to_real_time;
 #[cfg(target_os = "linux")]
@@ -74,20 +74,6 @@ impl ClientContext {
     #[doc(hidden)]
     pub fn cpu_pool(&self) -> CpuPool {
         self.cpu_pool.clone()
-    }
-}
-
-// TODO: encapsulate connect, etc inside audioipc.
-fn open_server_stream() -> io::Result<audioipc::MessageStream> {
-    unsafe {
-        if let Some(fd) = G_SERVER_FD.take() {
-            return Ok(audioipc::MessageStream::from_raw_fd(fd.as_raw()));
-        }
-
-        Err(io::Error::new(
-            io::ErrorKind::Other,
-            "Failed to get server connection.",
-        ))
     }
 }
 
@@ -209,15 +195,16 @@ impl ContextOps for ClientContext {
 
         let (tx_rpc, rx_rpc) = mpsc::channel();
 
-        let params = CPUPOOL_INIT_PARAMS.with(|p| p.replace(None).unwrap());
+        let params = AUDIOIPC_INIT_PARAMS.with(|p| p.replace(None).unwrap());
+
+        let server_stream = unsafe { audioipc::MessageStream::from_raw_fd(params.server_connection) };
 
         let core = core::spawn_thread("AudioIPC Client RPC", move || {
             let handle = reactor::Handle::default();
 
             register_thread(params.thread_create_callback);
 
-            open_server_stream()
-                .and_then(|stream| stream.into_tokio_ipc(&handle))
+            server_stream.into_tokio_ipc(&handle)
                 .and_then(|stream| bind_and_send_client(stream, &tx_rpc))
         })
         .map_err(|_| Error::default())?;
@@ -433,11 +420,6 @@ impl Drop for ClientContext {
     fn drop(&mut self) {
         debug!("ClientContext dropped...");
         let _ = send_recv!(self.rpc(), ClientDisconnect => ClientDisconnected);
-        unsafe {
-            if let Some(fd) = G_SERVER_FD.take() {
-                fd.close();
-            }
-        }
     }
 }
 
