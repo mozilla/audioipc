@@ -152,8 +152,7 @@ struct CubebContextState {
     manager: CubebDeviceCollectionManager,
 }
 
-type ContextKey = RefCell<Option<CubebContextState>>;
-thread_local!(static CONTEXT_KEY:ContextKey = RefCell::new(None));
+thread_local!(static CONTEXT_KEY: RefCell<Option<CubebContextState>> = RefCell::new(None));
 
 fn with_local_context<T, F>(f: F) -> T
 where
