@@ -3,6 +3,8 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details
 
+#[cfg(target_os = "linux")]
+use audio_thread_priority::{promote_thread_to_real_time, RtPriorityThreadInfo};
 use audioipc;
 use audioipc::codec::LengthDelimitedCodec;
 use audioipc::frame::{framed, Framed};
@@ -30,8 +32,6 @@ use std::rc::Rc;
 use std::{panic, slice};
 use tokio::reactor;
 use tokio::runtime::current_thread;
-#[cfg(target_os = "linux")]
-use audio_thread_priority::{RtPriorityThreadInfo, promote_thread_to_real_time};
 
 use crate::errors::*;
 
@@ -514,15 +514,14 @@ impl CubebServer {
                 }
             }
 
-            ServerMessage::ContextRegisterDeviceCollectionChanged(device_type, enable) => {
-                self.process_register_device_collection_changed(
+            ServerMessage::ContextRegisterDeviceCollectionChanged(device_type, enable) => self
+                .process_register_device_collection_changed(
                     context,
                     manager,
                     cubeb::DeviceType::from_bits_truncate(device_type),
                     enable,
                 )
-                .unwrap_or_else(error)
-            },
+                .unwrap_or_else(error),
 
             #[cfg(target_os = "linux")]
             ServerMessage::PromoteThreadToRealTime(thread_info) => {
@@ -536,8 +535,7 @@ impl CubebServer {
                     }
                 }
                 ClientMessage::ThreadPromoted
-            },
-
+            }
         };
 
         trace!("process_msg: req={:?}, resp={:?}", msg, resp);
@@ -601,11 +599,9 @@ impl CubebServer {
         debug!("Created callback pair: {:?}-{:?}", stm1, stm2);
         let mut shm_path = audioipc::get_shm_path();
         shm_path.set_extension("input");
-        let (input_shm, input_file) =
-            SharedMemWriter::new(&shm_path, audioipc::SHM_AREA_SIZE)?;
+        let (input_shm, input_file) = SharedMemWriter::new(&shm_path, audioipc::SHM_AREA_SIZE)?;
         shm_path.set_extension("output");
-        let (output_shm, output_file) =
-            SharedMemReader::new(&shm_path, audioipc::SHM_AREA_SIZE)?;
+        let (output_shm, output_file) = SharedMemReader::new(&shm_path, audioipc::SHM_AREA_SIZE)?;
 
         // This code is currently running on the Client/Server RPC
         // handling thread.  We need to move the registration of the
