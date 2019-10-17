@@ -44,7 +44,7 @@ fn set_in_callback(in_callback: bool) {
 
 fn run_in_callback<F, R>(f: F) -> R
 where
-    F: FnOnce() -> R
+    F: FnOnce() -> R,
 {
     set_in_callback(true);
 

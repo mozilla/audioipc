@@ -196,17 +196,15 @@ pub use messagestream_win::*;
 
 #[cfg(windows)]
 pub fn server_platform_init() {
+    use winapi::shared::winerror;
     use winapi::um::combaseapi;
     use winapi::um::objbase;
-    use winapi::shared::winerror;
 
     unsafe {
-        let r = combaseapi::CoInitializeEx(std::ptr::null_mut(),
-                                           objbase::COINIT_MULTITHREADED);
+        let r = combaseapi::CoInitializeEx(std::ptr::null_mut(), objbase::COINIT_MULTITHREADED);
         assert!(winerror::SUCCEEDED(r));
     }
 }
 
 #[cfg(unix)]
-pub fn server_platform_init() {
-}
+pub fn server_platform_init() {}

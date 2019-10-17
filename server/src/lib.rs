@@ -16,13 +16,13 @@ use audioipc::rpc;
 use audioipc::{MessageStream, PlatformHandle, PlatformHandleType};
 use futures::sync::oneshot;
 use futures::Future;
+use once_cell::sync::Lazy;
 use std::error::Error;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_void;
 use std::ptr;
 use std::sync::Mutex;
 use tokio::reactor;
-use once_cell::sync::Lazy;
 
 mod server;
 
