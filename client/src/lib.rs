@@ -35,6 +35,8 @@ pub struct AudioIpcInitParams {
     pub thread_create_callback: Option<extern "C" fn(*const ::std::os::raw::c_char)>,
 }
 
+unsafe impl Send for AudioIpcInitParams {}
+
 fn set_in_callback(in_callback: bool) {
     IN_CALLBACK.with(|b| {
         assert_eq!(*b.borrow(), !in_callback);

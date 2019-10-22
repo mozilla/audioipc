@@ -223,9 +223,10 @@ impl ContextOps for ClientContext {
             .unwrap_or_else(|_| "(remote error)".to_string());
         let backend_id = CString::new(backend_id).expect("backend_id query failed");
 
+        let thread_create_callback = params.thread_create_callback;
         let cpu_pool = futures_cpupool::Builder::new()
             .name_prefix("AudioIPC")
-            .after_start(move || promote_and_register_thread(&rpc2, params.thread_create_callback))
+            .after_start(move || promote_and_register_thread(&rpc2, thread_create_callback))
             .pool_size(params.pool_size)
             .stack_size(params.stack_size)
             .create();
