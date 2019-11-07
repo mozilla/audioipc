@@ -334,6 +334,17 @@ impl rpc::Server for CubebServer {
     }
 }
 
+// Debugging for BMO 1594216.
+macro_rules! stream {
+    ($self:expr, $stm_tok:expr) => {
+        if $self.streams.contains($stm_tok) {
+            &mut $self.streams[$stm_tok]
+        } else {
+            panic!(format!("{}:{}:{} - Stream({}): invalid token", file!(), line!(), column!(), $stm_tok));
+        }
+    };
+}
+
 impl CubebServer {
     pub fn new(handle: current_thread::Handle) -> Self {
         CubebServer {
@@ -407,54 +418,59 @@ impl CubebServer {
                 .unwrap_or_else(|_| error(cubeb::Error::error())),
 
             ServerMessage::StreamDestroy(stm_tok) => {
-                self.streams.remove(stm_tok);
+                if self.streams.contains(stm_tok) {
+                    debug!("Unregistering stream {:?}", stm_tok);
+                    self.streams.remove(stm_tok);
+                } else {
+                    // Debugging for BMO 1594216.
+                    panic!(format!("StreamDestroy({}): invalid token", stm_tok));
+                }
                 ClientMessage::StreamDestroyed
             }
 
-            ServerMessage::StreamStart(stm_tok) => self.streams[stm_tok]
+            ServerMessage::StreamStart(stm_tok) => stream!(self, stm_tok)
                 .stream
                 .start()
                 .map(|_| ClientMessage::StreamStarted)
                 .unwrap_or_else(error),
 
-            ServerMessage::StreamStop(stm_tok) => self.streams[stm_tok]
+            ServerMessage::StreamStop(stm_tok) => stream!(self, stm_tok)
                 .stream
                 .stop()
                 .map(|_| ClientMessage::StreamStopped)
                 .unwrap_or_else(error),
 
-            ServerMessage::StreamResetDefaultDevice(stm_tok) => self.streams[stm_tok]
+            ServerMessage::StreamResetDefaultDevice(stm_tok) => stream!(self, stm_tok)
                 .stream
                 .reset_default_device()
                 .map(|_| ClientMessage::StreamDefaultDeviceReset)
                 .unwrap_or_else(error),
 
-            ServerMessage::StreamGetPosition(stm_tok) => self.streams[stm_tok]
+            ServerMessage::StreamGetPosition(stm_tok) => stream!(self, stm_tok)
                 .stream
                 .position()
                 .map(ClientMessage::StreamPosition)
                 .unwrap_or_else(error),
 
-            ServerMessage::StreamGetLatency(stm_tok) => self.streams[stm_tok]
+            ServerMessage::StreamGetLatency(stm_tok) => stream!(self, stm_tok)
                 .stream
                 .latency()
                 .map(ClientMessage::StreamLatency)
                 .unwrap_or_else(error),
 
-            ServerMessage::StreamSetVolume(stm_tok, volume) => self.streams[stm_tok]
+            ServerMessage::StreamSetVolume(stm_tok, volume) => stream!(self, stm_tok)
                 .stream
                 .set_volume(volume)
                 .map(|_| ClientMessage::StreamVolumeSet)
                 .unwrap_or_else(error),
 
-            ServerMessage::StreamGetCurrentDevice(stm_tok) => self.streams[stm_tok]
+            ServerMessage::StreamGetCurrentDevice(stm_tok) => stream!(self, stm_tok)
                 .stream
                 .current_device()
                 .map(|device| ClientMessage::StreamCurrentDevice(Device::from(device)))
                 .unwrap_or_else(error),
 
-            ServerMessage::StreamRegisterDeviceChangeCallback(stm_tok, enable) => self.streams
-                [stm_tok]
+            ServerMessage::StreamRegisterDeviceChangeCallback(stm_tok, enable) => stream!(self, stm_tok)
                 .stream
                 .register_device_changed_callback(if enable {
                     Some(device_change_cb_c)
