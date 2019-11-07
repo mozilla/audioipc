@@ -242,7 +242,7 @@ impl ServerStreamCallbacks {
                 frames
             }
             _ => {
-                error!("Unexpected message {:?} during data_callback", r);
+                debug!("Unexpected message {:?} during data_callback", r);
                 // TODO: Return a CUBEB_ERROR result here once
                 // https://github.com/kinetiknz/cubeb/issues/553 is
                 // fixed.
