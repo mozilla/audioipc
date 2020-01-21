@@ -41,6 +41,9 @@ pub mod shm;
 #[cfg(unix)]
 mod tokio_uds_stream;
 
+#[cfg(windows)]
+mod tokio_named_pipes;
+
 pub use crate::messages::{ClientMessage, ServerMessage};
 use std::env::temp_dir;
 use std::path::PathBuf;

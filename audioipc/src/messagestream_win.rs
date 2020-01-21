@@ -8,7 +8,7 @@ use std::os::windows::fs::*;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, RawHandle};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio_io::{AsyncRead, AsyncWrite};
-use tokio_named_pipes;
+use super::tokio_named_pipes;
 use winapi::um::winbase::FILE_FLAG_OVERLAPPED;
 
 #[derive(Debug)]
