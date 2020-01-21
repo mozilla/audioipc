@@ -157,6 +157,7 @@ where
 
 impl<S: Server> Drop for ServerHandler<S> {
     fn drop(&mut self) {
+        let _ = self.transport.close();
         self.in_flight.clear();
     }
 }
