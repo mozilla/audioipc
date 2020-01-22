@@ -153,3 +153,9 @@ where
         !self.in_flight.is_empty()
     }
 }
+
+impl<C: Client> Drop for ClientHandler<C> {
+    fn drop(&mut self) {
+        self.in_flight.clear();
+    }
+}

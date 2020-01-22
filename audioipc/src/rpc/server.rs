@@ -155,6 +155,12 @@ where
     }
 }
 
+impl<S: Server> Drop for ServerHandler<S> {
+    fn drop(&mut self) {
+        self.in_flight.clear();
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 
 enum InFlight<F: Future<Error = ()>> {
