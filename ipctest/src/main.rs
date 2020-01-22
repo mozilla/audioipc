@@ -27,14 +27,34 @@ use crate::errors::*;
 // Run with 'RUST_LOG=run,audioipc cargo run -p ipctest'
 #[cfg(unix)]
 fn run() -> Result<()> {
+    use std::ffi::CString;
+
     let handle =
         unsafe { audioipc_server::audioipc_server_start(std::ptr::null(), std::ptr::null()) };
     let fd = audioipc_server::audioipc_server_new_client(handle);
+    let fd = unsafe {
+        let new_fd = libc::dup(fd);
+        libc::close(fd);
+        new_fd
+    };
+    assert!(fd >= 0);
+
+    let args: Vec<String> = std::env::args().collect();
 
     match unsafe { libc::fork() } {
         -1 => bail!("fork() failed"),
         0 => {
-            return client::client_test(fd);
+            let self_path = CString::new(&*args[0]).unwrap();
+            let child_arg1 = CString::new("--client").unwrap();
+            let child_arg2 = CString::new("--fd").unwrap();
+            let child_arg3 = CString::new(format!("{}", fd)).unwrap();
+            let child_args = [self_path.as_c_str().as_ptr(),
+                              child_arg1.as_c_str().as_ptr(),
+                              child_arg2.as_c_str().as_ptr(),
+                              child_arg3.as_c_str().as_ptr(),
+                              std::ptr::null()];
+            let r = unsafe { libc::execv(self_path.as_c_str().as_ptr(), &child_args as *const _) };
+            assert_eq!(r, 0);
         }
         n => unsafe {
             let mut status: libc::c_int = 0;
@@ -60,8 +80,11 @@ fn run() -> Result<()> {
 }
 
 #[cfg(unix)]
-fn run_client(_pid: u32, _handle: usize) -> Result<()> {
-    bail!("not used on non-Windows");
+fn run_client() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    assert_eq!(args[2], "--fd");
+    let target_fd: i32 = args[3].parse().unwrap();
+    client::client_test(target_fd)
 }
 
 #[cfg(windows)]
@@ -87,9 +110,12 @@ fn run() -> Result<()> {
 }
 
 #[cfg(windows)]
-fn run_client(pid: u32, handle: usize) -> Result<()> {
+fn run_client() -> Result<()> {
     use winapi::shared::minwindef::FALSE;
     use winapi::um::{handleapi, processthreadsapi, winnt, winnt::HANDLE};
+
+    let pid: u32 = std::env::var("PID").unwrap().parse().unwrap();
+    let handle: usize = std::env::var("HANDLE").unwrap().parse().unwrap();
 
     let mut target_handle = std::ptr::null_mut();
     unsafe {
@@ -118,15 +144,13 @@ fn main() {
 
     let args: Vec<String> = std::env::args().collect();
 
-    let client = args.len() == 2 && args[1] == "--client";
+    let client = args.len() >= 2 && args[1] == "--client";
 
     let result = if !client {
         println!("Cubeb AudioServer...");
         run()
     } else {
-        let pid: u32 = std::env::var("PID").unwrap().parse().unwrap();
-        let handle: usize = std::env::var("HANDLE").unwrap().parse().unwrap();
-        run_client(pid, handle)
+        run_client()
     };
 
     if let Err(ref e) = result {
