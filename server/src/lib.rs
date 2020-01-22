@@ -146,9 +146,9 @@ pub extern "C" fn audioipc_server_new_client(p: *mut c_void) -> PlatformHandleTy
             // Wait for notification that sock2 has been registered
             // with reactor::Core.
             let _ = wait_rx.wait();
-            Ok(PlatformHandle::from(sock1).as_raw())
+            Ok(unsafe { PlatformHandle::from(sock1).into_raw() })
         })
-        .unwrap_or(-1isize as PlatformHandleType)
+        .unwrap_or(audioipc::INVALID_HANDLE_VALUE)
 }
 
 #[no_mangle]
