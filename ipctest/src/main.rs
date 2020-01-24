@@ -37,7 +37,7 @@ fn run() -> Result<()> {
         libc::close(fd);
         new_fd
     };
-    assert!(fd >= 0);
+    assert!(fd > audioipc::INVALID_HANDLE_VALUE);
 
     let args: Vec<String> = std::env::args().collect();
 
@@ -48,12 +48,12 @@ fn run() -> Result<()> {
             let child_arg1 = CString::new("--client").unwrap();
             let child_arg2 = CString::new("--fd").unwrap();
             let child_arg3 = CString::new(format!("{}", fd)).unwrap();
-            let child_args = [self_path.as_c_str().as_ptr(),
-                              child_arg1.as_c_str().as_ptr(),
-                              child_arg2.as_c_str().as_ptr(),
-                              child_arg3.as_c_str().as_ptr(),
-                              std::ptr::null()];
-            let r = unsafe { libc::execv(self_path.as_c_str().as_ptr(), &child_args as *const _) };
+            let child_args = [self_path.as_ptr(),
+                              child_arg1.as_ptr(),
+                              child_arg2.as_ptr(),
+                              child_arg3.as_ptr(),
+                        std::ptr::null()];
+            let r = unsafe { libc::execv(self_path.as_ptr(), &child_args as *const _) };
             assert_eq!(r, 0);
         }
         n => unsafe {
