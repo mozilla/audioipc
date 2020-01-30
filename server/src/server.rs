@@ -335,7 +335,7 @@ impl rpc::Server for CubebServer {
 }
 
 // Debugging for BMO 1594216/1612044.
-macro_rules! stream {
+macro_rules! try_stream {
     ($self:expr, $stm_tok:expr) => {
         if $self.streams.contains($stm_tok) {
             &mut $self.streams[$stm_tok]
@@ -430,49 +430,49 @@ impl CubebServer {
                 ClientMessage::StreamDestroyed
             }
 
-            ServerMessage::StreamStart(stm_tok) => stream!(self, stm_tok)
+            ServerMessage::StreamStart(stm_tok) => try_stream!(self, stm_tok)
                 .stream
                 .start()
                 .map(|_| ClientMessage::StreamStarted)
                 .unwrap_or_else(error),
 
-            ServerMessage::StreamStop(stm_tok) => stream!(self, stm_tok)
+            ServerMessage::StreamStop(stm_tok) => try_stream!(self, stm_tok)
                 .stream
                 .stop()
                 .map(|_| ClientMessage::StreamStopped)
                 .unwrap_or_else(error),
 
-            ServerMessage::StreamResetDefaultDevice(stm_tok) => stream!(self, stm_tok)
+            ServerMessage::StreamResetDefaultDevice(stm_tok) => try_stream!(self, stm_tok)
                 .stream
                 .reset_default_device()
                 .map(|_| ClientMessage::StreamDefaultDeviceReset)
                 .unwrap_or_else(error),
 
-            ServerMessage::StreamGetPosition(stm_tok) => stream!(self, stm_tok)
+            ServerMessage::StreamGetPosition(stm_tok) => try_stream!(self, stm_tok)
                 .stream
                 .position()
                 .map(ClientMessage::StreamPosition)
                 .unwrap_or_else(error),
 
-            ServerMessage::StreamGetLatency(stm_tok) => stream!(self, stm_tok)
+            ServerMessage::StreamGetLatency(stm_tok) => try_stream!(self, stm_tok)
                 .stream
                 .latency()
                 .map(ClientMessage::StreamLatency)
                 .unwrap_or_else(error),
 
-            ServerMessage::StreamSetVolume(stm_tok, volume) => stream!(self, stm_tok)
+            ServerMessage::StreamSetVolume(stm_tok, volume) => try_stream!(self, stm_tok)
                 .stream
                 .set_volume(volume)
                 .map(|_| ClientMessage::StreamVolumeSet)
                 .unwrap_or_else(error),
 
-            ServerMessage::StreamGetCurrentDevice(stm_tok) => stream!(self, stm_tok)
+            ServerMessage::StreamGetCurrentDevice(stm_tok) => try_stream!(self, stm_tok)
                 .stream
                 .current_device()
                 .map(|device| ClientMessage::StreamCurrentDevice(Device::from(device)))
                 .unwrap_or_else(error),
 
-            ServerMessage::StreamRegisterDeviceChangeCallback(stm_tok, enable) => stream!(self, stm_tok)
+            ServerMessage::StreamRegisterDeviceChangeCallback(stm_tok, enable) => try_stream!(self, stm_tok)
                 .stream
                 .register_device_changed_callback(if enable {
                     Some(device_change_cb_c)
