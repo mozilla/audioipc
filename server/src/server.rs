@@ -334,13 +334,14 @@ impl rpc::Server for CubebServer {
     }
 }
 
-// Debugging for BMO 1594216.
+// Debugging for BMO 1594216/1612044.
 macro_rules! stream {
     ($self:expr, $stm_tok:expr) => {
         if $self.streams.contains($stm_tok) {
             &mut $self.streams[$stm_tok]
         } else {
-            panic!(format!("{}:{}:{} - Stream({}): invalid token", file!(), line!(), column!(), $stm_tok));
+            error!("{}:{}:{} - Stream({}): invalid token", file!(), line!(), column!(), $stm_tok);
+            return error(cubeb::Error::invalid_parameter());
         }
     };
 }
@@ -422,8 +423,9 @@ impl CubebServer {
                     debug!("Unregistering stream {:?}", stm_tok);
                     self.streams.remove(stm_tok);
                 } else {
-                    // Debugging for BMO 1594216.
-                    panic!(format!("StreamDestroy({}): invalid token", stm_tok));
+                    // Debugging for BMO 1594216/1612044.
+                    error!("StreamDestroy({}): invalid token", stm_tok);
+                    return error(cubeb::Error::invalid_parameter());
                 }
                 ClientMessage::StreamDestroyed
             }
