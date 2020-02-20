@@ -147,6 +147,45 @@ impl CubebDeviceCollectionManager {
     }
 }
 
+struct DevIdMap {
+    devices: Vec<usize>,
+}
+
+// A cubeb_devid is an opaque type which may be implemented with a stable
+// pointer in a cubeb backend.  cubeb_devids received remotely must be
+// validated before use, so DevIdMap provides a simple 1:1 mapping between a
+// cubeb_devid and an IPC-transportable value suitable for use as a unique
+// handle.
+impl DevIdMap {
+    fn new() -> DevIdMap {
+        let mut d = DevIdMap {
+            devices: Vec::with_capacity(32)
+        };
+        d.reset();
+        d
+    }
+
+    fn reset(&mut self) {
+        self.devices.clear();
+        // A null cubeb_devid is used for selecting the default device.
+        // Pre-populate the mapping with 0 -> 0 to handle nulls.
+        self.devices.push(0);
+    }
+
+    // Given a cubeb_devid, return a unique stable value suitable for use
+    // over IPC.
+    fn to_handle(&mut self, devid: usize) -> usize {
+        self.devices.push(devid);
+        self.devices.len() - 1
+    }
+
+    // Given a handle produced by `to_handle`, return the associated
+    // cubeb_devid.  Invalid handles result in a panic.
+    fn from_handle(&self, handle: usize) -> usize {
+        self.devices[handle]
+    }
+}
+
 struct CubebContextState {
     context: cubeb::Result<cubeb::Context>,
     manager: CubebDeviceCollectionManager,
@@ -314,6 +353,7 @@ pub struct CubebServer {
     streams: StreamSlab,
     remote_pid: Option<u32>,
     cbs: Option<Rc<RefCell<CubebServerCallbacks>>>,
+    devidmap: DevIdMap,
 }
 
 impl rpc::Server for CubebServer {
@@ -353,6 +393,7 @@ impl CubebServer {
             streams: StreamSlab::with_capacity(STREAM_CONN_CHUNK_SIZE),
             remote_pid: None,
             cbs: None,
+            devidmap: DevIdMap::new(),
         }
     }
 
@@ -409,7 +450,13 @@ impl CubebServer {
             ServerMessage::ContextGetDeviceEnumeration(device_type) => context
                 .enumerate_devices(cubeb::DeviceType::from_bits_truncate(device_type))
                 .map(|devices| {
-                    let v: Vec<DeviceInfo> = devices.iter().map(|i| i.as_ref().into()).collect();
+                    self.devidmap.reset();
+                    let v: Vec<DeviceInfo> = devices.iter().map(|i| {
+                        let mut tmp: DeviceInfo = i.as_ref().into();
+                        // Replace each cubeb_devid with a unique handle suitable for IPC.
+                        tmp.devid = self.devidmap.to_handle(tmp.devid);
+                        tmp
+                    }).collect();
                     ClientMessage::ContextEnumeratedDevices(v)
                 })
                 .unwrap_or_else(error),
@@ -657,12 +704,14 @@ impl CubebServer {
             .as_ref()
             .and_then(|name| CStr::from_bytes_with_nul(name).ok());
 
-        let input_device = params.input_device as *const _;
+        // Map IPC handle back to cubeb_devid.
+        let input_device = self.devidmap.from_handle(params.input_device) as *const _;
         let input_stream_params = params.input_stream_params.as_ref().map(|isp| unsafe {
             cubeb::StreamParamsRef::from_ptr(isp as *const StreamParams as *mut _)
         });
 
-        let output_device = params.output_device as *const _;
+        // Map IPC handle back to cubeb_devid.
+        let output_device = self.devidmap.from_handle(params.output_device) as *const _;
         let output_stream_params = params.output_stream_params.as_ref().map(|osp| unsafe {
             cubeb::StreamParamsRef::from_ptr(osp as *const StreamParams as *mut _)
         });
