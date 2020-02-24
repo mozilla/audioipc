@@ -29,6 +29,7 @@ use std::ffi::CStr;
 use std::mem::{size_of, ManuallyDrop};
 use std::os::raw::{c_long, c_void};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{panic, slice};
 use tokio::reactor;
 use tokio::runtime::current_thread;
@@ -311,6 +312,18 @@ impl ServerStreamCallbacks {
             }
         }
     }
+}
+
+static SHM_ID: AtomicUsize = AtomicUsize::new(0);
+
+// Generate a temporary shm_id fragment that is unique to the process.  This
+// path is used temporarily to create a shm segment, which is then
+// immediately deleted from the filesystem while retaining handles to the
+// shm to be shared between the server and client.
+fn get_shm_id() -> String {
+    format!("cubeb-shm-{}-{}",
+            std::process::id(),
+            SHM_ID.fetch_add(1, Ordering::SeqCst))
 }
 
 struct ServerStream {
@@ -662,11 +675,11 @@ impl CubebServer {
 
         let (ipc_server, ipc_client) = MessageStream::anonymous_ipc_pair()?;
         debug!("Created callback pair: {:?}-{:?}", ipc_server, ipc_client);
-        let mut shm_path = audioipc::get_shm_path();
-        shm_path.set_extension("input");
-        let (input_shm, input_file) = SharedMemWriter::new(&shm_path, audioipc::SHM_AREA_SIZE)?;
-        shm_path.set_extension("output");
-        let (output_shm, output_file) = SharedMemReader::new(&shm_path, audioipc::SHM_AREA_SIZE)?;
+        let shm_id = get_shm_id();
+        let (input_shm, input_file) = SharedMemWriter::new(&format!("{}-input", shm_id),
+                                                           audioipc::SHM_AREA_SIZE)?;
+        let (output_shm, output_file) = SharedMemReader::new(&format!("{}-output", shm_id),
+                                                             audioipc::SHM_AREA_SIZE)?;
 
         // This code is currently running on the Client/Server RPC
         // handling thread.  We need to move the registration of the
