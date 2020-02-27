@@ -159,7 +159,7 @@ struct DevIdMap {
 impl DevIdMap {
     fn new() -> DevIdMap {
         let mut d = DevIdMap {
-            devices: Vec::with_capacity(32)
+            devices: Vec::with_capacity(32),
         };
         d.reset();
         d
@@ -380,7 +380,13 @@ macro_rules! try_stream {
         if $self.streams.contains($stm_tok) {
             &mut $self.streams[$stm_tok]
         } else {
-            error!("{}:{}:{} - Stream({}): invalid token", file!(), line!(), column!(), $stm_tok);
+            error!(
+                "{}:{}:{} - Stream({}): invalid token",
+                file!(),
+                line!(),
+                column!(),
+                $stm_tok
+            );
             return error(cubeb::Error::invalid_parameter());
         }
     };
@@ -451,12 +457,15 @@ impl CubebServer {
                 .enumerate_devices(cubeb::DeviceType::from_bits_truncate(device_type))
                 .map(|devices| {
                     self.devidmap.reset();
-                    let v: Vec<DeviceInfo> = devices.iter().map(|i| {
-                        let mut tmp: DeviceInfo = i.as_ref().into();
-                        // Replace each cubeb_devid with a unique handle suitable for IPC.
-                        tmp.devid = self.devidmap.to_handle(tmp.devid);
-                        tmp
-                    }).collect();
+                    let v: Vec<DeviceInfo> = devices
+                        .iter()
+                        .map(|i| {
+                            let mut tmp: DeviceInfo = i.as_ref().into();
+                            // Replace each cubeb_devid with a unique handle suitable for IPC.
+                            tmp.devid = self.devidmap.to_handle(tmp.devid);
+                            tmp
+                        })
+                        .collect();
                     ClientMessage::ContextEnumeratedDevices(v)
                 })
                 .unwrap_or_else(error),
@@ -519,19 +528,24 @@ impl CubebServer {
                 .map(|device| ClientMessage::StreamCurrentDevice(Device::from(device)))
                 .unwrap_or_else(error),
 
-            ServerMessage::StreamRegisterDeviceChangeCallback(stm_tok, enable) => try_stream!(self, stm_tok)
-                .stream
-                .register_device_changed_callback(if enable {
-                    Some(device_change_cb_c)
-                } else {
-                    None
-                })
-                .map(|_| ClientMessage::StreamRegisterDeviceChangeCallback)
-                .unwrap_or_else(error),
+            ServerMessage::StreamRegisterDeviceChangeCallback(stm_tok, enable) => {
+                try_stream!(self, stm_tok)
+                    .stream
+                    .register_device_changed_callback(if enable {
+                        Some(device_change_cb_c)
+                    } else {
+                        None
+                    })
+                    .map(|_| ClientMessage::StreamRegisterDeviceChangeCallback)
+                    .unwrap_or_else(error)
+            }
 
             ServerMessage::ContextSetupDeviceCollectionCallback => {
                 if let Ok((ipc_server, ipc_client)) = MessageStream::anonymous_ipc_pair() {
-                    debug!("Created device collection RPC pair: {:?}-{:?}", ipc_server, ipc_client);
+                    debug!(
+                        "Created device collection RPC pair: {:?}-{:?}",
+                        ipc_server, ipc_client
+                    );
 
                     // This code is currently running on the Client/Server RPC
                     // handling thread.  We need to move the registration of the
