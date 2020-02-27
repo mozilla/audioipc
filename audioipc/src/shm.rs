@@ -41,50 +41,73 @@ fn open_shm_file(id: &str) -> Result<File> {
 }
 
 #[cfg(unix)]
+fn handle_enospc(s: &str) -> Result<()> {
+    let err = std::io::Error::last_os_error();
+    let errno = err.raw_os_error().unwrap_or(0);
+    assert_ne!(errno, 0);
+    debug!("allocate_file: {} failed errno={}", s, errno);
+    if errno == libc::ENOSPC {
+        return Err(err.into());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
 fn allocate_file(file: &File, size: usize) -> Result<()> {
     use std::os::unix::io::AsRawFd;
 
+    // First, set the file size.  This may create a sparse file on
+    // many systems, which can fail with SIGBUS when accessed via a
+    // mapping and the lazy backing allocation fails due to low disk
+    // space.  To avoid this, try to force the entire file to be
+    // preallocated before mapping using OS-specific approaches below.
+
+    file.set_len(size.try_into().unwrap())?;
+
+    let fd = file.as_raw_fd();
+    let size: libc::off_t = size.try_into().unwrap();
+
     // Try Linux-specific fallocate.
     #[cfg(target_os = "linux")]
-    unsafe {
-        if libc::fallocate(file.as_raw_fd(), 0, 0, size.try_into().unwrap()) == 0 {
-            return Ok(())
+    {
+        if unsafe { libc::fallocate(fd, 0, 0, size) } == 0 {
+            return Ok(());
         }
+        handle_enospc("fallocate()")?;
     }
 
     // Try macOS-specific fcntl.
     #[cfg(target_os = "macos")]
-    unsafe {
+    {
         let params = libc::fstore_t {
             fst_flags: libc::F_ALLOCATEALL,
             fst_posmode: libc::F_PEOFPOSMODE,
             fst_offset: 0,
-            fst_length: size.try_into().unwrap(),
+            fst_length: size,
             fst_bytesalloc: 0,
         };
-        let r = libc::fcntl(file.as_raw_fd(), libc::F_PREALLOCATE, &params);
-        if r == 0 {
-            // F_PREALLOCATE doesn't update the file's size, so set now.
-            file.set_len(size.try_into().unwrap())?;
+        if unsafe { libc::fcntl(fd, libc::F_PREALLOCATE, &params) } == 0 {
             return Ok(());
         }
+        handle_enospc("fcntl(F_PREALLOCATE)")?;
     }
 
-    // Fall back to portable version.
+    // Fall back to portable version, where available.
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "dragonfly"))]
-    unsafe {
-        if libc::posix_fallocate(file.as_raw_fd(), 0, size.try_into().unwrap()) == 0 {
-            return Ok(())
+    {
+        if unsafe { libc::posix_fallocate(fd, 0, size) } == 0 {
+            return Ok(());
         }
+        handle_enospc("posix_fallocate()")?;
     }
 
-    // Last resort, stdlib calls ftruncate64 via set_len.
-    file.set_len(size.try_into().unwrap())?;
     Ok(())
 }
 
 #[cfg(windows)]
 fn allocate_file(file: &File, size: usize) -> Result<()> {
+    // CreateFileMapping will ensure the entire file is allocated
+    // before it's mapped in, so we simply set the size here.
     file.set_len(size.try_into().unwrap())?;
     Ok(())
 }
