@@ -162,20 +162,18 @@ impl DevIdMap {
         let mut d = DevIdMap {
             devices: Vec::with_capacity(32),
         };
-        d.reset();
-        d
-    }
-
-    fn reset(&mut self) {
-        self.devices.clear();
         // A null cubeb_devid is used for selecting the default device.
         // Pre-populate the mapping with 0 -> 0 to handle nulls.
-        self.devices.push(0);
+        d.devices.push(0);
+        d
     }
 
     // Given a cubeb_devid, return a unique stable value suitable for use
     // over IPC.
     fn to_handle(&mut self, devid: usize) -> usize {
+        if let Some(i) = self.devices.iter().position(|&d| d == devid) {
+            return i;
+        }
         self.devices.push(devid);
         self.devices.len() - 1
     }
@@ -469,7 +467,6 @@ impl CubebServer {
             ServerMessage::ContextGetDeviceEnumeration(device_type) => context
                 .enumerate_devices(cubeb::DeviceType::from_bits_truncate(device_type))
                 .map(|devices| {
-                    self.devidmap.reset();
                     let v: Vec<DeviceInfo> = devices
                         .iter()
                         .map(|i| {
