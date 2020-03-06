@@ -7,14 +7,24 @@ use crate::errors::*;
 use memmap::{Mmap, MmapMut, MmapOptions};
 use std::cell::UnsafeCell;
 use std::fs::{remove_file, File, OpenOptions};
-use std::path::PathBuf;
 use std::sync::{atomic, Arc};
 use std::convert::TryInto;
 use std::env::temp_dir;
 
 fn open_shm_file(id: &str) -> Result<File> {
-    if cfg!(target_os = "linux") {
-        let mut path = PathBuf::from("/dev/shm");
+    #[cfg(target_os = "linux")]
+    {
+        unsafe {
+            let r = libc::syscall(libc::SYS_memfd_create,
+                                  std::ffi::CString::new(id).unwrap().as_ptr(),
+                                  0);
+            if r >= 0 {
+                use std::os::unix::io::FromRawFd as _;
+                return Ok(File::from_raw_fd(r.try_into().unwrap()));
+            }
+        }
+
+        let mut path = std::path::PathBuf::from("/dev/shm");
         path.push(id);
 
         if let Ok(file) = OpenOptions::new()
@@ -25,7 +35,7 @@ fn open_shm_file(id: &str) -> Result<File> {
                 let _ = remove_file(&path);
                 return Ok(file);
             }
-    };
+    }
 
     let mut path = temp_dir();
     path.push(id);
