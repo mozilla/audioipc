@@ -528,6 +528,12 @@ impl CubebServer {
                 .map(ClientMessage::StreamLatency)
                 .unwrap_or_else(error),
 
+            ServerMessage::StreamGetInputLatency(stm_tok) => try_stream!(self, stm_tok)
+                .stream
+                .input_latency()
+                .map(ClientMessage::StreamLatency)
+                .unwrap_or_else(error),
+
             ServerMessage::StreamSetVolume(stm_tok, volume) => try_stream!(self, stm_tok)
                 .stream
                 .set_volume(volume)
