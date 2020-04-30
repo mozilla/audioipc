@@ -286,6 +286,12 @@ impl<'ctx> StreamOps for ClientStream<'ctx> {
         send_recv!(rpc, StreamGetLatency(self.token) => StreamLatency())
     }
 
+    fn input_latency(&mut self) -> Result<u32> {
+        assert_not_in_callback();
+        let rpc = self.context.rpc();
+        send_recv!(rpc, StreamGetInputLatency(self.token) => StreamInputLatency())
+    }
+
     fn set_volume(&mut self, volume: f32) -> Result<()> {
         assert_not_in_callback();
         let rpc = self.context.rpc();
