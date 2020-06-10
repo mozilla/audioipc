@@ -133,6 +133,7 @@ fn run_client() -> Result<()> {
             FALSE,
             winnt::DUPLICATE_SAME_ACCESS,
         );
+        handleapi::CloseHandle(source);
         if ok == FALSE {
             bail!("DuplicateHandle failed");
         }
