@@ -10,8 +10,8 @@ use audioipc::codec::LengthDelimitedCodec;
 use audioipc::frame::{framed, Framed};
 use audioipc::messages::{
     CallbackReq, CallbackResp, ClientMessage, Device, DeviceCollectionReq, DeviceCollectionResp,
-    DeviceInfo, RegisterDeviceCollectionChanged, ServerMessage, StreamCreate, StreamInitParams,
-    StreamParams,
+    DeviceInfo, RegisterDeviceCollectionChanged, ServerMessage, StreamCreate, StreamCreateParams,
+    StreamInitParams, StreamParams,
 };
 use audioipc::platformhandle_passing::FramedWithPlatformHandles;
 use audioipc::rpc;
@@ -23,13 +23,13 @@ use futures::future::{self, FutureResult};
 use futures::sync::oneshot;
 use futures::Future;
 use slab;
-use std::{cell::RefCell, sync::Mutex};
 use std::convert::From;
 use std::ffi::CStr;
-use std::mem::{size_of, ManuallyDrop};
+use std::mem::size_of;
 use std::os::raw::{c_long, c_void};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{cell::RefCell, sync::Mutex};
 use std::{panic, slice};
 use tokio::reactor;
 use tokio::runtime::current_thread;
@@ -65,11 +65,7 @@ impl CubebDeviceCollectionManager {
         }
         let mut servers = self.servers.lock().unwrap();
         server.borrow_mut().devtype.insert(devtype);
-        if servers
-            .iter()
-            .find(|s| Rc::ptr_eq(s, server))
-            .is_none()
-        {
+        if servers.iter().find(|s| Rc::ptr_eq(s, server)).is_none() {
             servers.push(server.clone());
         }
         Ok(())
@@ -96,11 +92,7 @@ impl CubebDeviceCollectionManager {
         Ok(())
     }
 
-    fn internal_register(
-        &mut self,
-        context: &cubeb::Context,
-        enable: bool,
-    ) -> cubeb::Result<()> {
+    fn internal_register(&mut self, context: &cubeb::Context, enable: bool) -> cubeb::Result<()> {
         let user_ptr = if enable {
             self as *const CubebDeviceCollectionManager as *mut c_void
         } else {
@@ -224,9 +216,6 @@ where
     })
 }
 
-// The size in which the stream slab is grown.
-const STREAM_CONN_CHUNK_SIZE: usize = 64;
-
 struct DeviceCollectionClient;
 
 impl rpc::Client for DeviceCollectionClient {
@@ -335,16 +324,14 @@ fn get_shm_id() -> String {
 }
 
 struct ServerStream {
-    stream: ManuallyDrop<cubeb::Stream>,
-    cbs: ManuallyDrop<Box<ServerStreamCallbacks>>,
+    stream: Option<cubeb::Stream>,
+    cbs: Box<ServerStreamCallbacks>,
 }
 
 impl Drop for ServerStream {
     fn drop(&mut self) {
-        unsafe {
-            ManuallyDrop::drop(&mut self.stream);
-            ManuallyDrop::drop(&mut self.cbs);
-        }
+        // `stream` *must* be dropped before `cbs`.
+        drop(self.stream.take());
     }
 }
 
@@ -402,7 +389,10 @@ impl rpc::Server for CubebServer {
 macro_rules! try_stream {
     ($self:expr, $stm_tok:expr) => {
         if $self.streams.contains($stm_tok) {
-            &mut $self.streams[$stm_tok]
+            $self.streams[$stm_tok]
+                .stream
+                .as_mut()
+                .expect("uninitialized stream")
         } else {
             error!(
                 "{}:{}:{} - Stream({}): invalid token",
@@ -420,7 +410,7 @@ impl CubebServer {
     pub fn new(handle: current_thread::Handle) -> Self {
         CubebServer {
             handle,
-            streams: StreamSlab::with_capacity(STREAM_CONN_CHUNK_SIZE),
+            streams: StreamSlab::new(),
             remote_pid: None,
             cbs: None,
             devidmap: DevIdMap::new(),
@@ -494,8 +484,12 @@ impl CubebServer {
                 })
                 .unwrap_or_else(error),
 
-            ServerMessage::StreamInit(ref params) => self
-                .process_stream_init(context, params)
+            ServerMessage::StreamCreate(ref params) => self
+                .process_stream_create(params)
+                .unwrap_or_else(|_| error(cubeb::Error::error())),
+
+            ServerMessage::StreamInit(stm_tok, ref params) => self
+                .process_stream_init(context, stm_tok, params)
                 .unwrap_or_else(|_| error(cubeb::Error::error())),
 
             ServerMessage::StreamDestroy(stm_tok) => {
@@ -511,62 +505,52 @@ impl CubebServer {
             }
 
             ServerMessage::StreamStart(stm_tok) => try_stream!(self, stm_tok)
-                .stream
                 .start()
                 .map(|_| ClientMessage::StreamStarted)
                 .unwrap_or_else(error),
 
             ServerMessage::StreamStop(stm_tok) => try_stream!(self, stm_tok)
-                .stream
                 .stop()
                 .map(|_| ClientMessage::StreamStopped)
                 .unwrap_or_else(error),
 
             ServerMessage::StreamResetDefaultDevice(stm_tok) => try_stream!(self, stm_tok)
-                .stream
                 .reset_default_device()
                 .map(|_| ClientMessage::StreamDefaultDeviceReset)
                 .unwrap_or_else(error),
 
             ServerMessage::StreamGetPosition(stm_tok) => try_stream!(self, stm_tok)
-                .stream
                 .position()
                 .map(ClientMessage::StreamPosition)
                 .unwrap_or_else(error),
 
             ServerMessage::StreamGetLatency(stm_tok) => try_stream!(self, stm_tok)
-                .stream
                 .latency()
                 .map(ClientMessage::StreamLatency)
                 .unwrap_or_else(error),
 
             ServerMessage::StreamGetInputLatency(stm_tok) => try_stream!(self, stm_tok)
-                .stream
                 .input_latency()
                 .map(ClientMessage::StreamInputLatency)
                 .unwrap_or_else(error),
 
             ServerMessage::StreamSetVolume(stm_tok, volume) => try_stream!(self, stm_tok)
-                .stream
                 .set_volume(volume)
                 .map(|_| ClientMessage::StreamVolumeSet)
                 .unwrap_or_else(error),
 
             ServerMessage::StreamSetName(stm_tok, ref name) => try_stream!(self, stm_tok)
-                .stream
                 .set_name(name)
                 .map(|_| ClientMessage::StreamNameSet)
                 .unwrap_or_else(error),
 
             ServerMessage::StreamGetCurrentDevice(stm_tok) => try_stream!(self, stm_tok)
-                .stream
                 .current_device()
                 .map(|device| ClientMessage::StreamCurrentDevice(Device::from(device)))
                 .unwrap_or_else(error),
 
             ServerMessage::StreamRegisterDeviceChangeCallback(stm_tok, enable) => {
                 try_stream!(self, stm_tok)
-                    .stream
                     .register_device_changed_callback(if enable {
                         Some(device_change_cb_c)
                     } else {
@@ -587,7 +571,6 @@ impl CubebServer {
                     // handling thread.  We need to move the registration of the
                     // bind_client to the callback RPC handling thread.  This is
                     // done by spawning a future on `handle`.
-
                     let (tx, rx) = oneshot::channel();
                     self.handle
                         .spawn(futures::future::lazy(move || {
@@ -680,12 +663,8 @@ impl CubebServer {
         .map(|_| ClientMessage::ContextRegisteredDeviceCollectionChanged)
     }
 
-    // Stream init is special, so it's been separated from process_msg.
-    fn process_stream_init(
-        &mut self,
-        context: &cubeb::Context,
-        params: &StreamInitParams,
-    ) -> Result<ClientMessage> {
+    // Stream create is special, so it's been separated from process_msg.
+    fn process_stream_create(&mut self, params: &StreamCreateParams) -> Result<ClientMessage> {
         fn frame_size_in_bytes(params: Option<&StreamParams>) -> u16 {
             params
                 .map(|p| {
@@ -720,7 +699,6 @@ impl CubebServer {
         // handling thread.  We need to move the registration of the
         // bind_client to the callback RPC handling thread.  This is
         // done by spawning a future on `handle`.
-
         let (tx, rx) = oneshot::channel();
         self.handle
             .spawn(futures::future::lazy(move || {
@@ -746,6 +724,30 @@ impl CubebServer {
             rpc,
         });
 
+        let entry = self.streams.vacant_entry();
+        let key = entry.key();
+        debug!("Registering stream {:?}", key);
+
+        entry.insert(ServerStream { stream: None, cbs });
+
+        Ok(ClientMessage::StreamCreated(StreamCreate {
+            token: key,
+            platform_handles: [
+                PlatformHandle::from(ipc_client),
+                PlatformHandle::from(input_file),
+                PlatformHandle::from(output_file),
+            ],
+            target_pid: self.remote_pid.unwrap(),
+        }))
+    }
+
+    // Stream init is special, so it's been separated from process_msg.
+    fn process_stream_init(
+        &mut self,
+        context: &cubeb::Context,
+        stm_tok: usize,
+        params: &StreamInitParams,
+    ) -> Result<ClientMessage> {
         // Create cubeb stream from params
         let stream_name = params
             .stream_name
@@ -765,52 +767,32 @@ impl CubebServer {
         });
 
         let latency = params.latency_frames;
+
+        let server_stream = &mut self.streams[stm_tok];
         assert!(size_of::<Box<ServerStreamCallbacks>>() == size_of::<usize>());
-        let user_ptr = cbs.as_ref() as *const ServerStreamCallbacks as *mut c_void;
+        let user_ptr = server_stream.cbs.as_ref() as *const ServerStreamCallbacks as *mut c_void;
 
-        unsafe {
-            context
-                .stream_init(
-                    stream_name,
-                    input_device,
-                    input_stream_params,
-                    output_device,
-                    output_stream_params,
-                    latency,
-                    Some(data_cb_c),
-                    Some(state_cb_c),
-                    user_ptr,
-                )
-                .and_then(|stream| {
-                    if self.streams.len() == self.streams.capacity() {
-                        trace!(
-                            "server connection ran out of stream slots. reserving {} more.",
-                            STREAM_CONN_CHUNK_SIZE
-                        );
-                        self.streams.reserve_exact(STREAM_CONN_CHUNK_SIZE);
-                    }
+        let stream = unsafe {
+            let stream = context.stream_init(
+                stream_name,
+                input_device,
+                input_stream_params,
+                output_device,
+                output_stream_params,
+                latency,
+                Some(data_cb_c),
+                Some(state_cb_c),
+                user_ptr,
+            );
+            match stream {
+                Ok(stream) => stream,
+                Err(e) => return Err(e.into()), // XXX full teardown of ServerStream?
+            }
+        };
 
-                    let entry = self.streams.vacant_entry();
-                    let key = entry.key();
-                    debug!("Registering stream {:?}", key);
+        server_stream.stream = Some(stream);
 
-                    entry.insert(ServerStream {
-                        stream: ManuallyDrop::new(stream),
-                        cbs: ManuallyDrop::new(cbs),
-                    });
-
-                    Ok(ClientMessage::StreamCreated(StreamCreate {
-                        token: key,
-                        platform_handles: [
-                            PlatformHandle::from(ipc_client),
-                            PlatformHandle::from(input_file),
-                            PlatformHandle::from(output_file),
-                        ],
-                        target_pid: self.remote_pid.unwrap(),
-                    }))
-                })
-                .map_err(|e| e.into())
-        }
+        Ok(ClientMessage::StreamInitialized)
     }
 }
 
