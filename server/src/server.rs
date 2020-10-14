@@ -23,7 +23,7 @@ use futures::future::{self, FutureResult};
 use futures::sync::oneshot;
 use futures::Future;
 use slab;
-use std::cell::RefCell;
+use std::{cell::RefCell, sync::Mutex};
 use std::convert::From;
 use std::ffi::CStr;
 use std::mem::{size_of, ManuallyDrop};
@@ -41,15 +41,15 @@ fn error(error: cubeb::Error) -> ClientMessage {
 }
 
 struct CubebDeviceCollectionManager {
-    servers: Vec<Rc<RefCell<CubebServerCallbacks>>>,
-    devtype: cubeb::DeviceType,
+    servers: Mutex<Vec<Rc<RefCell<CubebServerCallbacks>>>>,
+    registered: bool,
 }
 
 impl CubebDeviceCollectionManager {
     fn new() -> CubebDeviceCollectionManager {
         CubebDeviceCollectionManager {
-            servers: Vec::new(),
-            devtype: cubeb::DeviceType::empty(),
+            servers: Mutex::new(Vec::new()),
+            registered: false,
         }
     }
 
@@ -57,37 +57,41 @@ impl CubebDeviceCollectionManager {
         &mut self,
         context: &cubeb::Context,
         server: &Rc<RefCell<CubebServerCallbacks>>,
+        devtype: cubeb::DeviceType,
     ) -> cubeb::Result<()> {
-        if self
-            .servers
+        if !self.registered {
+            self.internal_register(context, true)?;
+            self.registered = true;
+        }
+        let mut servers = self.servers.lock().unwrap();
+        server.borrow_mut().devtype.insert(devtype);
+        if servers
             .iter()
             .find(|s| Rc::ptr_eq(s, server))
             .is_none()
         {
-            self.servers.push(server.clone());
+            servers.push(server.clone());
         }
-        self.update(context)
+        Ok(())
     }
 
     fn unregister(
         &mut self,
         context: &cubeb::Context,
         server: &Rc<RefCell<CubebServerCallbacks>>,
+        devtype: cubeb::DeviceType,
     ) -> cubeb::Result<()> {
-        self.servers
-            .retain(|s| !(Rc::ptr_eq(&s, server) && s.borrow().devtype.is_empty()));
-        self.update(context)
-    }
-
-    fn update(&mut self, context: &cubeb::Context) -> cubeb::Result<()> {
-        let mut devtype = cubeb::DeviceType::empty();
-        for s in &self.servers {
-            devtype |= s.borrow().devtype;
-        }
-        for &dir in &[cubeb::DeviceType::INPUT, cubeb::DeviceType::OUTPUT] {
-            if devtype.contains(dir) != self.devtype.contains(dir) {
-                self.internal_register(context, dir, devtype.contains(dir))?;
+        let unregister = {
+            let mut servers = self.servers.lock().unwrap();
+            server.borrow_mut().devtype.remove(devtype);
+            if server.borrow().devtype.is_empty() {
+                servers.retain(|s| !Rc::ptr_eq(&s, server));
             }
+            servers.is_empty()
+        };
+        if unregister {
+            self.internal_register(context, false)?;
+            self.registered = false;
         }
         Ok(())
     }
@@ -95,7 +99,6 @@ impl CubebDeviceCollectionManager {
     fn internal_register(
         &mut self,
         context: &cubeb::Context,
-        devtype: cubeb::DeviceType,
         enable: bool,
     ) -> cubeb::Result<()> {
         let user_ptr = if enable {
@@ -113,20 +116,12 @@ impl CubebDeviceCollectionManager {
                 device_collection_changed_output_cb_c as _,
             ),
         ] {
-            if devtype.contains(dir) {
-                assert_eq!(self.devtype.contains(dir), !enable);
-                unsafe {
-                    context.register_device_collection_changed(
-                        dir,
-                        if enable { Some(cb) } else { None },
-                        user_ptr,
-                    )?;
-                }
-                if enable {
-                    self.devtype.insert(dir);
-                } else {
-                    self.devtype.remove(dir);
-                }
+            unsafe {
+                context.register_device_collection_changed(
+                    dir,
+                    if enable { Some(cb) } else { None },
+                    user_ptr,
+                )?;
             }
         }
         Ok(())
@@ -134,7 +129,8 @@ impl CubebDeviceCollectionManager {
 
     // Warning: this is called from an internal cubeb thread, so we must not mutate unprotected shared state.
     unsafe fn device_collection_changed_callback(&self, device_type: ffi::cubeb_device_type) {
-        self.servers.iter().for_each(|server| {
+        let servers = self.servers.lock().unwrap();
+        servers.iter().for_each(|server| {
             if server
                 .borrow()
                 .devtype
@@ -677,11 +673,9 @@ impl CubebServer {
         let cbs = self.cbs.as_ref().unwrap();
 
         if enable {
-            cbs.borrow_mut().devtype.insert(devtype);
-            manager.register(context, cbs)
+            manager.register(context, cbs, devtype)
         } else {
-            cbs.borrow_mut().devtype.remove(devtype);
-            manager.unregister(context, cbs)
+            manager.unregister(context, cbs, devtype)
         }
         .map(|_| ClientMessage::ContextRegisteredDeviceCollectionChanged)
     }
