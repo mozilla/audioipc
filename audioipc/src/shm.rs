@@ -3,13 +3,12 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details.
 
-use crate::errors::*;
-use memmap::{Mmap, MmapMut, MmapOptions};
-use std::cell::UnsafeCell;
+use crate::{errors::*, PlatformHandle};
+use memmap::{MmapMut, MmapOptions};
 use std::convert::TryInto;
 use std::env::temp_dir;
 use std::fs::{remove_file, File, OpenOptions};
-use std::sync::{atomic, Arc};
+use std::{ffi::c_void, slice};
 
 fn open_shm_file(id: &str) -> Result<File> {
     #[cfg(target_os = "linux")]
@@ -122,145 +121,75 @@ fn allocate_file(file: &File, size: usize) -> Result<()> {
     Ok(())
 }
 
-pub struct SharedMemReader {
-    mmap: Mmap,
+#[derive(Copy, Clone)]
+pub struct SharedMemView {
+    view: *mut c_void,
+    size: usize,
 }
 
-impl SharedMemReader {
-    pub fn new(id: &str, size: usize) -> Result<(SharedMemReader, File)> {
-        let file = open_shm_file(id)?;
-        allocate_file(&file, size)?;
-        let mmap = unsafe { MmapOptions::new().map(&file)? };
-        assert_eq!(mmap.len(), size);
-        Ok((SharedMemReader { mmap }, file))
-    }
+unsafe impl Send for SharedMemView {}
 
-    pub fn read(&self, buf: &mut [u8]) -> Result<()> {
-        if buf.is_empty() {
-            return Ok(());
-        }
-        // TODO: Track how much is in the shm area.
-        if buf.len() <= self.mmap.len() {
-            atomic::fence(atomic::Ordering::Acquire);
-            let len = buf.len();
-            buf.copy_from_slice(&self.mmap[..len]);
-            Ok(())
-        } else {
-            bail!("mmap size");
-        }
-    }
-}
-
-pub struct SharedMemSlice {
-    mmap: Arc<Mmap>,
-}
-
-impl SharedMemSlice {
-    pub fn from(file: &File, size: usize) -> Result<SharedMemSlice> {
-        let mmap = unsafe { MmapOptions::new().map(file)? };
-        assert_eq!(mmap.len(), size);
-        let mmap = Arc::new(mmap);
-        Ok(SharedMemSlice { mmap })
-    }
-
-    pub fn get_slice(&self, size: usize) -> Result<&[u8]> {
-        if size == 0 {
-            return Ok(&[]);
-        }
-        // TODO: Track how much is in the shm area.
-        if size <= self.mmap.len() {
-            atomic::fence(atomic::Ordering::Acquire);
-            let buf = &self.mmap[..size];
+impl SharedMemView {
+    pub unsafe fn get_slice(&self, size: usize) -> Result<&[u8]> {
+        let map = slice::from_raw_parts(self.view as _, self.size);
+        if size <= self.size {
+            let buf = &map[..size];
             Ok(buf)
         } else {
             bail!("mmap size");
         }
     }
 
-    /// Clones the memory map.
-    ///
-    /// The underlying memory map is shared, and thus the caller must
-    /// ensure that the memory is not illegally aliased.
-    pub unsafe fn unsafe_clone(&self) -> Self {
-        SharedMemSlice {
-            mmap: self.mmap.clone(),
+    pub unsafe fn get_mut_slice(&mut self, size: usize) -> Result<&mut [u8]> {
+        let map = slice::from_raw_parts_mut(self.view as _, self.size);
+        if size <= self.size {
+            Ok(&mut map[..size])
+        } else {
+            bail!("mmap size")
         }
     }
 }
 
-unsafe impl Send for SharedMemSlice {}
-
-pub struct SharedMemWriter {
-    mmap: MmapMut,
+pub struct SharedMem {
+    _mmap: MmapMut,
+    view: SharedMemView,
 }
 
-impl SharedMemWriter {
-    pub fn new(id: &str, size: usize) -> Result<(SharedMemWriter, File)> {
+unsafe impl Send for SharedMem {}
+
+impl SharedMem {
+    pub fn new(id: &str, size: usize) -> Result<(SharedMem, PlatformHandle)> {
         let file = open_shm_file(id)?;
         allocate_file(&file, size)?;
-        let mmap = unsafe { MmapOptions::new().map_mut(&file)? };
+        let mut mmap = unsafe { MmapOptions::new().map_mut(&file)? };
         assert_eq!(mmap.len(), size);
-        Ok((SharedMemWriter { mmap }, file))
+        let view = SharedMemView {
+            view: mmap.as_mut_ptr() as _,
+            size,
+        };
+        let handle = PlatformHandle::from(file);
+        Ok((SharedMem { _mmap: mmap, view }, handle))
     }
 
-    pub fn write(&mut self, buf: &[u8]) -> Result<()> {
-        if buf.is_empty() {
-            return Ok(());
-        }
-        // TODO: Track how much is in the shm area.
-        if buf.len() <= self.mmap.len() {
-            self.mmap[..buf.len()].copy_from_slice(buf);
-            atomic::fence(atomic::Ordering::Release);
-            Ok(())
-        } else {
-            bail!("mmap size");
-        }
-    }
-}
-
-pub struct SharedMemMutSlice {
-    mmap: Arc<UnsafeCell<MmapMut>>,
-}
-
-impl SharedMemMutSlice {
-    pub fn from(file: &File, size: usize) -> Result<SharedMemMutSlice> {
-        let mmap = unsafe { MmapOptions::new().map_mut(file)? };
+    pub unsafe fn from(handle: &PlatformHandle, size: usize) -> Result<SharedMem> {
+        let mut mmap = MmapOptions::new().map_mut(&handle.into_file())?;
         assert_eq!(mmap.len(), size);
-        let mmap = Arc::new(UnsafeCell::new(mmap));
-        Ok(SharedMemMutSlice { mmap })
+        let view = SharedMemView {
+            view: mmap.as_mut_ptr() as _,
+            size,
+        };
+        Ok(SharedMem { _mmap: mmap, view })
     }
 
-    pub fn get_mut_slice(&mut self, size: usize) -> Result<&mut [u8]> {
-        if size == 0 {
-            return Ok(&mut []);
-        }
-        // TODO: Track how much is in the shm area.
-        if size <= self.inner().len() {
-            let buf = &mut self.inner_mut()[..size];
-            atomic::fence(atomic::Ordering::Release);
-            Ok(buf)
-        } else {
-            bail!("mmap size");
-        }
+    pub unsafe fn unsafe_view(&self) -> SharedMemView {
+        self.view
     }
 
-    /// Clones the memory map.
-    ///
-    /// The underlying memory map is shared, and thus the caller must
-    /// ensure that the memory is not illegally aliased.
-    pub unsafe fn unsafe_clone(&self) -> Self {
-        SharedMemMutSlice {
-            mmap: self.mmap.clone(),
-        }
+    pub unsafe fn get_slice(&self, size: usize) -> Result<&[u8]> {
+        self.view.get_slice(size)
     }
 
-    fn inner(&self) -> &MmapMut {
-        unsafe { &*self.mmap.get() }
-    }
-
-    fn inner_mut(&mut self) -> &mut MmapMut {
-        unsafe { &mut *self.mmap.get() }
+    pub unsafe fn get_mut_slice(&mut self, size: usize) -> Result<&mut [u8]> {
+        self.view.get_mut_slice(size)
     }
 }
-
-unsafe impl Send for SharedMemMutSlice {}
