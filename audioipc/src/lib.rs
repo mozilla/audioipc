@@ -162,6 +162,10 @@ impl PlatformHandle {
         h.owned = false;
         h.handle
     }
+
+    pub unsafe fn as_raw(&self) -> PlatformHandleType {
+        self.0.borrow().handle
+    }
 }
 
 impl Drop for PlatformHandle {
