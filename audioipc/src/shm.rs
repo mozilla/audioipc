@@ -199,7 +199,7 @@ mod unix {
 #[cfg(windows)]
 mod windows {
     use super::*;
-    use std::{fs::File, os::windows::io::FromRawHandle, ptr};
+    use std::ptr;
     use winapi::{
         shared::ntdef::HANDLE,
         um::{
@@ -252,9 +252,7 @@ mod windows {
                     return Err(std::io::Error::last_os_error().into());
                 }
 
-                let file = File::from_raw_handle(handle);
-                // TODO: This might be clearer as a DuplicateHandle call.
-                let handle2 = PlatformHandle::from(file.try_clone().unwrap());
+                let handle2 = PlatformHandle::duplicate(handle)?;
                 Ok((
                     SharedMem {
                         handle,
