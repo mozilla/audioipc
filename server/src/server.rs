@@ -772,7 +772,11 @@ impl CubebServer {
             );
             match stream {
                 Ok(stream) => stream,
-                Err(e) => return Err(e.into()), // XXX full teardown of ServerStream?
+                Err(e) => {
+                    debug!("Unregistering stream {:?} (stream error {:?})", stm_tok, e);
+                    self.streams.remove(stm_tok);
+                    return Err(e.into());
+                }
             }
         };
 
