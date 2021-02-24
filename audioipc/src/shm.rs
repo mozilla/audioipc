@@ -268,6 +268,8 @@ mod windows {
                 return Err(std::io::Error::last_os_error().into());
             }
             Ok(SharedMem {
+                // A invalid `handle` means this is a non-owning `SharedMem`.  See `Drop` impl.
+                // TODO: This can be made *owning* after further `PlatformHandle` ownership refactoring.
                 handle: INVALID_HANDLE_VALUE,
                 view: SharedMemView { ptr, size },
             })
