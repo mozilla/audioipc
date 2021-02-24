@@ -14,7 +14,7 @@ pub use windows::SharedMem;
 
 #[derive(Copy, Clone)]
 pub struct SharedMemView {
-    view: *mut c_void,
+    ptr: *mut c_void,
     size: usize,
 }
 
@@ -22,17 +22,16 @@ unsafe impl Send for SharedMemView {}
 
 impl SharedMemView {
     pub unsafe fn get_slice(&self, size: usize) -> Result<&[u8]> {
-        let map = slice::from_raw_parts(self.view as _, self.size);
+        let map = slice::from_raw_parts(self.ptr as _, self.size);
         if size <= self.size {
-            let buf = &map[..size];
-            Ok(buf)
+            Ok(&map[..size])
         } else {
             bail!("mmap size");
         }
     }
 
     pub unsafe fn get_mut_slice(&mut self, size: usize) -> Result<&mut [u8]> {
-        let map = slice::from_raw_parts_mut(self.view as _, self.size);
+        let map = slice::from_raw_parts_mut(self.ptr as _, self.size);
         if size <= self.size {
             Ok(&mut map[..size])
         } else {
@@ -162,7 +161,7 @@ mod unix {
             let mut mmap = unsafe { MmapOptions::new().map_mut(&file)? };
             assert_eq!(mmap.len(), size);
             let view = SharedMemView {
-                view: mmap.as_mut_ptr() as _,
+                ptr: mmap.as_mut_ptr() as _,
                 size,
             };
             let handle = PlatformHandle::from(file);
@@ -176,7 +175,7 @@ mod unix {
             };
             assert_eq!(mmap.len(), size);
             let view = SharedMemView {
-                view: mmap.as_mut_ptr() as _,
+                ptr: mmap.as_mut_ptr() as _,
                 size,
             };
             Ok(SharedMem { _mmap: mmap, view })
@@ -201,7 +200,7 @@ mod windows {
     use super::*;
     use std::ptr;
     use winapi::{
-        shared::ntdef::HANDLE,
+        shared::{minwindef::DWORD, ntdef::HANDLE},
         um::{
             handleapi::CloseHandle,
             memoryapi::{MapViewOfFile, UnmapViewOfFile, FILE_MAP_ALL_ACCESS},
@@ -222,7 +221,7 @@ mod windows {
     impl Drop for SharedMem {
         fn drop(&mut self) {
             unsafe {
-                let ok = UnmapViewOfFile(self.view.view);
+                let ok = UnmapViewOfFile(self.view.ptr);
                 assert_ne!(ok, 0);
                 if self.handle != INVALID_HANDLE_VALUE {
                     let ok = CloseHandle(self.handle);
@@ -239,16 +238,16 @@ mod windows {
                     INVALID_HANDLE_VALUE,
                     ptr::null_mut(),
                     PAGE_READWRITE,
-                    0,
-                    size.try_into().unwrap(),
+                    (size >> 32).try_into().unwrap(),
+                    (size & (DWORD::MAX as usize)).try_into().unwrap(),
                     ptr::null(),
                 );
                 if handle.is_null() {
                     return Err(std::io::Error::last_os_error().into());
                 }
 
-                let view = MapViewOfFile(handle, FILE_MAP_ALL_ACCESS, 0, 0, size);
-                if view.is_null() {
+                let ptr = MapViewOfFile(handle, FILE_MAP_ALL_ACCESS, 0, 0, size);
+                if ptr.is_null() {
                     return Err(std::io::Error::last_os_error().into());
                 }
 
@@ -256,7 +255,7 @@ mod windows {
                 Ok((
                     SharedMem {
                         handle,
-                        view: SharedMemView { view, size },
+                        view: SharedMemView { ptr, size },
                     },
                     handle2,
                 ))
@@ -264,13 +263,13 @@ mod windows {
         }
 
         pub unsafe fn from(handle: &PlatformHandle, size: usize) -> Result<SharedMem> {
-            let view = MapViewOfFile(handle.as_raw(), FILE_MAP_ALL_ACCESS, 0, 0, size);
-            if view.is_null() {
+            let ptr = MapViewOfFile(handle.as_raw(), FILE_MAP_ALL_ACCESS, 0, 0, size);
+            if ptr.is_null() {
                 return Err(std::io::Error::last_os_error().into());
             }
             Ok(SharedMem {
                 handle: INVALID_HANDLE_VALUE,
-                view: SharedMemView { view, size },
+                view: SharedMemView { ptr, size },
             })
         }
 
