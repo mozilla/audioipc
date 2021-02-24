@@ -231,9 +231,9 @@ struct ServerStreamCallbacks {
     /// Size of output frame in bytes
     output_frame_size: u16,
     /// Shared memory buffer for sending input data to client
-    input_shm: SharedMem,
+    input_shm: Option<SharedMem>,
     /// Shared memory buffer for receiving output data from client
-    output_shm: SharedMem,
+    output_shm: Option<SharedMem>,
     /// RPC interface to callback server running in client
     rpc: rpc::ClientProxy<CallbackReq, CallbackResp>,
 }
@@ -248,10 +248,11 @@ impl ServerStreamCallbacks {
         );
 
         unsafe {
-            self.input_shm
-                .get_mut_slice(input.len())
-                .unwrap()
-                .copy_from_slice(input);
+            if let Some(shm) = &mut self.input_shm {
+                shm.get_mut_slice(input.len())
+                    .unwrap()
+                    .copy_from_slice(input);
+            }
         }
 
         let r = self
@@ -269,8 +270,9 @@ impl ServerStreamCallbacks {
                     let nbytes = frames as usize * self.output_frame_size as usize;
                     trace!("Reslice output to {}", nbytes);
                     unsafe {
-                        &mut output[..nbytes]
-                            .copy_from_slice(self.output_shm.get_slice(nbytes).unwrap());
+                        if let Some(shm) = &self.output_shm {
+                            &mut output[..nbytes].copy_from_slice(shm.get_slice(nbytes).unwrap());
+                        }
                     }
                 }
                 frames
@@ -709,6 +711,11 @@ impl CubebServer {
             Ok(rpc) => rpc,
             Err(_) => bail!("Failed to create callback rpc."),
         };
+
+        // TODO: The lowest comms layer expects exactly 3 PlatformHandles, so we always configure both sides of the shm.
+        // ServerStreamCallbacks only needs the active shm, so drop any unused shm now.
+        let input_shm = params.input_stream_params.and(Some(input_shm));
+        let output_shm = params.output_stream_params.and(Some(output_shm));
 
         let cbs = Box::new(ServerStreamCallbacks {
             input_frame_size,
