@@ -238,8 +238,8 @@ mod windows {
                     INVALID_HANDLE_VALUE,
                     ptr::null_mut(),
                     PAGE_READWRITE,
-                    (size >> 32).try_into().unwrap(),
-                    (size & (DWORD::MAX as usize)).try_into().unwrap(),
+                    (size as u64 >> 32).try_into().unwrap(),
+                    (size as u64 & (DWORD::MAX as u64)).try_into().unwrap(),
                     ptr::null(),
                 );
                 if handle.is_null() {
