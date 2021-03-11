@@ -41,11 +41,11 @@
 
 use crate::rpc::driver::Driver;
 use crate::rpc::Handler;
-use futures::sync::oneshot;
-use futures::{Async, Future, Poll, Sink, Stream};
+use futures::{Sink, SinkExt, Stream};
 use std::collections::VecDeque;
 use std::io;
-use tokio::runtime::current_thread;
+use std::task::Poll;
+use tokio::sync::oneshot;
 
 mod proxy;
 
@@ -67,7 +67,7 @@ where
     };
 
     // Spawn the RPC driver into task
-    current_thread::spawn(fut.map_err(|_| ()));
+    tokio::task::spawn_local(fut);
 
     tx
 }
@@ -81,8 +81,9 @@ pub trait Client: 'static {
 
     /// The message transport, which works with async I/O objects of type `A`
     type Transport: 'static
-        + Stream<Item = Self::Response, Error = io::Error>
-        + Sink<SinkItem = Self::Request, SinkError = io::Error>;
+        + Stream<Item = Result<Self::Response, io::Error>>
+        + Sink<Self::Request, Error = io::Error>
+        + std::marker::Unpin;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -123,26 +124,26 @@ where
     }
 
     /// Produce a message
-    fn produce(&mut self) -> Poll<Option<Self::Out>, io::Error> {
+    fn produce(&mut self) -> Poll<Result<Option<Self::Out>, io::Error>> {
         trace!("ClientHandler::produce");
 
         // Try to get a new request
         match self.requests.poll() {
-            Ok(Async::Ready(Some((request, complete)))) => {
+            Ok(Poll::Ready(Some((request, complete)))) => {
                 trace!("  --> received request");
 
                 // Track complete handle
                 self.in_flight.push_back(complete);
 
-                Ok(Some(request).into())
+                Poll::Ready(Ok(Some(request)))
             }
-            Ok(Async::Ready(None)) => {
+            Ok(Poll::Ready(None)) => {
                 trace!("  --> client dropped");
-                Ok(None.into())
+                Poll::Ready(Ok(None))
             }
-            Ok(Async::NotReady) => {
+            Ok(Poll::Pending) => {
                 trace!("  --> not ready");
-                Ok(Async::NotReady)
+                Poll::Pending
             }
             Err(_) => unreachable!(),
         }

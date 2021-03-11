@@ -41,10 +41,10 @@
 
 use crate::rpc::driver::Driver;
 use crate::rpc::Handler;
-use futures::{Async, Future, Poll, Sink, Stream};
+use futures::task::Poll;
+use futures::{Future, Sink, Stream};
 use std::collections::VecDeque;
 use std::io;
-use tokio::runtime::current_thread;
 
 /// Bind an async I/O object `io` to the `server`.
 pub fn bind_server<S>(transport: S::Transport, server: S)
@@ -61,7 +61,7 @@ where
     };
 
     // Spawn the RPC driver into task
-    current_thread::spawn(fut.map_err(|_| ()))
+    tokio::task::spawn_local(fut.map_err(|_| ()))
 }
 
 pub trait Server: 'static {
@@ -72,13 +72,11 @@ pub trait Server: 'static {
     type Response: 'static;
 
     /// Future
-    type Future: Future<Item = Self::Response, Error = ()>;
+    type Future: Future<Output = Self::Response>;
 
     /// The message transport, which works with async I/O objects of
     /// type `A`.
-    type Transport: 'static
-        + Stream<Item = Self::Request, Error = io::Error>
-        + Sink<SinkItem = Self::Response, SinkError = io::Error>;
+    type Transport: 'static + Stream<Item = Self::Request> + Sink<Self::Response, Error = io::Error>;
 
     /// Process the request and return the response asynchronously.
     fn process(&mut self, req: Self::Request) -> Self::Future;
@@ -122,7 +120,7 @@ where
     }
 
     /// Produce a message
-    fn produce(&mut self) -> Poll<Option<Self::Out>, io::Error> {
+    fn produce(&mut self) -> Poll<Option<Self::Out>> {
         trace!("ServerHandler::produce");
 
         // Make progress on pending responses
@@ -135,7 +133,7 @@ where
             Some(&InFlight::Done(_)) => {}
             _ => {
                 trace!("  --> not ready");
-                return Ok(Async::NotReady);
+                return Poll::Pending;
             }
         }
 
@@ -143,7 +141,7 @@ where
         match self.in_flight.pop_front() {
             Some(InFlight::Done(res)) => {
                 trace!("  --> received response");
-                Ok(Async::Ready(Some(res)))
+                Poll::Ready(res)
             }
             _ => panic!(),
         }
@@ -164,18 +162,17 @@ impl<S: Server> Drop for ServerHandler<S> {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-enum InFlight<F: Future<Error = ()>> {
+enum InFlight<F: Future> {
     Active(F),
-    Done(F::Item),
+    Done(F::Output),
 }
 
-impl<F: Future<Error = ()>> InFlight<F> {
+impl<F: Future> InFlight<F> {
     fn poll(&mut self) {
         let res = match *self {
             InFlight::Active(ref mut f) => match f.poll() {
-                Ok(Async::Ready(e)) => e,
-                Err(_) => unreachable!(),
-                Ok(Async::NotReady) => return,
+                Poll::Ready(e) => e,
+                Poll::Pending => return,
             },
             _ => return,
         };

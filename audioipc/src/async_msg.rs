@@ -8,15 +8,13 @@
 #[cfg(unix)]
 use crate::msg::{RecvMsg, SendMsg};
 use bytes::{Buf, BufMut};
-#[cfg(unix)]
-use futures::Async;
-use futures::Poll;
+use futures::task::Poll;
 #[cfg(unix)]
 use iovec::IoVec;
 #[cfg(unix)]
 use mio::Ready;
 use std::io;
-use tokio_io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite};
 
 pub trait AsyncRecvMsg: AsyncRead {
     /// Pull some bytes from this source into the specified `Buf`, returning
@@ -25,7 +23,11 @@ pub trait AsyncRecvMsg: AsyncRead {
     /// The `buf` provided will have bytes read into it and the internal cursor
     /// will be advanced if any bytes were read. Note that this method typically
     /// will not reallocate the buffer provided.
-    fn recv_msg_buf<B>(&mut self, buf: &mut B, cmsg: &mut B) -> Poll<(usize, i32), io::Error>
+    fn recv_msg_buf<B>(
+        &mut self,
+        buf: &mut B,
+        cmsg: &mut B,
+    ) -> Poll<Result<(usize, i32), io::Error>>
     where
         Self: Sized,
         B: BufMut;
@@ -50,7 +52,7 @@ pub trait AsyncSendMsg: AsyncWrite {
     ///
     /// Note that this method will advance the `buf` provided automatically by
     /// the number of bytes written.
-    fn send_msg_buf<B, C>(&mut self, buf: &mut B, cmsg: &C) -> Poll<usize, io::Error>
+    fn send_msg_buf<B, C>(&mut self, buf: &mut B, cmsg: &C) -> Poll<Result<usize, io::Error>>
     where
         Self: Sized,
         B: Buf,
@@ -61,14 +63,17 @@ pub trait AsyncSendMsg: AsyncWrite {
 
 #[cfg(unix)]
 impl AsyncRecvMsg for super::AsyncMessageStream {
-    fn recv_msg_buf<B>(&mut self, buf: &mut B, cmsg: &mut B) -> Poll<(usize, i32), io::Error>
+    fn recv_msg_buf<B>(
+        &mut self,
+        buf: &mut B,
+        cmsg: &mut B,
+    ) -> Poll<Result<(usize, i32), io::Error>>
     where
         B: BufMut,
     {
-        if let Async::NotReady =
-            <super::AsyncMessageStream>::poll_read_ready(self, Ready::readable())?
+        if let Poll::Pending = super::AsyncMessageStream::poll_read_ready(self, Ready::readable())?
         {
-            return Ok(Async::NotReady);
+            return Poll::Pending;
         }
         let r = unsafe {
             // The `IoVec` type can't have a 0-length size, so we create a bunch
@@ -120,26 +125,26 @@ impl AsyncRecvMsg for super::AsyncMessageStream {
                 unsafe {
                     cmsg.advance_mut(cmsg_len);
                 }
-                Ok((n, flags).into())
+                Poll::Ready(Ok((n, flags)))
             }
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                 self.clear_read_ready(mio::Ready::readable())?;
-                Ok(Async::NotReady)
+                Poll::Pending
             }
-            Err(e) => Err(e),
+            Err(e) => Poll::Ready(Err(e)),
         }
     }
 }
 
 #[cfg(unix)]
 impl AsyncSendMsg for super::AsyncMessageStream {
-    fn send_msg_buf<B, C>(&mut self, buf: &mut B, cmsg: &C) -> Poll<usize, io::Error>
+    fn send_msg_buf<B, C>(&mut self, buf: &mut B, cmsg: &C) -> Poll<Result<usize, io::Error>>
     where
         B: Buf,
         C: Buf,
     {
-        if let Async::NotReady = <super::AsyncMessageStream>::poll_write_ready(self)? {
-            return Ok(Async::NotReady);
+        if let Poll::Pending = super::AsyncMessageStream::poll_write_ready(self)? {
+            return Poll::Pending;
         }
         let r = {
             // The `IoVec` type can't have a zero-length size, so create a dummy
@@ -156,13 +161,13 @@ impl AsyncSendMsg for super::AsyncMessageStream {
         match r {
             Ok(n) => {
                 buf.advance(n);
-                Ok(Async::Ready(n))
+                Poll::Ready(Ok(n))
             }
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                 self.clear_write_ready()?;
-                Ok(Async::NotReady)
+                Poll::Pending
             }
-            Err(e) => Err(e),
+            Err(e) => Poll::Ready(Err(e)),
         }
     }
 }

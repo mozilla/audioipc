@@ -43,10 +43,12 @@
 // IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use futures::sync::{mpsc, oneshot};
-use futures::{Async, Future, Poll};
+use futures::Future;
 use std::fmt;
 use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use tokio::sync::{mpsc, oneshot};
 
 /// Message used to dispatch requests to the task managing the
 /// client connection.
@@ -74,7 +76,7 @@ impl<R, Q> Clone for ClientProxy<R, Q> {
 
 pub fn channel<R, Q>() -> (ClientProxy<R, Q>, Receiver<R, Q>) {
     // Create a channel to send the requests to client-side of rpc.
-    let (tx, rx) = mpsc::unbounded();
+    let (tx, rx) = mpsc::unbounded_channel();
 
     // Wrap the `tx` part in ClientProxy so the rpc call interface
     // can be implemented.
@@ -93,7 +95,7 @@ impl<R, Q> ClientProxy<R, Q> {
         // By ignoring it, we are just dropping the `tx`, which will mean the
         // rx will return Canceled when polled. In turn, that is translated
         // into a BrokenPipe, which conveys the proper error.
-        let _ = self.tx.unbounded_send((request, tx));
+        let _ = self.tx.send((request, tx));
 
         Response { inner: rx }
     }
@@ -110,18 +112,17 @@ where
 }
 
 impl<Q> Future for Response<Q> {
-    type Item = Q;
-    type Error = io::Error;
+    type Output = Result<Q, io::Error>;
 
-    fn poll(&mut self) -> Poll<Q, io::Error> {
-        match self.inner.poll() {
-            Ok(Async::Ready(res)) => Ok(Async::Ready(res)),
-            Ok(Async::NotReady) => Ok(Async::NotReady),
-            // Convert oneshot::Canceled into io::Error
-            Err(_) => {
-                let e = io::Error::new(io::ErrorKind::BrokenPipe, "broken pipe");
-                Err(e)
-            }
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        use tokio::sync::oneshot::error::TryRecvError;
+        match self.inner.try_recv() {
+            Ok(s) => Poll::Ready(Ok(s)),
+            Err(TryRecvError::Empty) => Poll::Pending,
+            Err(TryRecvError::Closed) => Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "broken pipe",
+            ))),
         }
     }
 }

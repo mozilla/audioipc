@@ -5,9 +5,11 @@
 
 use crate::codec::Codec;
 use bytes::{Buf, Bytes, BytesMut, IntoBuf};
-use futures::{task, AsyncSink, Poll, Sink, StartSend, Stream};
+use futures::{task, Sink, Stream};
 use std::io;
-use tokio_io::{AsyncRead, AsyncWrite};
+use std::pin::Pin;
+use std::task::Poll;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 const INITIAL_CAPACITY: usize = 1024;
 const BACKPRESSURE_THRESHOLD: usize = 4 * INITIAL_CAPACITY;
@@ -28,8 +30,13 @@ impl<A, C> Framed<A, C>
 where
     A: AsyncWrite,
 {
+    fn do_flush(&mut self) -> Poll<Result<(), io::Error>> {
+        self.do_write()?;
+        self.io.flush()?;
+    }
+
     // If there is a buffered frame, try to write it to `A`
-    fn do_write(&mut self) -> Poll<(), io::Error> {
+    fn do_write(&mut self) -> Poll<Result<(), io::Error>> {
         loop {
             if self.frame.is_none() {
                 self.set_frame();
@@ -41,7 +48,7 @@ where
 
             let done = {
                 let frame = self.frame.as_mut().unwrap();
-                try_ready!(self.io.write_buf(frame));
+                self.io.write_buf(frame)?;
                 !frame.has_remaining()
             };
 
@@ -68,9 +75,8 @@ where
     C: Codec,
 {
     type Item = C::Out;
-    type Error = io::Error;
 
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
             // Repeatedly call `decode` or `decode_eof` as long as it is
             // "readable". Readable is defined as not having returned `None`. If
@@ -101,7 +107,7 @@ where
             // Otherwise, try to read more data and try again. Make sure we've
             // got room for at least one byte to read to ensure that we don't
             // get a spurious 0 that looks like EOF
-            if try_ready!(self.io.read_buf(&mut self.read_buf)) == 0 {
+            if self.io.read_buf(&mut self.read_buf)? == 0 {
                 self.eof = true;
             }
 
@@ -110,44 +116,42 @@ where
     }
 }
 
-impl<A, C> Sink for Framed<A, C>
+impl<A, C> Sink<C::In> for Framed<A, C>
 where
     A: AsyncWrite,
     C: Codec,
 {
-    type SinkItem = C::In;
-    type SinkError = io::Error;
+    type Error = io::Error;
 
-    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
+    fn start_send(self: Pin<&mut Self>, item: C::In) -> Result<(), Self::Error> {
         // If the buffer is already over BACKPRESSURE_THRESHOLD,
         // then attempt to flush it. If after flush it's *still*
         // over BACKPRESSURE_THRESHOLD, then reject the send.
         if self.write_buf.len() > BACKPRESSURE_THRESHOLD {
-            self.poll_complete()?;
+            self.do_flush()?;
             if self.write_buf.len() > BACKPRESSURE_THRESHOLD {
-                return Ok(AsyncSink::NotReady(item));
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "Too much backpressure",
+                ));
             }
         }
 
         self.codec.encode(item, &mut self.write_buf)?;
-        Ok(AsyncSink::Ready)
+        Ok(())
     }
 
-    fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Result<(), Self::Error>> {
         trace!("flushing framed transport");
 
-        try_ready!(self.do_write());
-
-        try_nb!(self.io.flush());
+        self.do_flush()?;
 
         trace!("framed transport flushed");
-        Ok(().into())
+        Ok(())
     }
 
-    fn close(&mut self) -> Poll<(), Self::SinkError> {
-        if task::is_in_task() {
-            try_ready!(self.poll_complete());
-        }
+    fn poll_close(self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Result<(), Self::Error>> {
+        self.do_flush()?;
         self.io.shutdown()
     }
 }

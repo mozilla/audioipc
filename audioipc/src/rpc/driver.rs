@@ -4,9 +4,13 @@
 // accompanying file LICENSE for details
 
 use crate::rpc::Handler;
-use futures::{Async, AsyncSink, Future, Poll, Sink, Stream};
+use futures::sink::Sink;
 use std::fmt;
+use std::future::Future;
 use std::io;
+use std::pin::Pin;
+use std::task;
+use std::task::Poll;
 
 pub struct Driver<T>
 where
@@ -43,7 +47,7 @@ where
     /// Process incoming messages off the transport.
     fn receive_incoming(&mut self) -> io::Result<()> {
         while self.run {
-            if let Async::Ready(req) = self.handler.transport().poll()? {
+            if let Poll::Ready(req) = self.handler.transport().poll()? {
                 self.process_incoming(req)?;
             } else {
                 break;
@@ -83,18 +87,18 @@ where
         trace!("send_responses");
         loop {
             match self.handler.produce()? {
-                Async::Ready(Some(message)) => {
+                Poll::Ready(Some(message)) => {
                     trace!("  --> got message");
                     self.process_outgoing(message)?;
                 }
-                Async::Ready(None) => {
+                Poll::Ready(None) => {
                     trace!("  --> got None");
                     // The service is done with the connection.
                     self.run = false;
                     break;
                 }
                 // Nothing to dispatch
-                Async::NotReady => break,
+                Poll::Pending => break,
             }
         }
 
@@ -103,8 +107,7 @@ where
 
     fn process_outgoing(&mut self, message: T::Out) -> io::Result<()> {
         trace!("process_outgoing");
-        assert_send(&mut self.handler.transport(), message)?;
-
+        self.handler.transport().start_send(message)?;
         Ok(())
     }
 
@@ -124,10 +127,9 @@ impl<T> Future for Driver<T>
 where
     T: Handler,
 {
-    type Item = ();
-    type Error = io::Error;
+    type Output = Result<(), io::Error>;
 
-    fn poll(&mut self) -> Poll<(), Self::Error> {
+    fn poll(self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Self::Output> {
         trace!("rpc::Driver::tick");
 
         // First read off data from the socket
@@ -141,21 +143,11 @@ where
 
         if self.is_done() {
             trace!("  --> is done.");
-            return Ok(().into());
+            return Poll::Ready(());
         }
 
         // Tick again later
-        Ok(Async::NotReady)
-    }
-}
-
-fn assert_send<S: Sink>(s: &mut S, item: S::SinkItem) -> Result<(), S::SinkError> {
-    match s.start_send(item)? {
-        AsyncSink::Ready => Ok(()),
-        AsyncSink::NotReady(_) => panic!(
-            "sink reported itself as ready after `poll_ready` but was \
-             then unable to accept a message"
-        ),
+        Poll::Pending
     }
 }
 

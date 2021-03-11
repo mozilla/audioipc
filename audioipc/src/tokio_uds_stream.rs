@@ -3,11 +3,10 @@
 // - Removed ucred for build simplicity
 // - Added clear_{read,write}_ready per: https://github.com/tokio-rs/tokio/pull/1294
 
-use tokio_io::{AsyncRead, AsyncWrite};
-use tokio_reactor::{Handle, PollEvented};
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use bytes::{Buf, BufMut};
-use futures::{Async, Future, Poll};
+use futures::Future;
 use iovec::{self, IoVec};
 use mio::Ready;
 
@@ -17,6 +16,10 @@ use std::net::Shutdown;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::os::unix::net::{self, SocketAddr};
 use std::path::Path;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use tokio::io::unix::AsyncFd;
+use tokio::io::ReadBuf;
 
 /// A structure representing a connected Unix socket.
 ///
@@ -24,7 +27,7 @@ use std::path::Path;
 /// from a listener with `UnixListener::incoming`. Additionally, a pair of
 /// anonymous Unix sockets can be created with `UnixStream::pair`.
 pub struct UnixStream {
-    io: PollEvented<mio_uds::UnixStream>,
+    io: AsyncFd<mio_uds::UnixStream>,
 }
 
 /// Future returned by `UnixStream::connect` which will resolve to a
@@ -66,11 +69,9 @@ impl UnixStream {
     ///
     /// The returned stream will be associated with the given event loop
     /// specified by `handle` and is ready to perform I/O.
-    pub fn from_std(stream: net::UnixStream, handle: &Handle) -> io::Result<UnixStream> {
+    pub fn from_std(stream: net::UnixStream) -> io::Result<UnixStream> {
         let stream = mio_uds::UnixStream::from_stream(stream)?;
-        let io = PollEvented::new_with_handle(stream, handle)?;
-
-        Ok(UnixStream { io })
+        Ok(Self::new(stream))
     }
 
     /// Creates an unnamed pair of connected sockets.
@@ -87,12 +88,12 @@ impl UnixStream {
     }
 
     pub(crate) fn new(stream: mio_uds::UnixStream) -> UnixStream {
-        let io = PollEvented::new(stream);
+        let io = AsyncFd::new(stream);
         UnixStream { io }
     }
 
     /// Test whether this socket is ready to be read or not.
-    pub fn poll_read_ready(&self, ready: Ready) -> Poll<Ready, io::Error> {
+    pub fn poll_read_ready(&self, ready: Ready) -> Poll<Result<Ready, io::Error>> {
         self.io.poll_read_ready(ready)
     }
 
@@ -102,7 +103,7 @@ impl UnixStream {
     }
 
     /// Test whether this socket is ready to be written to or not.
-    pub fn poll_write_ready(&self) -> Poll<Ready, io::Error> {
+    pub fn poll_write_ready(&self) -> Poll<Result<Ready, io::Error>> {
         self.io.poll_write_ready()
     }
 
@@ -152,22 +153,30 @@ impl Write for UnixStream {
 }
 
 impl AsyncRead for UnixStream {
-    unsafe fn prepare_uninitialized_buffer(&self, _: &mut [u8]) -> bool {
-        false
-    }
-
-    fn read_buf<B: BufMut>(&mut self, buf: &mut B) -> Poll<usize, io::Error> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+        buf: &mut ReadBuf,
+    ) -> Poll<Result<usize, io::Error>> {
         <&UnixStream>::read_buf(&mut &*self, buf)
     }
 }
 
 impl AsyncWrite for UnixStream {
-    fn shutdown(&mut self) -> Poll<(), io::Error> {
-        <&UnixStream>::shutdown(&mut &*self)
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+        <&UnixStream>::poll_shutdown(&mut &*self, cx)
     }
 
-    fn write_buf<B: Buf>(&mut self, buf: &mut B) -> Poll<usize, io::Error> {
-        <&UnixStream>::write_buf(&mut &*self, buf)
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+        <&UnixStream>::poll_flush(&mut &*self, cx)
+    }
+
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+        buf: &[u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        <&UnixStream>::poll_write(&mut &*self, cx, buf)
     }
 }
 
@@ -188,13 +197,13 @@ impl<'a> Write for &'a UnixStream {
 }
 
 impl<'a> AsyncRead for &'a UnixStream {
-    unsafe fn prepare_uninitialized_buffer(&self, _: &mut [u8]) -> bool {
-        false
-    }
-
-    fn read_buf<B: BufMut>(&mut self, buf: &mut B) -> Poll<usize, io::Error> {
-        if let Async::NotReady = <UnixStream>::poll_read_ready(self, Ready::readable())? {
-            return Ok(Async::NotReady);
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+        buf: &mut ReadBuf,
+    ) -> Poll<Result<(), io::Error>> {
+        if let Poll::Pending = <UnixStream>::poll_read_ready(self, Ready::readable())? {
+            return Poll::Pending;
         }
         unsafe {
             let r = read_ready(buf, self.as_raw_fd());
@@ -202,27 +211,31 @@ impl<'a> AsyncRead for &'a UnixStream {
                 let e = io::Error::last_os_error();
                 if e.kind() == io::ErrorKind::WouldBlock {
                     self.io.clear_read_ready(Ready::readable())?;
-                    Ok(Async::NotReady)
+                    Poll::Pending
                 } else {
-                    Err(e)
+                    Poll::Ready(Err(e))
                 }
             } else {
                 let r = r as usize;
                 buf.advance_mut(r);
-                Ok(r.into())
+                Poll::Ready(Ok(()))
             }
         }
     }
 }
 
 impl<'a> AsyncWrite for &'a UnixStream {
-    fn shutdown(&mut self) -> Poll<(), io::Error> {
-        Ok(().into())
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
+        Poll::Ready(Ok(()))
     }
 
-    fn write_buf<B: Buf>(&mut self, buf: &mut B) -> Poll<usize, io::Error> {
-        if let Async::NotReady = <UnixStream>::poll_write_ready(self)? {
-            return Ok(Async::NotReady);
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+        buf: &[u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        if let Poll::Pending = <UnixStream>::poll_write_ready(self)? {
+            return Poll::Pending;
         }
         unsafe {
             let r = write_ready(buf, self.as_raw_fd());
@@ -230,14 +243,14 @@ impl<'a> AsyncWrite for &'a UnixStream {
                 let e = io::Error::last_os_error();
                 if e.kind() == io::ErrorKind::WouldBlock {
                     self.io.clear_write_ready()?;
-                    Ok(Async::NotReady)
+                    Poll::Pending
                 } else {
-                    Err(e)
+                    Poll::Ready(Err(e))
                 }
             } else {
                 let r = r as usize;
                 buf.advance(r);
-                Ok(r.into())
+                Poll::Ready(Ok(r))
             }
         }
     }
@@ -256,20 +269,19 @@ impl AsRawFd for UnixStream {
 }
 
 impl Future for ConnectFuture {
-    type Item = UnixStream;
-    type Error = io::Error;
+    type Output = Result<UnixStream, io::Error>;
 
-    fn poll(&mut self) -> Poll<UnixStream, io::Error> {
+    fn poll(self: Pin<&mut Self>) -> Poll<Result<UnixStream, io::Error>> {
         use std::mem;
 
         match self.inner {
             State::Waiting(ref mut stream) => {
-                if let Async::NotReady = stream.io.poll_write_ready()? {
-                    return Ok(Async::NotReady);
+                if let Poll::NotReady = stream.io.poll_write_ready()? {
+                    return Poll::NotReady;
                 }
 
                 if let Some(e) = stream.io.get_ref().take_error()? {
-                    return Err(e);
+                    return Poll::Ready(Err(e));
                 }
             }
             State::Error(_) => {
@@ -284,7 +296,7 @@ impl Future for ConnectFuture {
         }
 
         match mem::replace(&mut self.inner, State::Empty) {
-            State::Waiting(stream) => Ok(Async::Ready(stream)),
+            State::Waiting(stream) => Ok(Poll::Ready(Ok(stream))),
             _ => unreachable!(),
         }
     }
