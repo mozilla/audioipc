@@ -64,6 +64,7 @@ fn assert_not_in_callback() {
     });
 }
 
+#[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 /// Entry point from C code.
 pub unsafe extern "C" fn audioipc_client_init(
