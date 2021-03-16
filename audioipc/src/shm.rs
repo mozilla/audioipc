@@ -3,6 +3,8 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details.
 
+#![allow(clippy::missing_safety_doc)]
+
 use crate::errors::*;
 use crate::PlatformHandle;
 use std::{convert::TryInto, ffi::c_void, slice};

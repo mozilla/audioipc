@@ -75,12 +75,12 @@ fn run() -> Result<ServerWrapper> {
         },
         || {},
     )
-    .or_else(|e| {
+    .map_err(|e| {
         debug!(
             "Failed to start cubeb audio callback event loop thread: {:?}",
             e
         );
-        Err(e)
+        e
     })?;
 
     let core_thread = core::spawn_thread(
@@ -91,9 +91,9 @@ fn run() -> Result<ServerWrapper> {
         },
         || {},
     )
-    .or_else(|e| {
+    .map_err(|e| {
         debug!("Failed to cubeb audio core event loop thread: {:?}", e);
-        Err(e)
+        e
     })?;
 
     Ok(ServerWrapper {
@@ -102,6 +102,7 @@ fn run() -> Result<ServerWrapper> {
     })
 }
 
+#[allow(clippy::missing_safety_doc)]
 #[no_mangle]
 pub unsafe extern "C" fn audioipc_server_start(
     context_name: *const std::os::raw::c_char,
@@ -132,7 +133,7 @@ pub extern "C" fn audioipc_server_new_client(p: *mut c_void) -> PlatformHandleTy
     // is registered with the reactor core, the other side is returned
     // to the caller.
     MessageStream::anonymous_ipc_pair()
-        .and_then(|(ipc_server, ipc_client)| {
+        .map(|(ipc_server, ipc_client)| {
             // Spawn closure to run on same thread as reactor::Core
             // via remote handle.
             wrapper
@@ -142,10 +143,9 @@ pub extern "C" fn audioipc_server_new_client(p: *mut c_void) -> PlatformHandleTy
                     trace!("Incoming connection");
                     let handle = reactor::Handle::default();
                     ipc_server.into_tokio_ipc(&handle)
-                    .and_then(|sock| {
+                    .map(|sock| {
                         let transport = framed_with_platformhandles(sock, Default::default());
                         rpc::bind_server(transport, server::CubebServer::new(core_handle));
-                        Ok(())
                     }).map_err(|_| ())
                     // Notify waiting thread that server has been registered.
                     .and_then(|_| wait_tx.send(()))
@@ -154,7 +154,7 @@ pub extern "C" fn audioipc_server_new_client(p: *mut c_void) -> PlatformHandleTy
             // Wait for notification that server has been registered
             // with reactor::Core.
             let _ = wait_rx.wait();
-            Ok(unsafe { PlatformHandle::from(ipc_client).into_raw() })
+            unsafe { PlatformHandle::from(ipc_client).into_raw() }
         })
         .unwrap_or(audioipc::INVALID_HANDLE_VALUE)
 }
