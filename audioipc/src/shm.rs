@@ -51,13 +51,13 @@ mod unix {
     use std::os::unix::io::FromRawFd;
 
     fn open_shm_file(id: &str) -> Result<File> {
+        let id_cstring = std::ffi::CString::new(id).unwrap();
+
         #[cfg(target_os = "linux")]
         {
-            let id_cstring = std::ffi::CString::new(id).unwrap();
             unsafe {
                 let r = libc::syscall(libc::SYS_memfd_create, id_cstring.as_ptr(), 0);
                 if r >= 0 {
-                    use std::os::unix::io::FromRawFd as _;
                     return Ok(File::from_raw_fd(r.try_into().unwrap()));
                 }
             }
@@ -73,6 +73,18 @@ mod unix {
             {
                 let _ = remove_file(&path);
                 return Ok(file);
+            }
+        }
+
+        unsafe {
+            let fd = libc::shm_open(
+                id_cstring.as_ptr(),
+                libc::O_RDWR | libc::O_CREAT | libc::O_EXCL,
+                0o600,
+            );
+            if fd >= 0 {
+                libc::shm_unlink(id_cstring.as_ptr());
+                return Ok(File::from_raw_fd(fd));
             }
         }
 
