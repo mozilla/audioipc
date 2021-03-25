@@ -141,7 +141,7 @@ fn enumerate_devices(ctx: &cubeb::Context) -> Result<()> {
     Ok(())
 }
 
-pub fn client_test(fd: audioipc::PlatformHandleType) -> Result<()> {
+pub fn client_test(handle: audioipc::PlatformHandleType) -> Result<()> {
     macro_rules! query(
         ($e: expr) => (match $e {
             Ok(v) => v,
@@ -154,7 +154,7 @@ pub fn client_test(fd: audioipc::PlatformHandleType) -> Result<()> {
     let context_name = CString::new("AudioIPC").unwrap();
     let mut c: *mut ffi::cubeb = ptr::null_mut();
     let init_params = audioipc_client::AudioIpcInitParams {
-        server_connection: fd,
+        server_connection: handle,
         pool_size: 1,
         stack_size: 64 * 1024,
         thread_create_callback: None,
