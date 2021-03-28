@@ -11,7 +11,7 @@ edition = "2018"
 
 [dependencies]
 bincode = "1"
-bytes = "0.4"
+bytes = "0.4" # XXX update to 1.0
 cubeb = "0.9"
 futures = "0.1.29"
 log = "0.4"
@@ -20,6 +20,9 @@ serde_derive = "1"
 tokio = "0.1"
 tokio-io = "0.1"
 audio_thread_priority = "0.23.4"
+# XXX: IPC core rework.
+mio-07 = { package = "mio", version = "0.7",  features = ["os-poll", "net", "os-ext"] }
+slab = "0.4"
 
 [target.'cfg(unix)'.dependencies]
 iovec = "0.1"
