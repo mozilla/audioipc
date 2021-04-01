@@ -39,6 +39,7 @@ static G_CUBEB_CONTEXT_PARAMS: Lazy<Mutex<CubebContextParams>> = Lazy::new(|| {
 
 #[allow(deprecated)]
 pub mod errors {
+    #![allow(clippy::upper_case_acronyms)]
     error_chain! {
         links {
             AudioIPC(::audioipc::errors::Error, ::audioipc::errors::ErrorKind);

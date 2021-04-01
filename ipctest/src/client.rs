@@ -11,6 +11,7 @@ use std::thread;
 use std::time::Duration;
 
 mod errors {
+    #![allow(clippy::upper_case_acronyms)]
     error_chain! {
         links {
             AudioIPC(::audioipc::errors::Error, ::audioipc::errors::ErrorKind);

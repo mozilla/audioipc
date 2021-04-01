@@ -14,6 +14,7 @@ use std::process::exit;
 mod client;
 
 mod errors {
+    #![allow(clippy::upper_case_acronyms)]
     error_chain! {
         links {
             AudioIPC(::audioipc::errors::Error, ::audioipc::errors::ErrorKind);
