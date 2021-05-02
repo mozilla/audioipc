@@ -45,7 +45,7 @@ impl SharedMemView {
 #[cfg(unix)]
 mod unix {
     use super::*;
-    use memmap::{MmapMut, MmapOptions};
+    use memmap2::{MmapMut, MmapOptions};
     use std::fs::File;
     use std::os::unix::io::FromRawFd;
 
