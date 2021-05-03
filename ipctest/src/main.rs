@@ -90,7 +90,7 @@ fn run_client() -> Result<()> {
     client::client_test(target_fd)
 }
 
-#[allow(clippy::clippy::unnecessary_wraps)]
+#[allow(clippy::unnecessary_wraps)]
 #[cfg(windows)]
 fn run() -> Result<()> {
     let handle =

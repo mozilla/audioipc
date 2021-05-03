@@ -60,7 +60,7 @@ where
 
 fn assert_not_in_callback() {
     IN_CALLBACK.with(|b| {
-        assert_eq!(*b.borrow(), false);
+        assert!(!*b.borrow());
     });
 }
 

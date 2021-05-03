@@ -60,7 +60,7 @@ impl CubebDeviceCollectionManager {
             self.internal_register(context, true)?;
         }
         server.borrow_mut().devtype.insert(devtype);
-        if servers.iter().find(|s| Rc::ptr_eq(s, server)).is_none() {
+        if !servers.iter().any(|s| Rc::ptr_eq(s, server)) {
             servers.push(server.clone());
         }
         Ok(())
