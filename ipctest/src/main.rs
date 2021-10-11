@@ -25,9 +25,6 @@ mod errors {
 
 use crate::errors::*;
 
-// TODO: Remove hardcoded size and allow allocation based on cubeb backend requirements.
-pub const SHM_AREA_SIZE: usize = 2 * 1024 * 1024;
-
 // Run with 'RUST_LOG=run,audioipc cargo run -p ipctest'
 #[cfg(unix)]
 fn run() -> Result<()> {
@@ -35,7 +32,7 @@ fn run() -> Result<()> {
 
     let handle =
         unsafe { audioipc_server::audioipc_server_start(std::ptr::null(), std::ptr::null()) };
-    let fd = audioipc_server::audioipc_server_new_client(handle, SHM_AREA_SIZE);
+    let fd = audioipc_server::audioipc_server_new_client(handle, 0);
     let fd = unsafe {
         let new_fd = libc::dup(fd);
         libc::close(fd);
@@ -98,7 +95,7 @@ fn run_client() -> Result<()> {
 fn run() -> Result<()> {
     let handle =
         unsafe { audioipc_server::audioipc_server_start(std::ptr::null(), std::ptr::null()) };
-    let fd = audioipc_server::audioipc_server_new_client(handle, SHM_AREA_SIZE);
+    let fd = audioipc_server::audioipc_server_new_client(handle, 0);
 
     let args: Vec<String> = std::env::args().collect();
 
