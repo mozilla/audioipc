@@ -29,9 +29,13 @@ use crate::errors::*;
 #[cfg(unix)]
 fn run() -> Result<()> {
     use std::ffi::CString;
-
-    let handle =
-        unsafe { audioipc_server::audioipc_server_start(std::ptr::null(), std::ptr::null()) };
+    let init_params = audioipc_server::AudioIpcServerInitParams {
+        thread_create_callback: None,
+        thread_destroy_callback: None,
+    };
+    let handle = unsafe {
+        audioipc_server::audioipc_server_start(std::ptr::null(), std::ptr::null(), &init_params)
+    };
     let fd = audioipc_server::audioipc_server_new_client(handle, 0);
     let fd = unsafe {
         let new_fd = libc::dup(fd);
@@ -93,8 +97,13 @@ fn run_client() -> Result<()> {
 #[allow(clippy::unnecessary_wraps)]
 #[cfg(windows)]
 fn run() -> Result<()> {
-    let handle =
-        unsafe { audioipc_server::audioipc_server_start(std::ptr::null(), std::ptr::null()) };
+    let init_params = audioipc_server::AudioIpcServerInitParams {
+        thread_create_callback: None,
+        thread_destroy_callback: None,
+    };
+    let handle = unsafe {
+        audioipc_server::audioipc_server_start(std::ptr::null(), std::ptr::null(), &init_params)
+    };
     let fd = audioipc_server::audioipc_server_new_client(handle, 0);
 
     let args: Vec<String> = std::env::args().collect();
