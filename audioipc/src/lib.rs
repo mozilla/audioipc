@@ -30,6 +30,10 @@ mod msg;
 pub mod rpc;
 pub mod shm;
 
+pub mod ipccore;
+pub mod rpccore;
+pub mod sys;
+
 // TODO: Remove local fork when https://github.com/tokio-rs/tokio/pull/1294 is resolved.
 #[cfg(unix)]
 mod tokio_uds_stream;

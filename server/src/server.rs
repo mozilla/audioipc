@@ -5,21 +5,16 @@
 
 #[cfg(target_os = "linux")]
 use audio_thread_priority::{promote_thread_to_real_time, RtPriorityThreadInfo};
-use audioipc::framing::{framed, Framed};
+use audioipc::messages::SerializableHandle;
 use audioipc::messages::{
     CallbackReq, CallbackResp, ClientMessage, Device, DeviceCollectionReq, DeviceCollectionResp,
     DeviceInfo, RegisterDeviceCollectionChanged, ServerMessage, StreamCreate, StreamCreateParams,
     StreamInitParams, StreamParams,
 };
-use audioipc::rpc;
 use audioipc::shm::SharedMem;
-use audioipc::{codec::LengthDelimitedCodec, messages::SerializableHandle};
-use audioipc::{MessageStream, PlatformHandle};
+use audioipc::{ipccore, rpccore, sys};
 use cubeb_core as cubeb;
 use cubeb_core::ffi;
-use futures::future::{self, FutureResult};
-use futures::sync::oneshot;
-use futures::Future;
 use std::convert::From;
 use std::ffi::CStr;
 use std::mem::size_of;
@@ -28,8 +23,6 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{cell::RefCell, sync::Mutex};
 use std::{panic, slice};
-use tokio::reactor;
-use tokio::runtime::current_thread;
 
 use crate::errors::*;
 
@@ -204,20 +197,16 @@ where
 
 struct DeviceCollectionClient;
 
-impl rpc::Client for DeviceCollectionClient {
+impl rpccore::Client for DeviceCollectionClient {
     type Request = DeviceCollectionReq;
     type Response = DeviceCollectionResp;
-    type Transport =
-        Framed<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Request, Self::Response>>;
 }
 
 struct CallbackClient;
 
-impl rpc::Client for CallbackClient {
+impl rpccore::Client for CallbackClient {
     type Request = CallbackReq;
     type Response = CallbackResp;
-    type Transport =
-        Framed<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Request, Self::Response>>;
 }
 
 struct ServerStreamCallbacks {
@@ -228,7 +217,7 @@ struct ServerStreamCallbacks {
     /// Shared memory buffer for transporting audio data to/from client
     shm: SharedMem,
     /// RPC interface to callback server running in client
-    rpc: rpc::ClientProxy<CallbackReq, CallbackResp>,
+    rpc: rpccore::Proxy<CallbackReq, CallbackResp>,
 }
 
 impl ServerStreamCallbacks {
@@ -321,7 +310,7 @@ fn get_shm_id() -> String {
 struct ServerStream {
     stream: Option<cubeb::Stream>,
     cbs: Box<ServerStreamCallbacks>,
-    shm_setup: Option<rpc::Response<CallbackResp>>,
+    shm_setup: Option<rpccore::ProxyResponse<CallbackResp>>,
 }
 
 impl Drop for ServerStream {
@@ -332,7 +321,7 @@ impl Drop for ServerStream {
 }
 
 struct CubebServerCallbacks {
-    rpc: rpc::ClientProxy<DeviceCollectionReq, DeviceCollectionResp>,
+    rpc: rpccore::Proxy<DeviceCollectionReq, DeviceCollectionResp>,
     devtype: cubeb::DeviceType,
 }
 
@@ -351,7 +340,7 @@ impl CubebServerCallbacks {
 }
 
 pub struct CubebServer {
-    callback_thread: current_thread::Handle,
+    callback_thread: ipccore::EventLoopHandle,
     streams: slab::Slab<ServerStream>,
     remote_pid: Option<u32>,
     cbs: Option<Rc<RefCell<CubebServerCallbacks>>>,
@@ -359,22 +348,23 @@ pub struct CubebServer {
     shm_area_size: usize,
 }
 
-impl rpc::Server for CubebServer {
+#[allow(unknown_lints)] // non_send_fields_in_send_ty is Nightly-only as of 2021-11-29.
+#[allow(clippy::non_send_fields_in_send_ty)]
+// XXX: required for server setup, verify this is safe.
+unsafe impl Send for CubebServer {}
+
+impl rpccore::Server for CubebServer {
     type Request = ServerMessage;
     type Response = ClientMessage;
-    type Future = FutureResult<Self::Response, ()>;
-    type Transport =
-        Framed<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Response, Self::Request>>;
 
-    fn process(&mut self, req: Self::Request) -> Self::Future {
+    fn process(&mut self, req: Self::Request) -> Self::Response {
         if let ServerMessage::ClientConnect(pid) = req {
             self.remote_pid = Some(pid);
         }
-        let resp = with_local_context(|context, manager| match *context {
+        with_local_context(|context, manager| match *context {
             Err(_) => error(cubeb::Error::error()),
             Ok(ref context) => self.process_msg(context, manager, &req),
-        });
-        future::ok(resp)
+        })
     }
 }
 
@@ -400,7 +390,7 @@ macro_rules! try_stream {
 }
 
 impl CubebServer {
-    pub fn new(callback_thread_handle: current_thread::Handle, shm_area_size: usize) -> Self {
+    pub fn new(callback_thread_handle: ipccore::EventLoopHandle, shm_area_size: usize) -> Self {
         CubebServer {
             callback_thread: callback_thread_handle,
             streams: slab::Slab::<ServerStream>::new(),
@@ -550,49 +540,42 @@ impl CubebServer {
             }
 
             ServerMessage::ContextSetupDeviceCollectionCallback => {
-                if let Ok((ipc_server, ipc_client)) = MessageStream::anonymous_ipc_pair() {
-                    debug!(
-                        "Created device collection RPC pair: {:?}-{:?}",
-                        ipc_server, ipc_client
-                    );
-
-                    // This code is currently running on the Client/Server RPC
-                    // handling thread.  We need to move the registration of the
-                    // bind_client to the callback RPC handling thread.  This is
-                    // done by spawning a future on `handle`.
-                    let (tx, rx) = oneshot::channel();
-                    self.callback_thread
-                        .spawn(futures::future::lazy(move || {
-                            let handle = reactor::Handle::default();
-                            let stream = ipc_server.into_tokio_ipc(&handle).unwrap();
-                            let transport = framed(stream, Default::default());
-                            let rpc = rpc::bind_client::<DeviceCollectionClient>(transport);
-                            drop(tx.send(rpc));
-                            Ok(())
-                        }))
-                        .expect("Failed to spawn DeviceCollectionClient");
-
-                    if let Ok(rpc) = rx.wait() {
-                        self.cbs = Some(Rc::new(RefCell::new(CubebServerCallbacks {
-                            rpc,
-                            devtype: cubeb::DeviceType::empty(),
-                        })));
-                        let fd = RegisterDeviceCollectionChanged {
-                            platform_handle: SerializableHandle::new(
-                                PlatformHandle::from(ipc_client),
-                                self.remote_pid.unwrap(),
-                            ),
-                        };
-
-                        ClientMessage::ContextSetupDeviceCollectionCallback(fd)
-                    } else {
-                        warn!("Failed to setup RPC client");
-                        error(cubeb::Error::error())
+                let (server_pipe, client_pipe) = match sys::make_pipe_pair() {
+                    Ok((server_pipe, client_pipe)) => (server_pipe, client_pipe),
+                    Err(e) => {
+                        debug!(
+                            "ContextSetupDeviceCollectionCallback - make_pipe_pair failed: {:?}",
+                            e
+                        );
+                        return error(cubeb::Error::error());
                     }
-                } else {
-                    warn!("Failed to create RPC pair");
-                    error(cubeb::Error::error())
-                }
+                };
+
+                // XXX: should this be on callback or core?
+                // XXX: we should send use client_pipe and send server_pipe, but into_raw() is tricky for sys::Pipe.
+                let rpc = match self
+                    .callback_thread
+                    .bind_client::<DeviceCollectionClient>(server_pipe)
+                {
+                    Ok(rpc) => rpc,
+                    Err(e) => {
+                        debug!(
+                            "ContextSetupDeviceCollectionCallback - bind_client: {:?}",
+                            e
+                        );
+                        return error(cubeb::Error::error());
+                    }
+                };
+
+                self.cbs = Some(Rc::new(RefCell::new(CubebServerCallbacks {
+                    rpc,
+                    devtype: cubeb::DeviceType::empty(),
+                })));
+                let fd = RegisterDeviceCollectionChanged {
+                    platform_handle: SerializableHandle::new(client_pipe, self.remote_pid.unwrap()),
+                };
+
+                ClientMessage::ContextSetupDeviceCollectionCallback(fd)
             }
 
             ServerMessage::ContextRegisterDeviceCollectionChanged(device_type, enable) => self
@@ -670,9 +653,6 @@ impl CubebServer {
         let input_frame_size = frame_size_in_bytes(params.input_stream_params.as_ref());
         let output_frame_size = frame_size_in_bytes(params.output_stream_params.as_ref());
 
-        let (ipc_server, ipc_client) = MessageStream::anonymous_ipc_pair()?;
-        debug!("Created callback pair: {:?}-{:?}", ipc_server, ipc_client);
-
         // Estimate a safe shmem size for this stream configuration.  If the server was configured with a fixed
         // shm_area_size override, use that instead.
         // TODO: Add a new cubeb API to query the precise buffer size required for a given stream config.
@@ -690,29 +670,15 @@ impl CubebServer {
         debug!("shm_area_size = {}", shm_area_size);
 
         let shm = SharedMem::new(&get_shm_id(), shm_area_size)?;
+        let shm_handle = unsafe { shm.make_handle()? };
 
-        // This code is currently running on the Client/Server RPC
-        // handling thread.  We need to move the registration of the
-        // bind_client to the callback RPC handling thread.  This is
-        // done by spawning a future on `handle`.
-        let (tx, rx) = oneshot::channel();
-        self.callback_thread
-            .spawn(futures::future::lazy(move || {
-                let handle = reactor::Handle::default();
-                let stream = ipc_server.into_tokio_ipc(&handle).unwrap();
-                let transport = framed(stream, Default::default());
-                let rpc = rpc::bind_client::<CallbackClient>(transport);
-                drop(tx.send(rpc));
-                Ok(())
-            }))
-            .expect("Failed to spawn CallbackClient");
+        let (server_pipe, client_pipe) = sys::make_pipe_pair()?;
+        // XXX: this should be client_pipe, need to sort out sys::Pipe into_raw()
+        let rpc = self
+            .callback_thread
+            .bind_client::<CallbackClient>(server_pipe)?;
 
-        let rpc = match rx.wait() {
-            Ok(rpc) => rpc,
-            Err(_) => bail!("Failed to create callback rpc."),
-        };
-
-        let shm_handle = unsafe { shm.make_handle().unwrap() };
+        // Send shm configuration to client but don't wait for result; that'll be checked in process_stream_init.
         let shm_setup = Some(rpc.call(CallbackReq::SharedMem(
             SerializableHandle::new(shm_handle, self.remote_pid.unwrap()),
             shm_area_size,
@@ -737,10 +703,7 @@ impl CubebServer {
 
         Ok(ClientMessage::StreamCreated(StreamCreate {
             token: key,
-            platform_handle: SerializableHandle::new(
-                PlatformHandle::from(ipc_client),
-                self.remote_pid.unwrap(),
-            ),
+            platform_handle: SerializableHandle::new(client_pipe, self.remote_pid.unwrap()),
         }))
     }
 
@@ -776,9 +739,13 @@ impl CubebServer {
         let user_ptr = server_stream.cbs.as_ref() as *const ServerStreamCallbacks as *mut c_void;
 
         // SharedMem setup message should've been processed by client by now.
-        match server_stream.shm_setup.take().wait() {
-            Ok(Some(CallbackResp::SharedMem)) => {}
-            Ok(Some(CallbackResp::Error(e))) => {
+        let shm_setup = server_stream
+            .shm_setup
+            .take()
+            .expect("invalid shm_setup state");
+        match shm_setup.wait() {
+            Ok(CallbackResp::SharedMem) => {}
+            Ok(CallbackResp::Error(e)) => {
                 // If the client replied with an error (e.g. client OOM), log error and fail stream init.
                 debug!(
                     "Shmem setup for stream {:?} failed (raw error {:?})",
