@@ -10,9 +10,8 @@ use crate::{ClientStream, AUDIOIPC_INIT_PARAMS};
 use audio_thread_priority::get_current_thread_info;
 #[cfg(not(target_os = "linux"))]
 use audio_thread_priority::promote_current_thread_to_real_time;
-use audioipc::codec::LengthDelimitedCodec;
-use audioipc::framing::{framed, Framed};
-use audioipc::{core, rpc};
+use audioipc::ipccore::EventLoopHandle;
+use audioipc::{ipccore, rpccore, sys};
 use audioipc::{
     messages, messages::DeviceCollectionReq, messages::DeviceCollectionResp, ClientMessage,
     ServerMessage,
@@ -21,24 +20,17 @@ use cubeb_backend::{
     ffi, Context, ContextOps, DeviceCollectionRef, DeviceId, DeviceType, Error, Ops, Result,
     Stream, StreamParams, StreamParamsRef,
 };
-use futures::Future;
-use futures_cpupool::{CpuFuture, CpuPool};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_void;
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::{fmt, mem, ptr};
-use tokio::reactor;
-use tokio::runtime::current_thread;
 
 struct CubebClient;
 
-impl rpc::Client for CubebClient {
+impl rpccore::Client for CubebClient {
     type Request = ServerMessage;
     type Response = ClientMessage;
-    type Transport =
-        Framed<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Request, Self::Response>>;
 }
 
 pub const CLIENT_OPS: Ops = capi_new!(ClientContext, ClientStream);
@@ -48,9 +40,9 @@ pub const CLIENT_OPS: Ops = capi_new!(ClientContext, ClientStream);
 #[repr(C)]
 pub struct ClientContext {
     _ops: *const Ops,
-    rpc: rpc::ClientProxy<ServerMessage, ClientMessage>,
-    core: core::CoreThread,
-    cpu_pool: CpuPool,
+    rpc: rpccore::Proxy<ServerMessage, ClientMessage>,
+    core_thread: ipccore::EventLoopThread,
+    callback_thread: ipccore::EventLoopThread,
     backend_id: CString,
     device_collection_rpc: bool,
     input_device_callback: Arc<Mutex<DeviceCollectionCallback>>,
@@ -59,23 +51,18 @@ pub struct ClientContext {
 
 impl ClientContext {
     #[doc(hidden)]
-    pub fn handle(&self) -> current_thread::Handle {
-        self.core.handle()
+    pub fn core_handle(&self) -> &EventLoopHandle {
+        self.core_thread.handle()
     }
 
     #[doc(hidden)]
-    pub fn rpc(&self) -> rpc::ClientProxy<ServerMessage, ClientMessage> {
+    pub fn rpc(&self) -> rpccore::Proxy<ServerMessage, ClientMessage> {
         self.rpc.clone()
-    }
-
-    #[doc(hidden)]
-    pub fn cpu_pool(&self) -> CpuPool {
-        self.cpu_pool.clone()
     }
 }
 
 #[cfg(target_os = "linux")]
-fn promote_thread(rpc: &rpc::ClientProxy<ServerMessage, ClientMessage>) {
+fn promote_thread(rpc: &rpccore::Proxy<ServerMessage, ClientMessage>) {
     match get_current_thread_info() {
         Ok(info) => {
             let bytes = info.serialize();
@@ -89,7 +76,7 @@ fn promote_thread(rpc: &rpc::ClientProxy<ServerMessage, ClientMessage>) {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn promote_thread(_rpc: &rpc::ClientProxy<ServerMessage, ClientMessage>) {
+fn promote_thread(_rpc: &rpccore::Proxy<ServerMessage, ClientMessage>) {
     match promote_current_thread_to_real_time(0, 48000) {
         Ok(_) => {
             info!("Audio thread promoted to real-time.");
@@ -115,7 +102,7 @@ fn unregister_thread(callback: Option<extern "C" fn()>) {
 }
 
 fn promote_and_register_thread(
-    rpc: &rpc::ClientProxy<ServerMessage, ClientMessage>,
+    rpc: &rpccore::Proxy<ServerMessage, ClientMessage>,
     callback: Option<extern "C" fn(*const ::std::os::raw::c_char)>,
 ) {
     promote_thread(rpc);
@@ -131,17 +118,13 @@ struct DeviceCollectionCallback {
 struct DeviceCollectionServer {
     input_device_callback: Arc<Mutex<DeviceCollectionCallback>>,
     output_device_callback: Arc<Mutex<DeviceCollectionCallback>>,
-    cpu_pool: CpuPool,
 }
 
-impl rpc::Server for DeviceCollectionServer {
+impl rpccore::Server for DeviceCollectionServer {
     type Request = DeviceCollectionReq;
     type Response = DeviceCollectionResp;
-    type Future = CpuFuture<Self::Response, ()>;
-    type Transport =
-        Framed<audioipc::AsyncMessageStream, LengthDelimitedCodec<Self::Response, Self::Request>>;
 
-    fn process(&mut self, req: Self::Request) -> Self::Future {
+    fn process(&mut self, req: Self::Request) -> Self::Response {
         match req {
             DeviceCollectionReq::DeviceChange(device_type) => {
                 trace!(
@@ -160,22 +143,18 @@ impl rpc::Server for DeviceCollectionServer {
                     (dcb.cb, dcb.user_ptr)
                 };
 
-                self.cpu_pool.spawn_fn(move || {
-                    run_in_callback(|| {
-                        if devtype.contains(cubeb_backend::DeviceType::INPUT) {
-                            unsafe {
-                                input_cb.unwrap()(ptr::null_mut(), input_user_ptr as *mut c_void)
-                            }
+                run_in_callback(|| {
+                    if devtype.contains(cubeb_backend::DeviceType::INPUT) {
+                        unsafe { input_cb.unwrap()(ptr::null_mut(), input_user_ptr as *mut c_void) }
+                    }
+                    if devtype.contains(cubeb_backend::DeviceType::OUTPUT) {
+                        unsafe {
+                            output_cb.unwrap()(ptr::null_mut(), output_user_ptr as *mut c_void)
                         }
-                        if devtype.contains(cubeb_backend::DeviceType::OUTPUT) {
-                            unsafe {
-                                output_cb.unwrap()(ptr::null_mut(), output_user_ptr as *mut c_void)
-                            }
-                        }
-                    });
+                    }
+                });
 
-                    Ok(DeviceCollectionResp::DeviceChange)
-                })
+                DeviceCollectionResp::DeviceChange
             }
         }
     }
@@ -183,44 +162,25 @@ impl rpc::Server for DeviceCollectionServer {
 
 impl ContextOps for ClientContext {
     fn init(_context_name: Option<&CStr>) -> Result<Context> {
-        fn bind_and_send_client(
-            stream: audioipc::AsyncMessageStream,
-            tx_rpc: &mpsc::Sender<rpc::ClientProxy<ServerMessage, ClientMessage>>,
-        ) {
-            let transport = framed(stream, Default::default());
-            let rpc = rpc::bind_client::<CubebClient>(transport);
-            // If send fails then the rx end has closed
-            // which is unlikely here.
-            let _ = tx_rpc.send(rpc);
-        }
-
         assert_not_in_callback();
-
-        let (tx_rpc, rx_rpc) = mpsc::channel();
 
         let params = AUDIOIPC_INIT_PARAMS.with(|p| p.replace(None).unwrap());
         let thread_create_callback = params.thread_create_callback;
         let thread_destroy_callback = params.thread_destroy_callback;
 
-        let server_stream =
-            unsafe { audioipc::MessageStream::from_raw_handle(params.server_connection) };
+        let server_stream = unsafe { sys::Pipe::from_raw_handle(params.server_connection) };
 
-        let core = core::spawn_thread(
-            "AudioIPC Client RPC",
-            move || {
-                let handle = reactor::Handle::default();
-
-                register_thread(thread_create_callback);
-
-                let stream = server_stream.into_tokio_ipc(&handle).unwrap();
-                bind_and_send_client(stream, &tx_rpc);
-                Ok(())
-            },
+        let core_thread = ipccore::EventLoopThread::new(
+            "Client RPC".to_string(),
+            None,
+            move || register_thread(thread_create_callback),
             move || unregister_thread(thread_destroy_callback),
         )
         .map_err(|_| Error::default())?;
-
-        let rpc = rx_rpc.recv().map_err(|_| Error::default())?;
+        let rpc = core_thread
+            .handle()
+            .bind_client::<CubebClient>(server_stream)
+            .map_err(|_| Error::default())?;
         let rpc2 = rpc.clone();
 
         // Don't let errors bubble from here.  Later calls against this context
@@ -231,19 +191,20 @@ impl ContextOps for ClientContext {
             .unwrap_or_else(|_| "(remote error)".to_string());
         let backend_id = CString::new(backend_id).expect("backend_id query failed");
 
-        let cpu_pool = futures_cpupool::Builder::new()
-            .name_prefix("AudioIPC")
-            .after_start(move || promote_and_register_thread(&rpc2, thread_create_callback))
-            .before_stop(move || unregister_thread(thread_destroy_callback))
-            .pool_size(params.pool_size)
-            .stack_size(params.stack_size)
-            .create();
+        // XXX: remove params.pool_size
+        let callback_thread = ipccore::EventLoopThread::new(
+            "Client CB/RT".to_string(),
+            Some(params.stack_size),
+            move || promote_and_register_thread(&rpc2, thread_create_callback),
+            move || unregister_thread(thread_destroy_callback),
+        )
+        .map_err(|_| Error::default())?;
 
         let ctx = Box::new(ClientContext {
             _ops: &CLIENT_OPS as *const _,
             rpc,
-            core,
-            cpu_pool,
+            core_thread,
+            callback_thread,
             backend_id,
             device_collection_rpc: false,
             input_device_callback: Arc::new(Mutex::new(Default::default())),
@@ -369,30 +330,17 @@ impl ContextOps for ClientContext {
                                  ContextSetupDeviceCollectionCallback =>
                                  ContextSetupDeviceCollectionCallback())?;
 
-            let stream = unsafe {
-                audioipc::MessageStream::from_raw_handle(
-                    fd.platform_handle.take_handle().into_raw(),
-                )
-            };
+            let stream =
+                unsafe { sys::Pipe::from_raw_handle(fd.platform_handle.take_handle().into_raw()) };
 
             let server = DeviceCollectionServer {
                 input_device_callback: self.input_device_callback.clone(),
                 output_device_callback: self.output_device_callback.clone(),
-                cpu_pool: self.cpu_pool(),
             };
 
-            let (wait_tx, wait_rx) = mpsc::channel();
-            self.handle()
-                .spawn(futures::future::lazy(move || {
-                    let handle = reactor::Handle::default();
-                    let stream = stream.into_tokio_ipc(&handle).unwrap();
-                    let transport = framed(stream, Default::default());
-                    rpc::bind_server(transport, server);
-                    wait_tx.send(()).unwrap();
-                    Ok(())
-                }))
-                .expect("Failed to spawn DeviceCollectionServer");
-            wait_rx.recv().unwrap();
+            self.core_handle()
+                .bind_server(server, stream)
+                .map_err(|_| Error::default())?;
             self.device_collection_rpc = true;
         }
 
@@ -426,7 +374,7 @@ impl fmt::Debug for ClientContext {
         f.debug_struct("ClientContext")
             .field("_ops", &self._ops)
             .field("rpc", &self.rpc)
-            .field("core", &self.core)
+            .field("core", &self.core_thread)
             .field("cpu_pool", &"...")
             .finish()
     }
