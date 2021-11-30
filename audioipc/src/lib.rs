@@ -11,35 +11,20 @@ extern crate error_chain;
 extern crate log;
 #[macro_use]
 extern crate serde_derive;
-#[macro_use]
-extern crate futures;
-#[macro_use]
-extern crate tokio_io;
 
-mod async_msg;
 #[cfg(unix)]
 mod cmsg;
 pub mod codec;
-pub mod core;
 #[allow(deprecated)]
 pub mod errors;
-pub mod framing;
 pub mod messages;
 #[cfg(unix)]
 mod msg;
-pub mod rpc;
 pub mod shm;
 
 pub mod ipccore;
 pub mod rpccore;
 pub mod sys;
-
-// TODO: Remove local fork when https://github.com/tokio-rs/tokio/pull/1294 is resolved.
-#[cfg(unix)]
-mod tokio_uds_stream;
-
-#[cfg(windows)]
-mod tokio_named_pipes;
 
 pub use crate::messages::{ClientMessage, ServerMessage};
 
@@ -183,16 +168,6 @@ pub(crate) unsafe fn duplicate_platform_handle(
     }
     Ok(target_handle)
 }
-
-#[cfg(unix)]
-pub mod messagestream_unix;
-#[cfg(unix)]
-pub use crate::messagestream_unix::*;
-
-#[cfg(windows)]
-pub mod messagestream_win;
-#[cfg(windows)]
-pub use messagestream_win::*;
 
 #[cfg(windows)]
 pub fn server_platform_init() {

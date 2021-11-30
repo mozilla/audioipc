@@ -7,7 +7,7 @@ use std::io::Result;
 use std::sync::{mpsc, Arc};
 use std::thread;
 
-use mio_07::{event::Event, Events, Interest, Poll, Registry, Token, Waker};
+use mio::{event::Event, Events, Interest, Poll, Registry, Token, Waker};
 use slab::Slab;
 
 use crate::messages::AssocRawPlatformHandle;

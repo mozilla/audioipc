@@ -5,7 +5,7 @@
 
 use std::io::Result;
 
-use mio_07::{event::Source, Interest, Registry, Token};
+use mio::{event::Source, Interest, Registry, Token};
 
 #[cfg(unix)]
 mod unix;
