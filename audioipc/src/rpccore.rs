@@ -6,7 +6,7 @@
 use std::io::Result;
 use std::{collections::VecDeque, sync::mpsc};
 
-use mio_07::Token;
+use mio::Token;
 
 use crate::ipccore::EventLoopHandle;
 

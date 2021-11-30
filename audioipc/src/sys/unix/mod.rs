@@ -8,7 +8,7 @@ use std::os::unix::prelude::{AsRawFd, FromRawFd, RawFd};
 
 use bytes::{BufMut, BytesMut};
 use iovec::IoVec;
-use mio_07::net::UnixStream;
+use mio::net::UnixStream;
 
 use crate::{close_platform_handle, cmsg, msg, PlatformHandle};
 

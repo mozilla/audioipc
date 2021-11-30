@@ -43,7 +43,6 @@ pub mod errors {
         foreign_links {
             Cubeb(cubeb_core::Error);
             Io(::std::io::Error);
-            Canceled(::futures::sync::oneshot::Canceled);
         }
     }
 }

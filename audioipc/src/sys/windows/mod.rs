@@ -13,7 +13,7 @@ use std::{
 use std::io::Result;
 
 use bytes::{BufMut, BytesMut};
-use mio_07::windows::NamedPipe;
+use mio::windows::NamedPipe;
 use winapi::um::winbase::FILE_FLAG_OVERLAPPED;
 
 use crate::PlatformHandle;
