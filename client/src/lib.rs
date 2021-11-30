@@ -5,8 +5,6 @@
 #![warn(unused_extern_crates)]
 
 #[macro_use]
-extern crate cubeb_backend;
-#[macro_use]
 extern crate log;
 
 #[macro_use]

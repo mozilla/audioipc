@@ -592,6 +592,8 @@ impl Drop for EventLoopThread {
 mod test {
     use std::sync::atomic::{AtomicBool, Ordering};
 
+    use serde_derive::{Deserialize, Serialize};
+
     use super::*;
 
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
