@@ -283,7 +283,7 @@ impl<'ctx> ClientStream<'ctx> {
     }
 }
 
-impl<'ctx> Drop for ClientStream<'ctx> {
+impl Drop for ClientStream<'_> {
     fn drop(&mut self) {
         debug!("ClientStream drop");
         let rpc = self.context.rpc();
@@ -299,7 +299,7 @@ impl<'ctx> Drop for ClientStream<'ctx> {
     }
 }
 
-impl<'ctx> StreamOps for ClientStream<'ctx> {
+impl StreamOps for ClientStream<'_> {
     fn start(&mut self) -> Result<()> {
         assert_not_in_callback();
         let rpc = self.context.rpc();

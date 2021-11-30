@@ -8,6 +8,8 @@ use crate::PlatformHandleType;
 #[cfg(target_os = "linux")]
 use audio_thread_priority::RtPriorityThreadInfo;
 use cubeb::{self, ffi};
+use serde_derive::Deserialize;
+use serde_derive::Serialize;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_uint};
 use std::ptr;
@@ -131,7 +133,7 @@ pub struct StreamParams {
     pub prefs: ffi::cubeb_stream_prefs,
 }
 
-impl<'a> From<&'a cubeb::StreamParamsRef> for StreamParams {
+impl From<&cubeb::StreamParamsRef> for StreamParams {
     fn from(x: &cubeb::StreamParamsRef) -> StreamParams {
         unsafe { *(x.as_ptr() as *mut StreamParams) }
     }
@@ -379,7 +381,7 @@ impl<'de> serde::Deserialize<'de> for SerializableHandle {
 }
 
 struct SerializableHandleVisitor;
-impl<'de> serde::de::Visitor<'de> for SerializableHandleVisitor {
+impl serde::de::Visitor<'_> for SerializableHandleVisitor {
     type Value = SerializableHandle;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

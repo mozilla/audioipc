@@ -17,8 +17,8 @@ use audioipc::{
     ServerMessage,
 };
 use cubeb_backend::{
-    ffi, Context, ContextOps, DeviceCollectionRef, DeviceId, DeviceType, Error, Ops, Result,
-    Stream, StreamParams, StreamParamsRef,
+    capi_new, ffi, Context, ContextOps, DeviceCollectionRef, DeviceId, DeviceType, Error, Ops,
+    Result, Stream, StreamParams, StreamParamsRef,
 };
 use std::ffi::{CStr, CString};
 use std::os::raw::c_void;
