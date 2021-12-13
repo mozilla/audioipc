@@ -41,7 +41,7 @@ pub const CLIENT_OPS: Ops = capi_new!(ClientContext, ClientStream);
 pub struct ClientContext {
     _ops: *const Ops,
     rpc: rpccore::Proxy<ServerMessage, ClientMessage>,
-    core_thread: ipccore::EventLoopThread,
+    rpc_thread: ipccore::EventLoopThread,
     callback_thread: ipccore::EventLoopThread,
     backend_id: CString,
     device_collection_rpc: bool,
@@ -51,8 +51,8 @@ pub struct ClientContext {
 
 impl ClientContext {
     #[doc(hidden)]
-    pub fn core_handle(&self) -> &EventLoopHandle {
-        self.core_thread.handle()
+    pub fn rpc_handle(&self) -> &EventLoopHandle {
+        self.rpc_thread.handle()
     }
 
     #[doc(hidden)]
@@ -171,14 +171,14 @@ impl ContextOps for ClientContext {
         let server_connection =
             unsafe { sys::Pipe::from_raw_handle(PlatformHandle::new(params.server_connection)) };
 
-        let core_thread = ipccore::EventLoopThread::new(
+        let rpc_thread = ipccore::EventLoopThread::new(
             "AudioIPC Client RPC".to_string(),
             None,
             move || register_thread(thread_create_callback),
             move || unregister_thread(thread_destroy_callback),
         )
         .map_err(|_| Error::default())?;
-        let rpc = core_thread
+        let rpc = rpc_thread
             .handle()
             .bind_client::<CubebClient>(server_connection)
             .map_err(|_| Error::default())?;
@@ -204,7 +204,7 @@ impl ContextOps for ClientContext {
         let ctx = Box::new(ClientContext {
             _ops: &CLIENT_OPS as *const _,
             rpc,
-            core_thread,
+            rpc_thread,
             callback_thread,
             backend_id,
             device_collection_rpc: false,
@@ -338,7 +338,7 @@ impl ContextOps for ClientContext {
                 output_device_callback: self.output_device_callback.clone(),
             };
 
-            self.core_handle()
+            self.rpc_handle()
                 .bind_server(server, stream)
                 .map_err(|_| Error::default())?;
             self.device_collection_rpc = true;
@@ -374,7 +374,7 @@ impl fmt::Debug for ClientContext {
         f.debug_struct("ClientContext")
             .field("_ops", &self._ops)
             .field("rpc", &self.rpc)
-            .field("core", &self.core_thread)
+            .field("core", &self.rpc_thread)
             .field("cpu_pool", &"...")
             .finish()
     }
