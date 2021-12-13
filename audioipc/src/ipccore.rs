@@ -3,7 +3,7 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details
 
-use std::io::Result;
+use std::io::{self, Result};
 use std::sync::{mpsc, Arc};
 use std::thread;
 
@@ -102,11 +102,12 @@ impl EventLoopHandle {
     }
 
     // Signal EventLoop to shutdown.  Causes EventLoop::poll to return Ok(false).
-    pub fn shutdown(&self) {
+    pub fn shutdown(&self) -> Result<()> {
         self.requests_tx
             .send(Request::Shutdown)
-            .expect("EventLoop::shutdown");
-        self.waker.wake().expect("wake failed");
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+        self.waker.wake()?;
+        Ok(())
     }
 
     // Signal EventLoop to wake connection specified by `token` for processing.
@@ -125,6 +126,7 @@ struct EventLoop {
     poll: Poll,
     events: Events,
     waker: Arc<Waker>,
+    name: String,
     connections: Slab<Connection>,
     requests_rx: mpsc::Receiver<Request>,
     requests_tx: mpsc::Sender<Request>,
@@ -134,7 +136,7 @@ const EVENT_LOOP_INITIAL_CLIENTS: usize = 64; // Initial client allocation, exce
 const EVENT_LOOP_EVENTS_PER_ITERATION: usize = 256; // Number of events per poll() step, arbitrary limit.
 
 impl EventLoop {
-    fn new() -> Result<EventLoop> {
+    fn new(name: String) -> Result<EventLoop> {
         let poll = Poll::new()?;
         let waker = Arc::new(Waker::new(poll.registry(), WAKE_TOKEN)?);
         let (tx, rx) = mpsc::channel();
@@ -142,6 +144,7 @@ impl EventLoop {
             poll,
             events: Events::with_capacity(EVENT_LOOP_EVENTS_PER_ITERATION),
             waker,
+            name,
             connections: Slab::with_capacity(EVENT_LOOP_INITIAL_CLIENTS),
             requests_rx: rx,
             requests_tx: tx,
@@ -165,13 +168,13 @@ impl EventLoop {
         driver: Box<dyn Driver + Send>,
     ) -> Result<Token> {
         if self.connections.len() == self.connections.capacity() {
-            trace!("connection slab full, insert will allocate");
+            trace!("{}: connection slab full, insert will allocate", self.name);
         }
         let entry = self.connections.vacant_entry();
         let token = Token(entry.key());
         assert_ne!(token, WAKE_TOKEN);
         let connection = Connection::new(connection, token, driver, self.poll.registry())?;
-        debug!("[{:?}]: new connection", token);
+        debug!("{}: {:?}: new connection", self.name, token);
         entry.insert(connection);
         Ok(token)
     }
@@ -186,25 +189,28 @@ impl EventLoop {
         for event in self.events.iter() {
             match event.token() {
                 WAKE_TOKEN => {
-                    debug!("WAKE: wake event, will process requests");
+                    debug!("{}: WAKE: wake event, will process requests", self.name);
                 }
                 token => {
-                    debug!("[{:?}]: connection ready: {:?}", token, event);
+                    debug!("{}: {:?}: connection ready: {:?}", self.name, token, event);
                     let done = if let Some(connection) = self.connections.get_mut(token.0) {
                         match connection.handle_event(event, self.poll.registry()) {
                             Ok(done) => done,
                             Err(e) => {
-                                error!("[{:?}]: connection error: {:?}", token, e);
+                                error!("{}: {:?}: connection error: {:?}", self.name, token, e);
                                 true
                             }
                         }
                     } else {
-                        debug!("[{:?}]: token not found in slab: {:?}", token, event);
+                        debug!(
+                            "{}: {:?}: token not found in slab: {:?}",
+                            self.name, token, event
+                        );
                         debug_assert!(false); // This shouldn't happen, catch it in debug mode.
                         false
                     };
                     if done {
-                        debug!("[{:?}]: done, removing", token);
+                        debug!("{}: {:?}: done, removing", self.name, token);
                         let connection = self.connections.remove(token.0);
                         connection.shutdown(self.poll.registry())?;
                     }
@@ -216,25 +222,31 @@ impl EventLoop {
         while let Ok(req) = self.requests_rx.try_recv() {
             match req {
                 Request::AddConnection(pipe, driver, tx) => {
-                    debug!("EventLoop: handling add_connection");
+                    debug!("{}: EventLoop: handling add_connection", self.name);
                     let r = self.add_connection(pipe, driver);
                     tx.send(r).expect("EventLoop::add_connection");
                 }
                 Request::Shutdown => {
-                    debug!("EventLoop: handling shutdown");
+                    debug!("{}: EventLoop: handling shutdown", self.name);
                     return Ok(false);
                 }
                 Request::WakeConnection(token) => {
-                    debug!("EventLoop: handling wake_connection [{:?}]", token);
+                    debug!(
+                        "{}: EventLoop: handling wake_connection {:?}",
+                        self.name, token
+                    );
                     if let Some(connection) = self.connections.get_mut(token.0) {
                         match connection.handle_wake(self.poll.registry()) {
                             Ok(done) => assert!(!done),
                             Err(e) => {
-                                error!("[{:?}]: connection error: {:?}", token, e);
+                                error!("{}: {:?}: connection error: {:?}", self.name, token, e);
                             }
                         }
                     } else {
-                        debug!("[{:?}]: token not found in slab: wake_connection", token);
+                        debug!(
+                            "{}: {:?}: token not found in slab: wake_connection",
+                            self.name, token
+                        );
                         debug_assert!(false); // This shouldn't happen, catch it in debug mode.
                     };
                 }
@@ -242,6 +254,12 @@ impl EventLoop {
         }
 
         Ok(true)
+    }
+}
+
+impl Drop for EventLoop {
+    fn drop(&mut self) {
+        debug!("{}: EventLoop dropped", self.name);
     }
 }
 
@@ -291,12 +309,12 @@ impl Connection {
     // Handle readiness event.  Errors returned are fatal for this connection, resulting in removal from the EventLoop connection list.
     // The EventLoop will call this for any connection that has received an event.
     fn handle_event(&mut self, event: &Event, registry: &Registry) -> Result<bool> {
-        debug!("[{:?}]: handling event {:?}", self.token, event);
+        debug!("{:?}: handling event {:?}", self.token, event);
         assert_eq!(self.token, event.token());
         let done = if event.is_readable() {
             self.recv_inbound()?
         } else {
-            trace!("[{:?}]: not readable", self.token);
+            trace!("{:?}: not readable", self.token);
             false
         };
         self.flush_outbound()?;
@@ -306,11 +324,11 @@ impl Connection {
         }
         // If driver is done, stop reading.  We may have more outbound to flush.
         if done {
-            trace!("[{:?}]: driver done, clearing read interest", self.token);
+            trace!("{:?}: driver done, clearing read interest", self.token);
             self.update_registration(self.interest.remove(Interest::READABLE).unwrap(), registry)?;
         }
         debug!(
-            "[{:?}]: handling event done (done={}, outbound={})",
+            "{:?}: handling event done (done={}, outbound={})",
             self.token,
             done,
             self.outbound.is_empty()
@@ -321,13 +339,13 @@ impl Connection {
     // Handle wake event.  Errors returned are fatal for this connection, resulting in removal from the EventLoop connection list.
     // The EventLoop will call this to clear the outbound buffer for any connection that has received a wake event.
     fn handle_wake(&mut self, registry: &Registry) -> Result<bool> {
-        debug!("[{:?}]: handling wake", self.token);
+        debug!("{:?}: handling wake", self.token);
         self.flush_outbound()?;
         if self.send_outbound(registry)? {
             // Hit EOF during send
             return Ok(true);
         }
-        debug!("[{:?}]: handling wake done", self.token);
+        debug!("{:?}: handling wake done", self.token);
         Ok(false)
     }
 
@@ -335,18 +353,18 @@ impl Connection {
         // If the connection is readable, read into inbound and pass to driver for processing until all ready data
         // has been consumed.
         loop {
-            trace!("[{:?}]: pre-recv inbound: {:?}", self.token, self.inbound);
+            trace!("{:?}: pre-recv inbound: {:?}", self.token, self.inbound);
             let r = self.io.recv_msg(&mut self.inbound);
             match r {
                 Ok(0) => {
-                    trace!("[{:?}]: recv EOF", self.token);
+                    trace!("{:?}: recv EOF", self.token);
                     assert!(self.inbound.is_empty()); // Ensure no unprocessed messages queued.
                     return Ok(true);
                 }
                 Ok(n) => {
-                    trace!("[{:?}]: recv bytes: {}, process_inbound", self.token, n);
+                    trace!("{:?}: recv bytes: {}, process_inbound", self.token, n);
                     let r = self.driver.process_inbound(&mut self.inbound);
-                    trace!("[{:?}]: process_inbound done: {:?}", self.token, r);
+                    trace!("{:?}: process_inbound done: {:?}", self.token, r);
                     match r {
                         Ok(done) => {
                             if done {
@@ -354,22 +372,22 @@ impl Connection {
                             }
                         }
                         Err(e) => {
-                            error!("[{:?}]: process_inbound error: {:?}", self.token, e);
+                            error!("{:?}: process_inbound error: {:?}", self.token, e);
                             assert!(self.inbound.is_empty()); // Ensure no unprocessed messages queued.
                             return Err(e);
                         }
                     }
                 }
                 Err(ref e) if would_block(e) => {
-                    trace!("[{:?}]: recv would_block: {:?}", self.token, e);
+                    trace!("{:?}: recv would_block: {:?}", self.token, e);
                     return Ok(false);
                 }
                 Err(ref e) if interrupted(e) => {
-                    trace!("[{:?}]: recv interrupted: {:?}", self.token, e);
+                    trace!("{:?}: recv interrupted: {:?}", self.token, e);
                     continue;
                 }
                 Err(e) => {
-                    error!("[{:?}]: recv error: {:?}", self.token, e);
+                    error!("{:?}: recv error: {:?}", self.token, e);
                     return Err(e);
                 }
             }
@@ -380,11 +398,11 @@ impl Connection {
         // Enqueue outbound messages to the outbound buffer, then try to write out to connection.
         // There may be outbound messages even if there was no inbound processing, so always attempt
         // to enqueue and flush.
-        trace!("[{:?}]: flush_outbound", self.token);
+        trace!("{:?}: flush_outbound", self.token);
         let r = self.driver.flush_outbound(&mut self.outbound);
-        trace!("[{:?}]: flush_outbound done: {:?}", self.token, r);
+        trace!("{:?}: flush_outbound done: {:?}", self.token, r);
         if let Err(e) = r {
-            error!("[{:?}]: flush_outbound error: {:?}", self.token, e);
+            error!("{:?}: flush_outbound error: {:?}", self.token, e);
             return Err(e);
         }
         Ok(())
@@ -397,14 +415,14 @@ impl Connection {
             let r = self.io.send_msg(&mut self.outbound);
             match r {
                 Ok(0) => {
-                    trace!("[{:?}]: send EOF", self.token);
+                    trace!("{:?}: send EOF", self.token);
                     return Ok(true);
                 }
                 Ok(n) => {
-                    trace!("[{:?}]: send bytes: {}", self.token, n);
+                    trace!("{:?}: send bytes: {}", self.token, n);
                 }
                 Err(ref e) if would_block(e) => {
-                    trace!("[{:?}]: send would_block: {:?}", self.token, e);
+                    trace!("{:?}: send would_block: {:?}", self.token, e);
                     // Register for write events.
                     if !self.interest.is_writable() {
                         self.update_registration(self.interest.add(Interest::WRITABLE), registry)?;
@@ -412,32 +430,31 @@ impl Connection {
                     break;
                 }
                 Err(ref e) if interrupted(e) => {
-                    trace!("[{:?}]: send interrupted: {:?}", self.token, e);
+                    trace!("{:?}: send interrupted: {:?}", self.token, e);
                     continue;
                 }
                 Err(e) => {
-                    error!("[{:?}]: send error: {:?}", self.token, e);
+                    error!("{:?}: send error: {:?}", self.token, e);
                     return Err(e);
                 }
             }
-            trace!(
-                "[{:?}]: post-send: outbound {:?}",
-                self.token,
-                self.outbound
-            );
+            trace!("{:?}: post-send: outbound {:?}", self.token, self.outbound);
         }
         // Outbound buffer flushed, clear registration for WRITABLE.
         // Note that Windows NamedPipes will cause an additional WRITABLE notification after a write, even if
         // we're no longer registered for WRITABLE.  Any user of Poll is expected to handle spurious events,
         // so this is fine.
         if self.outbound.is_empty() {
-            trace!(
-                "[{:?}]: outbound empty, clearing write interest",
-                self.token
-            );
+            trace!("{:?}: outbound empty, clearing write interest", self.token);
             self.update_registration(self.interest.remove(Interest::WRITABLE).unwrap(), registry)?;
         }
         Ok(false)
+    }
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        debug!("{:?}: Connection dropped", self.token);
     }
 }
 
@@ -552,6 +569,7 @@ impl<T: Handler> FramedDriver<T> {
 #[derive(Debug)]
 pub struct EventLoopThread {
     thread: Option<thread::JoinHandle<Result<()>>>,
+    name: String,
     handle: EventLoopHandle,
 }
 
@@ -566,7 +584,7 @@ impl EventLoopThread {
         F1: Fn() + Send + 'static,
         F2: Fn() + Send + 'static,
     {
-        let mut event_loop = EventLoop::new()?;
+        let mut event_loop = EventLoop::new(name.clone())?;
         let handle = event_loop.handle();
 
         let builder = thread::Builder::new()
@@ -578,15 +596,16 @@ impl EventLoopThread {
             let _thread_exit_guard = scopeguard::guard((), |_| before_stop());
 
             while event_loop.poll()? {
-                trace!("{}: event loop poll", name);
+                trace!("{}: event loop poll", event_loop.name);
             }
 
-            trace!("{}: event loop shutdown", name);
+            trace!("{}: event loop shutdown", event_loop.name);
             Ok(())
         })?;
 
         Ok(EventLoopThread {
             thread: Some(thread),
+            name,
             handle,
         })
     }
@@ -599,20 +618,20 @@ impl EventLoopThread {
 impl Drop for EventLoopThread {
     // Shut down event loop and executor thread.  Blocks until complete.
     fn drop(&mut self) {
-        trace!("EventLoopThread shutdown");
-        self.handle.shutdown();
+        trace!("{}: EventLoopThread shutdown", self.name);
+        if let Err(e) = self.handle.shutdown() {
+            error!("{}: signalling shutdown failed: {:?}", self.name, e);
+        }
         let thread = self.thread.take().expect("event loop thread");
         if let Err(e) = thread.join() {
-            warn!("EventLoopThread failed: {:?}", e);
+            error!("{}: EventLoopThread failed: {:?}", self.name, e);
         }
-        trace!("EventLoopThread shutdown done");
+        trace!("{}: EventLoopThread shutdown done", self.name);
     }
 }
 
 #[cfg(test)]
 mod test {
-    use std::sync::atomic::{AtomicBool, Ordering};
-
     use serde_derive::{Deserialize, Serialize};
 
     use super::*;
@@ -659,9 +678,9 @@ mod test {
         Proxy<TestServerMessage, TestClientMessage>,
     ) {
         // Server setup and registration.
-        let server_elt = EventLoopThread::new("test-server".to_string(), None, || {}, || {})
+        let server = EventLoopThread::new("test-server".to_string(), None, || {}, || {})
             .expect("server EventLoopThread");
-        let server_handle = server_elt.handle();
+        let server_handle = server.handle();
 
         let (server_pipe, client_pipe) = sys::make_pipe_pair().expect("server make_pipe_pair");
         server_handle
@@ -669,16 +688,16 @@ mod test {
             .expect("server bind_server");
 
         // Client setup and registration.
-        let client_elt = EventLoopThread::new("test-client".to_string(), None, || {}, || {})
+        let client = EventLoopThread::new("test-client".to_string(), None, || {}, || {})
             .expect("client EventLoopThread");
-        let client_handle = client_elt.handle();
+        let client_handle = client.handle();
 
         let client_pipe = unsafe { sys::Pipe::from_raw_handle(client_pipe) };
         let client_proxy = client_handle
             .bind_client::<TestClientImpl>(client_pipe)
             .expect("client bind_client");
 
-        (server_elt, client_elt, client_proxy)
+        (server, client, client_proxy)
     }
 
     // Verify basic EventLoopThread functionality works.  Create a server and client EventLoopThread, then send
@@ -715,29 +734,47 @@ mod test {
     }
 
     #[test]
+    fn dead_client() {
+        init();
+        let (_server, client, client_proxy) = setup();
+        client.handle().shutdown().unwrap();
+
+        let response = client_proxy.call(TestServerMessage::TestRequest);
+        response.wait().expect_err("sending on a closed channel");
+    }
+
+    #[test]
+    fn disconnected_handle() {
+        init();
+        let server = EventLoopThread::new("test-server".to_string(), None, || {}, || {})
+            .expect("server EventLoopThread");
+        let server_handle = server.handle().clone();
+        drop(server);
+
+        server_handle
+            .shutdown()
+            .expect_err("sending on closed channel");
+    }
+
+    #[test]
     fn basic_event_loop_thread_callbacks() {
         init();
-        let after_start1 = Arc::new(AtomicBool::new(false));
-        let after_start2 = after_start1.clone();
-        let before_stop1 = Arc::new(AtomicBool::new(false));
-        let before_stop2 = before_stop1.clone();
+        let (start_tx, start_rx) = mpsc::channel();
+        let (stop_tx, stop_rx) = mpsc::channel();
 
-        let server_elt = EventLoopThread::new(
+        let elt = EventLoopThread::new(
             "test-thread-callbacks".to_string(),
             None,
-            move || {
-                after_start1.store(true, Ordering::Release);
-            },
-            move || {
-                before_stop1.store(true, Ordering::Release);
-            },
+            move || start_tx.send(()).unwrap(),
+            move || stop_tx.send(()).unwrap(),
         )
         .expect("server EventLoopThread");
 
-        // Explicit shutdown.
-        drop(server_elt);
+        start_rx.recv().expect("after_start callback done");
 
-        assert!(after_start2.load(Ordering::Acquire));
-        assert!(before_stop2.load(Ordering::Acquire));
+        // Explicit shutdown.
+        elt.handle().shutdown().expect("shutdown");
+
+        stop_rx.recv().expect("before_stop callback done");
     }
 }
