@@ -177,8 +177,12 @@ pub extern "C" fn audioipc_server_new_client(
         }
     };
 
-    let server = server::CubebServer::new(wrapper.callback_thread.handle().clone(), shm_area_size);
-    if let Err(e) = wrapper.rpc_thread.handle().bind_server(server, server_pipe) {
+    let rpc_thread = wrapper.rpc_thread.handle();
+    let callback_thread = wrapper.callback_thread.handle();
+
+    let server =
+        server::CubebServer::new(rpc_thread.clone(), callback_thread.clone(), shm_area_size);
+    if let Err(e) = rpc_thread.bind_server(server, server_pipe) {
         error!("audioipc_server_new_client - bind_server failed: {:?}", e);
         return audioipc::INVALID_HANDLE_VALUE;
     }
