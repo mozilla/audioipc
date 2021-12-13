@@ -3,7 +3,7 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details
 
-use std::io::Result;
+use std::io::{self, Result};
 use std::{collections::VecDeque, sync::mpsc};
 
 use mio::Token;
@@ -83,7 +83,7 @@ impl<Request, Response> Proxy<Request, Response> {
         let (tx, rx) = mpsc::channel();
         match self.tx.send((request, tx)) {
             Ok(_) => handle.wake_connection(*token),
-            Err(e) => error!("Proxy::call error={:?}", e),
+            Err(e) => debug!("Proxy::call error={:?}", e),
         }
         ProxyResponse { inner: rx }
     }
@@ -146,9 +146,9 @@ impl<C: Client> Handler for ClientHandler<C> {
                 trace!("  --> no request");
                 Ok(None)
             }
-            Err(mpsc::TryRecvError::Disconnected) => {
+            Err(e) => {
                 trace!("  --> client disconnected");
-                Ok(None) // TODO: Report useful error?
+                Err(io::Error::new(io::ErrorKind::ConnectionAborted, e))
             }
         }
     }

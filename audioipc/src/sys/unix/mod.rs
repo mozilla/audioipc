@@ -31,6 +31,10 @@ impl Pipe {
     pub unsafe fn from_raw_handle(handle: crate::PlatformHandle) -> Pipe {
         Pipe(UnixStream::from_raw_fd(handle.into_raw()))
     }
+
+    pub fn shutdown(&mut self) -> Result<()> {
+        self.0.shutdown(std::net::Shutdown::Both)
+    }
 }
 
 impl RecvMsg for Pipe {

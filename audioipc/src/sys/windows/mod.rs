@@ -53,6 +53,10 @@ impl Pipe {
     pub unsafe fn from_raw_handle(handle: crate::PlatformHandle) -> Pipe {
         Pipe(NamedPipe::from_raw_handle(handle.into_raw()))
     }
+
+    pub fn shutdown(&mut self) -> Result<()> {
+        self.0.disconnect()
+    }
 }
 
 impl RecvMsg for Pipe {
