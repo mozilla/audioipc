@@ -192,27 +192,36 @@ impl EventLoop {
                     debug!("{}: WAKE: wake event, will process requests", self.name);
                 }
                 token => {
-                    debug!("{}: {:?}: connection ready: {:?}", self.name, token, event);
+                    debug!("{}: {:?}: connection event: {:?}", self.name, token, event);
                     let done = if let Some(connection) = self.connections.get_mut(token.0) {
                         match connection.handle_event(event, self.poll.registry()) {
-                            Ok(done) => done,
+                            Ok(done) => {
+                                debug!("{}: connection {:?} done={}", self.name, token, done);
+                                done
+                            }
                             Err(e) => {
                                 error!("{}: {:?}: connection error: {:?}", self.name, token, e);
                                 true
                             }
                         }
                     } else {
+                        // Spurious event, log and ignore.
                         debug!(
                             "{}: {:?}: token not found in slab: {:?}",
                             self.name, token, event
                         );
-                        debug_assert!(false); // This shouldn't happen, catch it in debug mode.
                         false
                     };
                     if done {
                         debug!("{}: {:?}: done, removing", self.name, token);
-                        let connection = self.connections.remove(token.0);
-                        connection.shutdown(self.poll.registry())?;
+                        let mut connection = self.connections.remove(token.0);
+                        let r = connection.shutdown(self.poll.registry());
+                        if let Err(e) = r {
+                            warn!(
+                                "{}: EventLoop drop - closing connection for {:?} failed: {:?}",
+                                self.name, token, e
+                            );
+                        }
                     }
                 }
             }
@@ -243,12 +252,12 @@ impl EventLoop {
                             }
                         }
                     } else {
+                        // Spurious wake, log and ignore.
                         debug!(
                             "{}: {:?}: token not found in slab: wake_connection",
                             self.name, token
                         );
-                        debug_assert!(false); // This shouldn't happen, catch it in debug mode.
-                    };
+                    }
                 }
             }
         }
@@ -259,7 +268,20 @@ impl EventLoop {
 
 impl Drop for EventLoop {
     fn drop(&mut self) {
-        debug!("{}: EventLoop dropped", self.name);
+        debug!("{}: EventLoop drop", self.name);
+        for (token, connection) in &mut self.connections {
+            debug!(
+                "{}: EventLoop drop - closing connection for {:?}",
+                self.name, token
+            );
+            if let Err(e) = connection.shutdown(self.poll.registry()) {
+                warn!(
+                    "{}: EventLoop drop - closing connection for {:?} failed: {:?}",
+                    self.name, token, e
+                );
+            }
+        }
+        debug!("{}: EventLoop drop done", self.name);
     }
 }
 
@@ -269,7 +291,7 @@ impl Drop for EventLoop {
 struct Connection {
     io: sys::Pipe,
     token: Token,
-    interest: Interest,
+    interest: Option<Interest>,
     inbound: sys::ConnectionBuffer,
     outbound: sys::ConnectionBuffer,
     driver: Box<dyn Driver + Send>,
@@ -289,21 +311,52 @@ impl Connection {
         Ok(Connection {
             io,
             token,
-            interest,
+            interest: Some(interest),
             inbound: sys::ConnectionBuffer::with_capacity(IPC_CLIENT_BUFFER_SIZE),
             outbound: sys::ConnectionBuffer::with_capacity(IPC_CLIENT_BUFFER_SIZE),
             driver,
         })
     }
 
-    fn shutdown(mut self, registry: &Registry) -> Result<()> {
+    fn shutdown(&mut self, registry: &Registry) -> Result<()> {
+        trace!(
+            "{:?}: connection shutdown interest={:?}",
+            self.token,
+            self.interest
+        );
+        let r = self.io.shutdown();
+        trace!("{:?}: connection shutdown r={:?}", self.token, r);
+        self.interest = None;
         registry.deregister(&mut self.io)
     }
 
+    // Connections are always interested in READABLE.  clear_readable is only
+    // called when the connection is in the process of shutting down.
+    fn clear_readable(&mut self, registry: &Registry) -> Result<()> {
+        self.interest.and_then(|i| i.remove(Interest::READABLE));
+        self.update_registration(registry)
+    }
+
+    // Connections toggle WRITABLE based on the state of the `outbound` buffer.
+    fn set_writable(&mut self, registry: &Registry) -> Result<()> {
+        self.interest
+            .map_or_else(|| Interest::WRITABLE, |i| i.add(Interest::WRITABLE));
+        self.update_registration(registry)
+    }
+
+    fn clear_writable(&mut self, registry: &Registry) -> Result<()> {
+        self.interest.and_then(|i| i.remove(Interest::WRITABLE));
+        self.update_registration(registry)
+    }
+
     // Update connection registration with the current readiness event interests.
-    fn update_registration(&mut self, interest: Interest, registry: &Registry) -> Result<()> {
-        self.interest = interest;
-        registry.reregister(&mut self.io, self.token, self.interest)
+    fn update_registration(&mut self, registry: &Registry) -> Result<()> {
+        if let Some(interest) = self.interest {
+            registry.reregister(&mut self.io, self.token, interest)?;
+        } else {
+            registry.deregister(&mut self.io)?;
+        }
+        Ok(())
     }
 
     // Handle readiness event.  Errors returned are fatal for this connection, resulting in removal from the EventLoop connection list.
@@ -322,18 +375,20 @@ impl Connection {
             // Hit EOF during send
             return Ok(true);
         }
-        // If driver is done, stop reading.  We may have more outbound to flush.
-        if done {
-            trace!("{:?}: driver done, clearing read interest", self.token);
-            self.update_registration(self.interest.remove(Interest::READABLE).unwrap(), registry)?;
-        }
         debug!(
-            "{:?}: handling event done (done={}, outbound={})",
+            "{:?}: handling event done (recv done={}, outbound={})",
             self.token,
             done,
             self.outbound.is_empty()
         );
-        Ok(done && self.outbound.is_empty())
+        let done = done && self.outbound.is_empty();
+        // If driver is done, stop reading.  We may have more outbound to flush.
+        // XXX: This used to happen for recv done, now checks outbound too.
+        if done {
+            trace!("{:?}: driver done, clearing read interest", self.token);
+            self.clear_readable(registry)?;
+        }
+        Ok(done)
     }
 
     // Handle wake event.  Errors returned are fatal for this connection, resulting in removal from the EventLoop connection list.
@@ -372,7 +427,7 @@ impl Connection {
                             }
                         }
                         Err(e) => {
-                            error!("{:?}: process_inbound error: {:?}", self.token, e);
+                            debug!("{:?}: process_inbound error: {:?}", self.token, e);
                             assert!(self.inbound.is_empty()); // Ensure no unprocessed messages queued.
                             return Err(e);
                         }
@@ -387,7 +442,7 @@ impl Connection {
                     continue;
                 }
                 Err(e) => {
-                    error!("{:?}: recv error: {:?}", self.token, e);
+                    debug!("{:?}: recv error: {:?}", self.token, e);
                     return Err(e);
                 }
             }
@@ -402,7 +457,7 @@ impl Connection {
         let r = self.driver.flush_outbound(&mut self.outbound);
         trace!("{:?}: flush_outbound done: {:?}", self.token, r);
         if let Err(e) = r {
-            error!("{:?}: flush_outbound error: {:?}", self.token, e);
+            debug!("{:?}: flush_outbound error: {:?}", self.token, e);
             return Err(e);
         }
         Ok(())
@@ -424,9 +479,7 @@ impl Connection {
                 Err(ref e) if would_block(e) => {
                     trace!("{:?}: send would_block: {:?}", self.token, e);
                     // Register for write events.
-                    if !self.interest.is_writable() {
-                        self.update_registration(self.interest.add(Interest::WRITABLE), registry)?;
-                    }
+                    self.set_writable(registry)?;
                     break;
                 }
                 Err(ref e) if interrupted(e) => {
@@ -434,7 +487,7 @@ impl Connection {
                     continue;
                 }
                 Err(e) => {
-                    error!("{:?}: send error: {:?}", self.token, e);
+                    debug!("{:?}: send error: {:?}", self.token, e);
                     return Err(e);
                 }
             }
@@ -446,7 +499,7 @@ impl Connection {
         // so this is fine.
         if self.outbound.is_empty() {
             trace!("{:?}: outbound empty, clearing write interest", self.token);
-            self.update_registration(self.interest.remove(Interest::WRITABLE).unwrap(), registry)?;
+            self.clear_writable(registry)?;
         }
         Ok(false)
     }
@@ -454,7 +507,7 @@ impl Connection {
 
 impl Drop for Connection {
     fn drop(&mut self) {
-        debug!("{:?}: Connection dropped", self.token);
+        debug!("{:?}: Connection drop", self.token);
     }
 }
 
@@ -620,7 +673,7 @@ impl Drop for EventLoopThread {
     fn drop(&mut self) {
         trace!("{}: EventLoopThread shutdown", self.name);
         if let Err(e) = self.handle.shutdown() {
-            error!("{}: signalling shutdown failed: {:?}", self.name, e);
+            debug!("{}: initiating shutdown failed: {:?}", self.name, e);
         }
         let thread = self.thread.take().expect("event loop thread");
         if let Err(e) = thread.join() {
@@ -731,6 +784,17 @@ mod test {
         // Explicit shutdown.
         drop(server);
         drop(client);
+    }
+
+    #[test]
+    fn dead_server() {
+        init();
+        let (server, _client, client_proxy) = setup();
+        server.handle().shutdown().unwrap();
+        // XXX: Need an explicit server drop here, otherwise the test below is racy.
+        drop(server);
+        let response = client_proxy.call(TestServerMessage::TestRequest);
+        response.wait().expect_err("sending on closed channel");
     }
 
     #[test]
