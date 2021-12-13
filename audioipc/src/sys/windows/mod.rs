@@ -50,8 +50,8 @@ fn get_pipe_name() -> String {
 
 impl Pipe {
     #[allow(clippy::missing_safety_doc)]
-    pub unsafe fn from_raw_handle(raw: crate::PlatformHandleType) -> Pipe {
-        Pipe(NamedPipe::from_raw_handle(raw))
+    pub unsafe fn from_raw_handle(handle: crate::PlatformHandle) -> Pipe {
+        Pipe(NamedPipe::from_raw_handle(handle.into_raw()))
     }
 }
 

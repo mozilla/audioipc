@@ -21,10 +21,10 @@ use crate::{
 use serde::{de::DeserializeOwned, Serialize};
 use std::fmt::Debug;
 
-#[cfg(unix)]
-use crate::cmsg;
 #[cfg(windows)]
 use crate::duplicate_platform_handle;
+#[cfg(unix)]
+use crate::sys::cmsg;
 
 const WAKE_TOKEN: Token = Token(!0);
 
@@ -56,15 +56,15 @@ pub struct EventLoopHandle {
 impl EventLoopHandle {
     pub fn bind_client<C: Client + 'static>(
         &self,
-        client_pipe: sys::Pipe,
-    ) -> Result<Proxy<<C as Client>::Request, <C as Client>::Response>>
+        connection: sys::Pipe,
+    ) -> Result<Proxy<<C as Client>::ServerMessage, <C as Client>::ClientMessage>>
     where
-        <C as Client>::Request: Serialize + Debug + AssocRawPlatformHandle + Send,
-        <C as Client>::Response: DeserializeOwned + Debug + AssocRawPlatformHandle + Send,
+        <C as Client>::ServerMessage: Serialize + Debug + AssocRawPlatformHandle + Send,
+        <C as Client>::ClientMessage: DeserializeOwned + Debug + AssocRawPlatformHandle + Send,
     {
         let (handler, mut proxy) = make_client::<C>();
         let driver = Box::new(FramedDriver::new(handler));
-        let token = self.add_connection(client_pipe, driver)?;
+        let token = self.add_connection(connection, driver)?;
         proxy.connect_event_loop(self.clone(), token);
         Ok(proxy)
     }
@@ -72,15 +72,16 @@ impl EventLoopHandle {
     pub fn bind_server<S: Server + Send + 'static>(
         &self,
         server: S,
-        server_pipe: sys::Pipe,
+        connection: sys::Pipe,
     ) -> Result<()>
     where
-        <S as Server>::Request: DeserializeOwned + Debug + AssocRawPlatformHandle + Send,
-        <S as Server>::Response: Serialize + Debug + AssocRawPlatformHandle + Send,
+        <S as Server>::ServerMessage: DeserializeOwned + Debug + AssocRawPlatformHandle + Send,
+        <S as Server>::ClientMessage: Serialize + Debug + AssocRawPlatformHandle + Send,
     {
         let handler = make_server::<S>(server);
         let driver = Box::new(FramedDriver::new(handler));
-        self.add_connection(server_pipe, driver)?;
+        let r = self.add_connection(connection, driver);
+        trace!("EventLoop::bind_server {:?}", r);
         Ok(())
     }
 
@@ -118,14 +119,14 @@ impl EventLoopHandle {
 }
 
 // EventLoop owns all registered connections, and is responsible for calling each connection's
-// `handle_event` function any time a readiness or wake event associated with that connection is
+// `handle_event` or `handle_wake` any time a readiness or wake event associated with that connection is
 // produced.
 struct EventLoop {
     poll: Poll,
     events: Events,
     waker: Arc<Waker>,
     connections: Slab<Connection>,
-    requests: mpsc::Receiver<Request>,
+    requests_rx: mpsc::Receiver<Request>,
     requests_tx: mpsc::Sender<Request>,
 }
 
@@ -142,7 +143,7 @@ impl EventLoop {
             events: Events::with_capacity(EVENT_LOOP_EVENTS_PER_ITERATION),
             waker,
             connections: Slab::with_capacity(EVENT_LOOP_INITIAL_CLIENTS),
-            requests: rx,
+            requests_rx: rx,
             requests_tx: tx,
         };
 
@@ -168,6 +169,7 @@ impl EventLoop {
         }
         let entry = self.connections.vacant_entry();
         let token = Token(entry.key());
+        assert_ne!(token, WAKE_TOKEN);
         let connection = Connection::new(connection, token, driver, self.poll.registry())?;
         debug!("[{:?}]: new connection", token);
         entry.insert(connection);
@@ -189,7 +191,7 @@ impl EventLoop {
                 token => {
                     debug!("[{:?}]: connection ready: {:?}", token, event);
                     let done = if let Some(connection) = self.connections.get_mut(token.0) {
-                        match connection.handle_event(Some(event), self.poll.registry()) {
+                        match connection.handle_event(event, self.poll.registry()) {
                             Ok(done) => done,
                             Err(e) => {
                                 error!("[{:?}]: connection error: {:?}", token, e);
@@ -211,7 +213,7 @@ impl EventLoop {
         }
 
         // If the waker was signalled there may be pending requests to process.
-        while let Ok(req) = self.requests.try_recv() {
+        while let Ok(req) = self.requests_rx.try_recv() {
             match req {
                 Request::AddConnection(pipe, driver, tx) => {
                     debug!("EventLoop: handling add_connection");
@@ -225,7 +227,7 @@ impl EventLoop {
                 Request::WakeConnection(token) => {
                     debug!("EventLoop: handling wake_connection [{:?}]", token);
                     if let Some(connection) = self.connections.get_mut(token.0) {
-                        match connection.handle_event(None, self.poll.registry()) {
+                        match connection.handle_wake(self.poll.registry()) {
                             Ok(done) => assert!(!done),
                             Err(e) => {
                                 error!("[{:?}]: connection error: {:?}", token, e);
@@ -281,70 +283,100 @@ impl Connection {
     }
 
     // Update connection registration with the current readiness event interests.
-    fn update_registration(&mut self, registry: &Registry) -> Result<()> {
+    fn update_registration(&mut self, interest: Interest, registry: &Registry) -> Result<()> {
+        self.interest = interest;
         registry.reregister(&mut self.io, self.token, self.interest)
     }
 
     // Handle readiness event.  Errors returned are fatal for this connection, resulting in removal from the EventLoop connection list.
-    // The EventLoop will call this for any connection that has received an event, including external wake events to clear the outbound buffer.
-    fn handle_event(&mut self, event: Option<&Event>, registry: &Registry) -> Result<bool> {
-        if let Some(event) = event {
-            assert_eq!(self.token, event.token());
-        }
+    // The EventLoop will call this for any connection that has received an event.
+    fn handle_event(&mut self, event: &Event, registry: &Registry) -> Result<bool> {
         debug!("[{:?}]: handling event {:?}", self.token, event);
+        assert_eq!(self.token, event.token());
+        let done = if event.is_readable() {
+            self.recv_inbound()?
+        } else {
+            trace!("[{:?}]: not readable", self.token);
+            false
+        };
+        self.flush_outbound()?;
+        if self.send_outbound(registry)? {
+            // Hit EOF during send
+            return Ok(true);
+        }
+        // If driver is done, stop reading.  We may have more outbound to flush.
+        if done {
+            trace!("[{:?}]: driver done, clearing read interest", self.token);
+            self.update_registration(self.interest.remove(Interest::READABLE).unwrap(), registry)?;
+        }
+        debug!(
+            "[{:?}]: handling event done (done={}, outbound={})",
+            self.token,
+            done,
+            self.outbound.is_empty()
+        );
+        Ok(done && self.outbound.is_empty())
+    }
 
+    // Handle wake event.  Errors returned are fatal for this connection, resulting in removal from the EventLoop connection list.
+    // The EventLoop will call this to clear the outbound buffer for any connection that has received a wake event.
+    fn handle_wake(&mut self, registry: &Registry) -> Result<bool> {
+        debug!("[{:?}]: handling wake", self.token);
+        self.flush_outbound()?;
+        if self.send_outbound(registry)? {
+            // Hit EOF during send
+            return Ok(true);
+        }
+        debug!("[{:?}]: handling wake done", self.token);
+        Ok(false)
+    }
+
+    fn recv_inbound(&mut self) -> Result<bool> {
         // If the connection is readable, read into inbound and pass to driver for processing until all ready data
         // has been consumed.
-        //let done = if let Some(event) = event {
-        let done = if let Some(event) = event {
-            if event.is_readable() {
-                loop {
-                    trace!("[{:?}]: pre-recv inbound: {:?}", self.token, self.inbound);
-                    let r = self.io.recv_msg(&mut self.inbound);
+        loop {
+            trace!("[{:?}]: pre-recv inbound: {:?}", self.token, self.inbound);
+            let r = self.io.recv_msg(&mut self.inbound);
+            match r {
+                Ok(0) => {
+                    trace!("[{:?}]: recv EOF", self.token);
+                    assert!(self.inbound.is_empty()); // Ensure no unprocessed messages queued.
+                    return Ok(true);
+                }
+                Ok(n) => {
+                    trace!("[{:?}]: recv bytes: {}, process_inbound", self.token, n);
+                    let r = self.driver.process_inbound(&mut self.inbound);
+                    trace!("[{:?}]: process_inbound done: {:?}", self.token, r);
                     match r {
-                        Ok(0) => {
-                            trace!("[{:?}]: recv EOF", self.token);
-                            assert!(self.inbound.is_empty()); // Ensure no unprocessed messages queued.
-                            return Ok(true);
-                        }
-                        Ok(n) => {
-                            trace!("[{:?}]: recv bytes: {}, process_inbound", self.token, n);
-                            let r = self.driver.process_inbound(&mut self.inbound);
-                            trace!("[{:?}]: process_inbound done: {:?}", self.token, r);
-                            match r {
-                                Ok(done) => {
-                                    if done {
-                                        break done;
-                                    }
-                                }
-                                Err(e) => {
-                                    error!("[{:?}]: process_inbound error: {:?}", self.token, e);
-                                    assert!(self.inbound.is_empty()); // Ensure no unprocessed messages queued.
-                                    return Err(e);
-                                }
+                        Ok(done) => {
+                            if done {
+                                return Ok(done);
                             }
                         }
-                        Err(ref e) if would_block(e) => {
-                            trace!("[{:?}]: recv would_block: {:?}", self.token, e);
-                            break false;
-                        }
-                        Err(ref e) if interrupted(e) => {
-                            trace!("[{:?}]: recv interrupted: {:?}", self.token, e);
-                            continue;
-                        }
                         Err(e) => {
-                            error!("[{:?}]: recv error: {:?}", self.token, e);
+                            error!("[{:?}]: process_inbound error: {:?}", self.token, e);
+                            assert!(self.inbound.is_empty()); // Ensure no unprocessed messages queued.
                             return Err(e);
                         }
                     }
                 }
-            } else {
-                false
+                Err(ref e) if would_block(e) => {
+                    trace!("[{:?}]: recv would_block: {:?}", self.token, e);
+                    return Ok(false);
+                }
+                Err(ref e) if interrupted(e) => {
+                    trace!("[{:?}]: recv interrupted: {:?}", self.token, e);
+                    continue;
+                }
+                Err(e) => {
+                    error!("[{:?}]: recv error: {:?}", self.token, e);
+                    return Err(e);
+                }
             }
-        } else {
-            false
-        };
+        }
+    }
 
+    fn flush_outbound(&mut self) -> Result<()> {
         // Enqueue outbound messages to the outbound buffer, then try to write out to connection.
         // There may be outbound messages even if there was no inbound processing, so always attempt
         // to enqueue and flush.
@@ -355,7 +387,10 @@ impl Connection {
             error!("[{:?}]: flush_outbound error: {:?}", self.token, e);
             return Err(e);
         }
+        Ok(())
+    }
 
+    fn send_outbound(&mut self, registry: &Registry) -> Result<bool> {
         // Attempt to flush outbound buffer.  If the connection's write buffer is full, register for WRITABLE
         // and complete flushing when associated notitication arrives later.
         while !self.outbound.is_empty() {
@@ -372,8 +407,7 @@ impl Connection {
                     trace!("[{:?}]: send would_block: {:?}", self.token, e);
                     // Register for write events.
                     if !self.interest.is_writable() {
-                        self.interest.add(Interest::WRITABLE);
-                        self.update_registration(registry)?;
+                        self.update_registration(self.interest.add(Interest::WRITABLE), registry)?;
                     }
                     break;
                 }
@@ -392,31 +426,18 @@ impl Connection {
                 self.outbound
             );
         }
-
-        // If driver is done, stop reading.  We may have more outbound to flush.
-        if done {
-            trace!("[{:?}]: driver done, clearing read interest", self.token);
-            self.interest.remove(Interest::READABLE);
-            self.update_registration(registry)?;
-        }
-
         // Outbound buffer flushed, clear registration for WRITABLE.
         // Note that Windows NamedPipes will cause an additional WRITABLE notification after a write, even if
         // we're no longer registered for WRITABLE.  Any user of Poll is expected to handle spurious events,
         // so this is fine.
-        if let Some(event) = event {
-            if event.is_writable() && self.outbound.is_empty() {
-                trace!(
-                    "[{:?}]: outbound empty, clearing write interest",
-                    self.token
-                );
-                self.interest.remove(Interest::WRITABLE);
-                self.update_registration(registry)?;
-            }
+        if self.outbound.is_empty() {
+            trace!(
+                "[{:?}]: outbound empty, clearing write interest",
+                self.token
+            );
+            self.update_registration(self.interest.remove(Interest::WRITABLE).unwrap(), registry)?;
         }
-
-        debug!("[{:?}]: handling event done", self.token);
-        Ok(done && self.outbound.is_empty())
+        Ok(false)
     }
 }
 
@@ -456,6 +477,7 @@ where
         while let Some(mut item) = self.codec.decode(&mut inbound.buf)? {
             #[cfg(unix)]
             {
+                // TODO: Clean this up to only expect a single fd per message.
                 let mut handle = None;
                 let b = inbound.cmsg.clone().freeze();
                 for fd in cmsg::iterator(b) {
@@ -533,7 +555,6 @@ pub struct EventLoopThread {
     handle: EventLoopHandle,
 }
 
-// TODO: Builder pattern.
 impl EventLoopThread {
     pub fn new<F1, F2>(
         name: String,
@@ -542,14 +563,14 @@ impl EventLoopThread {
         before_stop: F2,
     ) -> Result<Self>
     where
-        F1: Fn() + Send + Sync + 'static,
-        F2: Fn() + Send + Sync + 'static,
+        F1: Fn() + Send + 'static,
+        F2: Fn() + Send + 'static,
     {
         let mut event_loop = EventLoop::new()?;
         let handle = event_loop.handle();
 
         let builder = thread::Builder::new()
-            .name(format!("AudioIPC {}", name))
+            .name(name.clone())
             .stack_size(stack_size.unwrap_or(64 * 4096));
 
         let thread = builder.spawn(move || {
@@ -598,27 +619,25 @@ mod test {
 
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
     enum TestServerMessage {
-        TestRequest1,
-        TestRequest2,
+        TestRequest,
     }
     impl AssocRawPlatformHandle for TestServerMessage {}
 
     struct TestServerImpl {}
 
     impl Server for TestServerImpl {
-        type Request = TestServerMessage;
-        type Response = TestClientMessage;
+        type ServerMessage = TestServerMessage;
+        type ClientMessage = TestClientMessage;
 
-        fn process(&mut self, req: Self::Request) -> Self::Response {
-            assert_eq!(req, TestServerMessage::TestRequest1);
-            TestClientMessage::TestResponse1
+        fn process(&mut self, req: Self::ServerMessage) -> Self::ClientMessage {
+            assert_eq!(req, TestServerMessage::TestRequest);
+            TestClientMessage::TestResponse
         }
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
     enum TestClientMessage {
-        TestResponse1,
-        TestResponse2,
+        TestResponse,
     }
 
     impl AssocRawPlatformHandle for TestClientMessage {}
@@ -626,8 +645,8 @@ mod test {
     struct TestClientImpl {}
 
     impl Client for TestClientImpl {
-        type Request = TestServerMessage;
-        type Response = TestClientMessage;
+        type ServerMessage = TestServerMessage;
+        type ClientMessage = TestClientMessage;
     }
 
     fn setup() -> (
@@ -650,7 +669,7 @@ mod test {
             .expect("client EventLoopThread");
         let client_handle = client_elt.handle();
 
-        let client_pipe = unsafe { sys::Pipe::from_raw_handle(client_pipe.into_raw()) };
+        let client_pipe = unsafe { sys::Pipe::from_raw_handle(client_pipe) };
         let client_proxy = client_handle
             .bind_client::<TestClientImpl>(client_pipe)
             .expect("client bind_client");
@@ -665,9 +684,9 @@ mod test {
         let (server, client, client_proxy) = setup();
 
         // RPC message from client to server.
-        let response = client_proxy.call(TestServerMessage::TestRequest1);
+        let response = client_proxy.call(TestServerMessage::TestRequest);
         let response = response.wait().expect("client response");
-        assert_eq!(response, TestClientMessage::TestResponse1);
+        assert_eq!(response, TestClientMessage::TestResponse);
 
         // Explicit shutdown.
         drop(client);
@@ -680,9 +699,9 @@ mod test {
         let (server, client, client_proxy) = setup();
 
         // RPC message from client to server.
-        let response = client_proxy.call(TestServerMessage::TestRequest1);
+        let response = client_proxy.call(TestServerMessage::TestRequest);
         let response = response.wait().expect("client response");
-        assert_eq!(response, TestClientMessage::TestResponse1);
+        assert_eq!(response, TestClientMessage::TestResponse);
 
         // Explicit shutdown.
         drop(server);
@@ -690,7 +709,7 @@ mod test {
     }
 
     #[test]
-    fn basic_thread_callbacks() {
+    fn basic_event_loop_thread_callbacks() {
         let after_start1 = Arc::new(AtomicBool::new(false));
         let after_start2 = after_start1.clone();
         let before_stop1 = Arc::new(AtomicBool::new(false));

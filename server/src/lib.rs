@@ -18,6 +18,7 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_void;
 use std::ptr;
 use std::sync::Mutex;
+use std::thread;
 
 mod server;
 
@@ -50,14 +51,13 @@ pub mod errors {
 use crate::errors::*;
 
 struct ServerWrapper {
-    core_thread: ipccore::EventLoopThread,
+    rpc_thread: ipccore::EventLoopThread,
     callback_thread: ipccore::EventLoopThread,
 }
 
 fn register_thread(callback: Option<extern "C" fn(*const ::std::os::raw::c_char)>) {
     if let Some(func) = callback {
-        let thr = std::thread::current();
-        let name = CString::new(thr.name().unwrap()).unwrap();
+        let name = CString::new(thread::current().name().unwrap()).unwrap();
         func(name.as_ptr());
     }
 }
@@ -72,51 +72,51 @@ fn init_threads(
     thread_create_callback: Option<extern "C" fn(*const ::std::os::raw::c_char)>,
     thread_destroy_callback: Option<extern "C" fn()>,
 ) -> Result<ServerWrapper> {
-    trace!("Starting up cubeb audio server event loop thread...");
-
-    let core_thread = ipccore::EventLoopThread::new(
-        "Server RPC".to_string(),
+    let core_name = "AudioIPC Server RPC";
+    let rpc_thread = ipccore::EventLoopThread::new(
+        core_name.to_string(),
         None,
         move || {
+            trace!("Starting {} thread", core_name);
             register_thread(thread_create_callback);
             audioipc::server_platform_init();
         },
         move || {
             unregister_thread(thread_destroy_callback);
+            trace!("Stopping {} thread", core_name);
         },
     )
     .map_err(|e| {
-        debug!("Failed to start AudioIPC core event loop thread: {:?}", e);
+        debug!("Failed to start {} thread: {:?}", core_name, e);
         e
     })?;
 
+    let callback_name = "AudioIPC Server Callback";
     let callback_thread = ipccore::EventLoopThread::new(
-        "Callback RPC".to_string(),
+        callback_name.to_string(),
         None,
         move || {
-            match promote_current_thread_to_real_time(0, 48000) {
-                Ok(_) => {}
-                Err(_) => {
-                    debug!("Failed to promote audio callback thread to real-time.");
-                }
+            trace!("Starting {} thread", callback_name);
+            if let Err(e) = promote_current_thread_to_real_time(0, 48000) {
+                debug!(
+                    "Failed to promote {} thread to real-time: {:?}",
+                    callback_name, e
+                );
             }
             register_thread(thread_create_callback);
-            trace!("Starting up cubeb audio callback event loop thread...");
         },
         move || {
             unregister_thread(thread_destroy_callback);
+            trace!("Stopping {} thread", callback_name);
         },
     )
     .map_err(|e| {
-        debug!(
-            "Failed to start AudioIPC callback event loop thread: {:?}",
-            e
-        );
+        debug!("Failed to start {} thread: {:?}", callback_name, e);
         e
     })?;
 
     Ok(ServerWrapper {
-        core_thread,
+        rpc_thread,
         callback_thread,
     })
 }
@@ -178,11 +178,7 @@ pub extern "C" fn audioipc_server_new_client(
     };
 
     let server = server::CubebServer::new(wrapper.callback_thread.handle().clone(), shm_area_size);
-    if let Err(e) = wrapper
-        .core_thread
-        .handle()
-        .bind_server(server, server_pipe)
-    {
+    if let Err(e) = wrapper.rpc_thread.handle().bind_server(server, server_pipe) {
         error!("audioipc_server_new_client - bind_server failed: {:?}", e);
         return audioipc::INVALID_HANDLE_VALUE;
     }

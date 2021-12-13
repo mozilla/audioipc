@@ -10,14 +10,10 @@ extern crate error_chain;
 #[macro_use]
 extern crate log;
 
-#[cfg(unix)]
-mod cmsg;
 pub mod codec;
 #[allow(deprecated)]
 pub mod errors;
 pub mod messages;
-#[cfg(unix)]
-mod msg;
 pub mod shm;
 
 pub mod ipccore;
