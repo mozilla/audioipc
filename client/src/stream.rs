@@ -66,10 +66,10 @@ struct CallbackServer {
 }
 
 impl rpccore::Server for CallbackServer {
-    type Request = CallbackReq;
-    type Response = CallbackResp;
+    type ServerMessage = CallbackReq;
+    type ClientMessage = CallbackResp;
 
-    fn process(&mut self, req: Self::Request) -> Self::Response {
+    fn process(&mut self, req: Self::ServerMessage) -> Self::ClientMessage {
         match req {
             CallbackReq::Data {
                 nframes,
@@ -235,8 +235,7 @@ impl<'ctx> ClientStream<'ctx> {
             data.token, data.platform_handle
         );
 
-        let stream =
-            unsafe { sys::Pipe::from_raw_handle(data.platform_handle.take_handle().into_raw()) };
+        let stream = unsafe { sys::Pipe::from_raw_handle(data.platform_handle.take_handle()) };
 
         let user_data = user_ptr as usize;
 

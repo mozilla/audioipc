@@ -11,7 +11,7 @@ use audio_thread_priority::get_current_thread_info;
 #[cfg(not(target_os = "linux"))]
 use audio_thread_priority::promote_current_thread_to_real_time;
 use audioipc::ipccore::EventLoopHandle;
-use audioipc::{ipccore, rpccore, sys};
+use audioipc::{ipccore, rpccore, sys, PlatformHandle};
 use audioipc::{
     messages, messages::DeviceCollectionReq, messages::DeviceCollectionResp, ClientMessage,
     ServerMessage,
@@ -29,8 +29,8 @@ use std::{fmt, mem, ptr};
 struct CubebClient;
 
 impl rpccore::Client for CubebClient {
-    type Request = ServerMessage;
-    type Response = ClientMessage;
+    type ServerMessage = ServerMessage;
+    type ClientMessage = ClientMessage;
 }
 
 pub const CLIENT_OPS: Ops = capi_new!(ClientContext, ClientStream);
@@ -121,10 +121,10 @@ struct DeviceCollectionServer {
 }
 
 impl rpccore::Server for DeviceCollectionServer {
-    type Request = DeviceCollectionReq;
-    type Response = DeviceCollectionResp;
+    type ServerMessage = DeviceCollectionReq;
+    type ClientMessage = DeviceCollectionResp;
 
-    fn process(&mut self, req: Self::Request) -> Self::Response {
+    fn process(&mut self, req: Self::ServerMessage) -> Self::ClientMessage {
         match req {
             DeviceCollectionReq::DeviceChange(device_type) => {
                 trace!(
@@ -168,10 +168,11 @@ impl ContextOps for ClientContext {
         let thread_create_callback = params.thread_create_callback;
         let thread_destroy_callback = params.thread_destroy_callback;
 
-        let server_stream = unsafe { sys::Pipe::from_raw_handle(params.server_connection) };
+        let server_connection =
+            unsafe { sys::Pipe::from_raw_handle(PlatformHandle::new(params.server_connection)) };
 
         let core_thread = ipccore::EventLoopThread::new(
-            "Client RPC".to_string(),
+            "AudioIPC Client RPC".to_string(),
             None,
             move || register_thread(thread_create_callback),
             move || unregister_thread(thread_destroy_callback),
@@ -179,7 +180,7 @@ impl ContextOps for ClientContext {
         .map_err(|_| Error::default())?;
         let rpc = core_thread
             .handle()
-            .bind_client::<CubebClient>(server_stream)
+            .bind_client::<CubebClient>(server_connection)
             .map_err(|_| Error::default())?;
         let rpc2 = rpc.clone();
 
@@ -191,9 +192,9 @@ impl ContextOps for ClientContext {
             .unwrap_or_else(|_| "(remote error)".to_string());
         let backend_id = CString::new(backend_id).expect("backend_id query failed");
 
-        // XXX: remove params.pool_size
+        // TODO: remove params.pool_size from init params.
         let callback_thread = ipccore::EventLoopThread::new(
-            "Client CB/RT".to_string(),
+            "AudioIPC Client Callback".to_string(),
             Some(params.stack_size),
             move || promote_and_register_thread(&rpc2, thread_create_callback),
             move || unregister_thread(thread_destroy_callback),
@@ -330,8 +331,7 @@ impl ContextOps for ClientContext {
                                  ContextSetupDeviceCollectionCallback =>
                                  ContextSetupDeviceCollectionCallback())?;
 
-            let stream =
-                unsafe { sys::Pipe::from_raw_handle(fd.platform_handle.take_handle().into_raw()) };
+            let stream = unsafe { sys::Pipe::from_raw_handle(fd.platform_handle.take_handle()) };
 
             let server = DeviceCollectionServer {
                 input_device_callback: self.input_device_callback.clone(),

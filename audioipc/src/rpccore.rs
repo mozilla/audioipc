@@ -12,7 +12,7 @@ use crate::ipccore::EventLoopHandle;
 
 // RPC message handler.  Implemented by ClientHandler (for Client)
 // and ServerHandler (for Server).
-pub trait Handler {
+pub(crate) trait Handler {
     type In;
     type Out;
 
@@ -26,33 +26,34 @@ pub trait Handler {
 // Client RPC definition.  This supplies the expected message
 // request and response types.
 pub trait Client {
-    type Request;
-    type Response;
+    type ServerMessage;
+    type ClientMessage;
 }
 
 // Server RPC definition.  This supplies the expected message
 // request and response types.  `process` is passed inbound RPC
 // requests by the ServerHandler to be responded to by the server.
 pub trait Server {
-    type Request;
-    type Response;
+    type ServerMessage;
+    type ClientMessage;
 
-    fn process(&mut self, req: Self::Request) -> Self::Response;
+    fn process(&mut self, req: Self::ServerMessage) -> Self::ClientMessage;
 }
 
-// RPC Client Proxy implementation
-type ProxyRequest<R, Q> = (R, mpsc::Sender<Q>);
-type ProxyReceiver<R, Q> = mpsc::Receiver<ProxyRequest<R, Q>>;
+// RPC Client Proxy implementation.  ProxyRequest's Sender is connected to ProxyReceiver's Receiver,
+// allowing the ProxyReceiver to wait on a response from the proxy.
+type ProxyRequest<Request, Response> = (Request, mpsc::Sender<Response>);
+type ProxyReceiver<Request, Response> = mpsc::Receiver<ProxyRequest<Request, Response>>;
 
 // Each RPC Proxy `call` returns a blocking waitable ProxyResponse.
 // `wait` produces the response received over RPC from the associated
 // Proxy `call`.
-pub struct ProxyResponse<Q> {
-    inner: mpsc::Receiver<Q>,
+pub struct ProxyResponse<Response> {
+    inner: mpsc::Receiver<Response>,
 }
 
-impl<Q> ProxyResponse<Q> {
-    pub fn wait(&self) -> Result<Q> {
+impl<Response> ProxyResponse<Response> {
+    pub fn wait(&self) -> Result<Response> {
         match self.inner.recv() {
             Ok(resp) => Ok(resp),
             Err(_) => Err(std::io::Error::new(
@@ -68,16 +69,13 @@ impl<Q> ProxyResponse<Q> {
 // to the associated Server via RPC.  The response can be retrieved by
 // `wait`ing on the returned ProxyResponse.
 #[derive(Debug)]
-pub struct Proxy<R, Q> {
+pub struct Proxy<Request, Response> {
     handle: Option<(EventLoopHandle, Token)>,
-    tx: mpsc::Sender<ProxyRequest<R, Q>>,
+    tx: mpsc::Sender<ProxyRequest<Request, Response>>,
 }
 
-// XXX: Required for client setup, verify this is safe.
-unsafe impl<R, Q> Sync for Proxy<R, Q> {}
-
-impl<R, Q> Proxy<R, Q> {
-    pub fn call(&self, request: R) -> ProxyResponse<Q> {
+impl<Request, Response> Proxy<Request, Response> {
+    pub fn call(&self, request: Request) -> ProxyResponse<Response> {
         let (tx, rx) = mpsc::channel();
         self.tx.send((request, tx)).expect("proxy send error");
         let (handle, token) = self
@@ -93,7 +91,7 @@ impl<R, Q> Proxy<R, Q> {
     }
 }
 
-impl<R, Q> Clone for Proxy<R, Q> {
+impl<Request, Response> Clone for Proxy<Request, Response> {
     fn clone(&self) -> Self {
         Proxy {
             handle: self.handle.clone(),
@@ -102,29 +100,21 @@ impl<R, Q> Clone for Proxy<R, Q> {
     }
 }
 
-fn make_proxy<R, Q>() -> (Proxy<R, Q>, ProxyReceiver<R, Q>) {
-    let (tx, rx) = mpsc::channel();
-    let proxy = Proxy { handle: None, tx };
-    (proxy, rx)
-}
-
 // Client-specific Handler implementation.
-// The IPC Core `Driver` calls this to execute client-specific
+// The IPC EventLoop Driver calls this to execute client-specific
 // RPC handling.  Serialized messages sent via a Proxy are queued
 // for transmission when `produce` is called.
 // Deserialized messages are passed via `consume` to
 // trigger response completion by sending the response via a channel
 // connected to a ProxyResponse.
-pub struct ClientHandler<C: Client> {
-    requests: ProxyReceiver<C::Request, C::Response>,
-    in_flight: VecDeque<mpsc::Sender<C::Response>>,
+pub(crate) struct ClientHandler<C: Client> {
+    messages: ProxyReceiver<C::ServerMessage, C::ClientMessage>,
+    in_flight: VecDeque<mpsc::Sender<C::ClientMessage>>,
 }
 
 impl<C: Client> Handler for ClientHandler<C> {
-    // Note: In/Out types are swapped compared to ServerHandler, as
-    // clients send requests and receive responses.
-    type In = C::Response;
-    type Out = C::Request;
+    type In = C::ClientMessage;
+    type Out = C::ServerMessage;
 
     fn consume(&mut self, response: Self::In) -> Result<()> {
         trace!("ClientHandler::consume");
@@ -143,11 +133,11 @@ impl<C: Client> Handler for ClientHandler<C> {
     fn produce(&mut self) -> Result<Option<Self::Out>> {
         trace!("ClientHandler::produce");
 
-        // Try to get a new request
-        match self.requests.try_recv() {
-            Ok((request, complete)) => {
+        // Try to get a new message
+        match self.messages.try_recv() {
+            Ok((request, response_tx)) => {
                 trace!("  --> received request");
-                self.in_flight.push_back(complete);
+                self.in_flight.push_back(response_tx);
                 Ok(Some(request))
             }
             Err(mpsc::TryRecvError::Empty) => {
@@ -162,34 +152,37 @@ impl<C: Client> Handler for ClientHandler<C> {
     }
 }
 
-pub fn make_client<C: Client>() -> (ClientHandler<C>, Proxy<C::Request, C::Response>) {
-    let (tx, rx) = make_proxy();
+pub(crate) fn make_client<C: Client>(
+) -> (ClientHandler<C>, Proxy<C::ServerMessage, C::ClientMessage>) {
+    let (tx, rx) = mpsc::channel();
 
     let handler = ClientHandler::<C> {
-        requests: rx,
+        messages: rx,
         in_flight: VecDeque::with_capacity(32),
     };
 
-    (handler, tx)
+    let proxy = Proxy { handle: None, tx };
+
+    (handler, proxy)
 }
 
 // Server-specific Handler implementation.
-// The IPC Core `Driver` calls this to execute server-specific
+// The IPC EventLoop Driver calls this to execute server-specific
 // RPC handling.  Deserialized messages are passed via `consume` to the
 // associated `server` for processing.  Server responses are then queued
 // for RPC to the associated client when `produce` is called.
-pub struct ServerHandler<S: Server> {
+pub(crate) struct ServerHandler<S: Server> {
     server: S,
-    in_flight: VecDeque<S::Response>,
+    in_flight: VecDeque<S::ClientMessage>,
 }
 
 impl<S: Server> Handler for ServerHandler<S> {
-    type In = S::Request;
-    type Out = S::Response;
+    type In = S::ServerMessage;
+    type Out = S::ClientMessage;
 
-    fn consume(&mut self, request: Self::In) -> Result<()> {
+    fn consume(&mut self, message: Self::In) -> Result<()> {
         trace!("ServerHandler::consume");
-        let response = self.server.process(request);
+        let response = self.server.process(message);
         self.in_flight.push_back(response);
         Ok(())
     }
@@ -211,7 +204,7 @@ impl<S: Server> Handler for ServerHandler<S> {
     }
 }
 
-pub fn make_server<S: Server>(server: S) -> ServerHandler<S> {
+pub(crate) fn make_server<S: Server>(server: S) -> ServerHandler<S> {
     ServerHandler::<S> {
         server,
         in_flight: VecDeque::with_capacity(32),

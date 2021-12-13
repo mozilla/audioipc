@@ -10,9 +10,12 @@ use bytes::{BufMut, BytesMut};
 use iovec::IoVec;
 use mio::net::UnixStream;
 
-use crate::{close_platform_handle, cmsg, msg, PlatformHandle};
+use crate::{close_platform_handle, PlatformHandle};
 
 use super::{RecvMsg, SendMsg};
+
+pub mod cmsg;
+mod msg;
 
 pub struct Pipe(pub UnixStream);
 
@@ -25,8 +28,8 @@ pub fn make_pipe_pair() -> Result<(Pipe, PlatformHandle)> {
 
 impl Pipe {
     #[allow(clippy::missing_safety_doc)]
-    pub unsafe fn from_raw_handle(raw: crate::PlatformHandleType) -> Pipe {
-        Pipe(UnixStream::from_raw_fd(raw))
+    pub unsafe fn from_raw_handle(handle: crate::PlatformHandle) -> Pipe {
+        Pipe(UnixStream::from_raw_fd(handle.into_raw()))
     }
 }
 
@@ -69,6 +72,7 @@ impl SendMsg for Pipe {
             Ok(n) => {
                 buf.buf.advance(n);
                 // Close sent fds.
+                // TODO: Clean this up to only expect a single fd per message.
                 let b = buf.cmsg.clone().freeze();
                 for fd in cmsg::iterator(b) {
                     assert_eq!(fd.len(), 1);

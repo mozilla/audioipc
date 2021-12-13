@@ -33,12 +33,12 @@ impl Source for Pipe {
 
 pub trait RecvMsg {
     // Receive data from the associated connection.  `recv_msg` expects the capacity of
-    // the `ConnectionBuffer` members has been adjusted appropriate by the caller.
+    // the `ConnectionBuffer` members have been adjusted appropriately by the caller.
     fn recv_msg(&mut self, buf: &mut ConnectionBuffer) -> Result<usize>;
 }
 
 pub trait SendMsg {
-    // Send data on the associated connection.  `send_msg` adjusts the length of the
+    // Send data on the associated connection.  `send_msg` consumes and adjusts the length of the
     // `ConnectionBuffer` members based on the size of the successful send operation.
     fn send_msg(&mut self, buf: &mut ConnectionBuffer) -> Result<usize>;
 }

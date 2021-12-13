@@ -31,7 +31,7 @@ fn error(error: cubeb::Error) -> ClientMessage {
 }
 
 struct CubebDeviceCollectionManager {
-    servers: Mutex<Vec<Rc<RefCell<CubebServerCallbacks>>>>,
+    servers: Mutex<Vec<Rc<RefCell<DeviceCollectionChangeCallback>>>>,
 }
 
 impl CubebDeviceCollectionManager {
@@ -44,7 +44,7 @@ impl CubebDeviceCollectionManager {
     fn register(
         &mut self,
         context: &cubeb::Context,
-        server: &Rc<RefCell<CubebServerCallbacks>>,
+        server: &Rc<RefCell<DeviceCollectionChangeCallback>>,
         devtype: cubeb::DeviceType,
     ) -> cubeb::Result<()> {
         let mut servers = self.servers.lock().unwrap();
@@ -61,7 +61,7 @@ impl CubebDeviceCollectionManager {
     fn unregister(
         &mut self,
         context: &cubeb::Context,
-        server: &Rc<RefCell<CubebServerCallbacks>>,
+        server: &Rc<RefCell<DeviceCollectionChangeCallback>>,
         devtype: cubeb::DeviceType,
     ) -> cubeb::Result<()> {
         let mut servers = self.servers.lock().unwrap();
@@ -198,15 +198,15 @@ where
 struct DeviceCollectionClient;
 
 impl rpccore::Client for DeviceCollectionClient {
-    type Request = DeviceCollectionReq;
-    type Response = DeviceCollectionResp;
+    type ServerMessage = DeviceCollectionReq;
+    type ClientMessage = DeviceCollectionResp;
 }
 
 struct CallbackClient;
 
 impl rpccore::Client for CallbackClient {
-    type Request = CallbackReq;
-    type Response = CallbackResp;
+    type ServerMessage = CallbackReq;
+    type ClientMessage = CallbackResp;
 }
 
 struct ServerStreamCallbacks {
@@ -320,12 +320,12 @@ impl Drop for ServerStream {
     }
 }
 
-struct CubebServerCallbacks {
+struct DeviceCollectionChangeCallback {
     rpc: rpccore::Proxy<DeviceCollectionReq, DeviceCollectionResp>,
     devtype: cubeb::DeviceType,
 }
 
-impl CubebServerCallbacks {
+impl DeviceCollectionChangeCallback {
     fn device_collection_changed_callback(&mut self, device_type: ffi::cubeb_device_type) {
         // TODO: Assert device_type is in devtype.
         debug!(
@@ -343,7 +343,7 @@ pub struct CubebServer {
     callback_thread: ipccore::EventLoopHandle,
     streams: slab::Slab<ServerStream>,
     remote_pid: Option<u32>,
-    cbs: Option<Rc<RefCell<CubebServerCallbacks>>>,
+    device_collection_change_callbacks: Option<Rc<RefCell<DeviceCollectionChangeCallback>>>,
     devidmap: DevIdMap,
     shm_area_size: usize,
 }
@@ -354,10 +354,10 @@ pub struct CubebServer {
 unsafe impl Send for CubebServer {}
 
 impl rpccore::Server for CubebServer {
-    type Request = ServerMessage;
-    type Response = ClientMessage;
+    type ServerMessage = ServerMessage;
+    type ClientMessage = ClientMessage;
 
-    fn process(&mut self, req: Self::Request) -> Self::Response {
+    fn process(&mut self, req: Self::ServerMessage) -> Self::ClientMessage {
         if let ServerMessage::ClientConnect(pid) = req {
             self.remote_pid = Some(pid);
         }
@@ -395,7 +395,7 @@ impl CubebServer {
             callback_thread: callback_thread_handle,
             streams: slab::Slab::<ServerStream>::new(),
             remote_pid: None,
-            cbs: None,
+            device_collection_change_callbacks: None,
             devidmap: DevIdMap::new(),
             shm_area_size,
         }
@@ -551,8 +551,9 @@ impl CubebServer {
                     }
                 };
 
-                // XXX: should this be on callback or core?
-                // XXX: we should send use client_pipe and send server_pipe, but into_raw() is tricky for sys::Pipe.
+                // XXX: should this be on server or callback EventLoop?
+                // TODO: this should bind the client_pipe and send the server_pipe to the remote, but
+                //       additional work is required as it's not possible to convert a Windows sys::Pipe into a raw handle.
                 let rpc = match self
                     .callback_thread
                     .bind_client::<DeviceCollectionClient>(server_pipe)
@@ -567,10 +568,11 @@ impl CubebServer {
                     }
                 };
 
-                self.cbs = Some(Rc::new(RefCell::new(CubebServerCallbacks {
-                    rpc,
-                    devtype: cubeb::DeviceType::empty(),
-                })));
+                self.device_collection_change_callbacks =
+                    Some(Rc::new(RefCell::new(DeviceCollectionChangeCallback {
+                        rpc,
+                        devtype: cubeb::DeviceType::empty(),
+                    })));
                 let fd = RegisterDeviceCollectionChanged {
                     platform_handle: SerializableHandle::new(client_pipe, self.remote_pid.unwrap()),
                 };
@@ -618,8 +620,8 @@ impl CubebServer {
             return Err(cubeb::Error::invalid_parameter());
         }
 
-        assert!(self.cbs.is_some());
-        let cbs = self.cbs.as_ref().unwrap();
+        assert!(self.device_collection_change_callbacks.is_some());
+        let cbs = self.device_collection_change_callbacks.as_ref().unwrap();
 
         if enable {
             manager.register(context, cbs, devtype)
@@ -673,7 +675,8 @@ impl CubebServer {
         let shm_handle = unsafe { shm.make_handle()? };
 
         let (server_pipe, client_pipe) = sys::make_pipe_pair()?;
-        // XXX: this should be client_pipe, need to sort out sys::Pipe into_raw()
+        // TODO: this should bind the client_pipe and send the server_pipe to the remote, but
+        //       additional work is required as it's not possible to convert a Windows sys::Pipe into a raw handle.
         let rpc = self
             .callback_thread
             .bind_client::<CallbackClient>(server_pipe)?;

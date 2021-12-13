@@ -5,43 +5,8 @@
 
 use iovec::unix;
 use iovec::IoVec;
-use std::os::unix::io::{AsRawFd, RawFd};
+use std::os::unix::io::RawFd;
 use std::{cmp, io, mem, ptr};
-
-// Extend sys::os::unix::net::UnixStream to support sending and receiving a single file desc.
-// We can extend UnixStream by using traits, eliminating the need to introduce a new wrapped
-// UnixStream type.
-pub trait RecvMsg {
-    fn recv_msg(
-        &mut self,
-        iov: &mut [&mut IoVec],
-        cmsg: &mut [u8],
-    ) -> io::Result<(usize, usize, i32)>;
-}
-
-pub trait SendMsg {
-    fn send_msg(&mut self, iov: &[&IoVec], cmsg: &[u8]) -> io::Result<usize>;
-}
-
-impl<T: AsRawFd> RecvMsg for T {
-    fn recv_msg(
-        &mut self,
-        iov: &mut [&mut IoVec],
-        cmsg: &mut [u8],
-    ) -> io::Result<(usize, usize, i32)> {
-        #[cfg(target_os = "linux")]
-        let flags = libc::MSG_CMSG_CLOEXEC;
-        #[cfg(not(target_os = "linux"))]
-        let flags = 0;
-        recv_msg_with_flags(self.as_raw_fd(), iov, cmsg, flags)
-    }
-}
-
-impl<T: AsRawFd> SendMsg for T {
-    fn send_msg(&mut self, iov: &[&IoVec], cmsg: &[u8]) -> io::Result<usize> {
-        send_msg_with_flags(self.as_raw_fd(), iov, cmsg, 0)
-    }
-}
 
 fn cvt(r: libc::ssize_t) -> io::Result<usize> {
     if r == -1 {
@@ -61,7 +26,7 @@ fn cvt_r<F: FnMut() -> libc::ssize_t>(mut f: F) -> io::Result<usize> {
     }
 }
 
-pub fn recv_msg_with_flags(
+pub(crate) fn recv_msg_with_flags(
     socket: RawFd,
     bufs: &mut [&mut IoVec],
     cmsg: &mut [u8],
@@ -89,7 +54,7 @@ pub fn recv_msg_with_flags(
     Ok((n, controllen, msghdr.msg_flags))
 }
 
-pub fn send_msg_with_flags(
+pub(crate) fn send_msg_with_flags(
     socket: RawFd,
     bufs: &[&IoVec],
     cmsg: &[u8],
