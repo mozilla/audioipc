@@ -649,6 +649,10 @@ mod test {
         type ClientMessage = TestClientMessage;
     }
 
+    fn init() {
+        let _ = env_logger::builder().is_test(true).try_init();
+    }
+
     fn setup() -> (
         EventLoopThread,
         EventLoopThread,
@@ -681,6 +685,7 @@ mod test {
     // a single message from the client to the server and wait for the expected response.
     #[test]
     fn basic() {
+        init();
         let (server, client, client_proxy) = setup();
 
         // RPC message from client to server.
@@ -696,6 +701,7 @@ mod test {
     // Same as `basic`, but shut down server before client.
     #[test]
     fn basic_reverse_drop_order() {
+        init();
         let (server, client, client_proxy) = setup();
 
         // RPC message from client to server.
@@ -710,6 +716,7 @@ mod test {
 
     #[test]
     fn basic_event_loop_thread_callbacks() {
+        init();
         let after_start1 = Arc::new(AtomicBool::new(false));
         let after_start2 = after_start1.clone();
         let before_stop1 = Arc::new(AtomicBool::new(false));

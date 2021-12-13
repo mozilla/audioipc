@@ -154,7 +154,7 @@ fn run_client() -> Result<()> {
 }
 
 fn main() {
-    env_logger::init().unwrap();
+    env_logger::init();
 
     let args: Vec<String> = std::env::args().collect();
 

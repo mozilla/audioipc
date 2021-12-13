@@ -1,4 +1,6 @@
 name: Build
+env:
+  RUST_BACKTRACE: 1
 
 on: [push, pull_request]
 
