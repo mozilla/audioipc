@@ -76,13 +76,15 @@ pub struct Proxy<Request, Response> {
 
 impl<Request, Response> Proxy<Request, Response> {
     pub fn call(&self, request: Request) -> ProxyResponse<Response> {
-        let (tx, rx) = mpsc::channel();
-        self.tx.send((request, tx)).expect("proxy send error");
         let (handle, token) = self
             .handle
             .as_ref()
             .expect("proxy not connected to event loop");
-        handle.wake_connection(*token);
+        let (tx, rx) = mpsc::channel();
+        match self.tx.send((request, tx)) {
+            Ok(_) => handle.wake_connection(*token),
+            Err(e) => error!("Proxy::call error={:?}", e),
+        }
         ProxyResponse { inner: rx }
     }
 
