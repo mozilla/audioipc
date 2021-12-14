@@ -27,7 +27,7 @@ use crate::errors::*;
 
 // Run with 'RUST_LOG=run,audioipc cargo run -p ipctest'
 #[cfg(unix)]
-fn run() -> Result<()> {
+fn run(wait_for_debugger: bool) -> Result<()> {
     use std::ffi::CString;
     let init_params = audioipc_server::AudioIpcServerInitParams {
         thread_create_callback: None,
@@ -53,11 +53,17 @@ fn run() -> Result<()> {
             let child_arg1 = CString::new("--client").unwrap();
             let child_arg2 = CString::new("--fd").unwrap();
             let child_arg3 = CString::new(format!("{}", fd)).unwrap();
+            let child_arg4 = if wait_for_debugger {
+                CString::new("--wait-for-debugger").unwrap()
+            } else {
+                CString::new("").unwrap()
+            };
             let child_args = [
                 self_path.as_ptr(),
                 child_arg1.as_ptr(),
                 child_arg2.as_ptr(),
                 child_arg3.as_ptr(),
+                child_arg4.as_ptr(),
                 std::ptr::null(),
             ];
             let r = unsafe { libc::execv(self_path.as_ptr(), &child_args as *const _) };
@@ -96,7 +102,7 @@ fn run_client() -> Result<()> {
 
 #[allow(clippy::unnecessary_wraps)]
 #[cfg(windows)]
-fn run() -> Result<()> {
+fn run(wait_for_debugger: bool) -> Result<()> {
     let init_params = audioipc_server::AudioIpcServerInitParams {
         thread_create_callback: None,
         thread_destroy_callback: None,
@@ -108,12 +114,14 @@ fn run() -> Result<()> {
 
     let args: Vec<String> = std::env::args().collect();
 
-    let mut child = std::process::Command::new(&args[0])
-        .arg("--client")
-        .env("PID", format!("{}", std::process::id()))
-        .env("HANDLE", format!("{}", fd as usize))
-        .spawn()
-        .expect("child process failed");
+    let mut cmd = std::process::Command::new(&args[0]);
+    cmd.env("AUDIOIPC_PID", format!("{}", std::process::id()))
+        .env("AUDIOIPC_HANDLE", format!("{}", fd as usize))
+        .arg("--client");
+    if wait_for_debugger {
+        cmd.arg("--wait-for-debugger");
+    }
+    let mut child = cmd.spawn().expect("child process failed");
 
     child.wait().expect("child process wait failed");
 
@@ -127,8 +135,8 @@ fn run_client() -> Result<()> {
     use winapi::shared::minwindef::FALSE;
     use winapi::um::{handleapi, processthreadsapi, winnt, winnt::HANDLE};
 
-    let pid: u32 = std::env::var("PID").unwrap().parse().unwrap();
-    let handle: usize = std::env::var("HANDLE").unwrap().parse().unwrap();
+    let pid: u32 = std::env::var("AUDIOIPC_PID").unwrap().parse().unwrap();
+    let handle: usize = std::env::var("AUDIOIPC_HANDLE").unwrap().parse().unwrap();
 
     let mut target_handle = std::ptr::null_mut();
     unsafe {
@@ -156,14 +164,28 @@ fn run_client() -> Result<()> {
 fn main() {
     env_logger::init();
 
-    let args: Vec<String> = std::env::args().collect();
+    let mut client = false;
+    let mut wait_for_debugger = false;
 
-    let client = args.len() >= 2 && args[1] == "--client";
+    for arg in std::env::args() {
+        if arg == "--client" {
+            client = true;
+        }
+        if arg == "--wait-for-debugger" {
+            wait_for_debugger = true;
+        }
+    }
 
     let result = if !client {
-        println!("Cubeb AudioServer...");
-        run()
+        eprintln!("AudioIPC server (pid {})", std::process::id());
+        run(wait_for_debugger)
     } else {
+        eprintln!("AudioIPC client (pid {})", std::process::id());
+        if wait_for_debugger {
+            eprintln!("Waiting for debugger to attach; hit enter to continue.");
+            let mut input = String::new();
+            let _ = std::io::stdin().read_line(&mut input);
+        }
         run_client()
     };
 
