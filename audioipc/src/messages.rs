@@ -16,7 +16,9 @@ use std::ptr;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Device {
+    #[serde(with = "serde_bytes")]
     pub output_name: Option<Vec<u8>>,
+    #[serde(with = "serde_bytes")]
     pub input_name: Option<Vec<u8>>,
 }
 
@@ -50,9 +52,13 @@ impl From<Device> for ffi::cubeb_device {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DeviceInfo {
     pub devid: usize,
+    #[serde(with = "serde_bytes")]
     pub device_id: Option<Vec<u8>>,
+    #[serde(with = "serde_bytes")]
     pub friendly_name: Option<Vec<u8>>,
+    #[serde(with = "serde_bytes")]
     pub group_id: Option<Vec<u8>>,
+    #[serde(with = "serde_bytes")]
     pub vendor_name: Option<Vec<u8>>,
 
     pub device_type: ffi::cubeb_device_type,
@@ -147,6 +153,7 @@ pub struct StreamCreateParams {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StreamInitParams {
+    #[serde(with = "serde_bytes")]
     pub stream_name: Option<Vec<u8>>,
     pub input_device: usize,
     pub input_stream_params: Option<StreamParams>,
