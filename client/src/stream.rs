@@ -265,7 +265,7 @@ impl<'ctx> ClientStream<'ctx> {
             _shutdown_tx,
         };
 
-        ctx.rpc_handle()
+        ctx.callback_handle()
             .bind_server(server, stream)
             .map_err(|_| Error::default())?;
 

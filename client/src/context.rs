@@ -59,6 +59,11 @@ impl ClientContext {
     pub fn rpc(&self) -> rpccore::Proxy<ServerMessage, ClientMessage> {
         self.rpc.clone()
     }
+
+    #[doc(hidden)]
+    pub fn callback_handle(&self) -> &EventLoopHandle {
+        self.callback_thread.handle()
+    }
 }
 
 #[cfg(target_os = "linux")]
