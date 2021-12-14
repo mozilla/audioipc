@@ -1,6 +1,7 @@
 use audioipc::codec::{Codec, LengthDelimitedCodec};
 use audioipc::messages::DeviceInfo;
 use audioipc::ClientMessage;
+use audioipc2 as audioipc;
 use bytes::BytesMut;
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 
