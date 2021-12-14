@@ -297,7 +297,7 @@ struct Connection {
     driver: Box<dyn Driver + Send>,
 }
 
-const IPC_CLIENT_BUFFER_SIZE: usize = 16384;
+pub(crate) const IPC_CLIENT_BUFFER_SIZE: usize = 16384;
 
 impl Connection {
     fn new(

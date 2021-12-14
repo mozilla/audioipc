@@ -9,9 +9,11 @@ use bincode::{self, Options};
 use bytes::{BufMut, ByteOrder, BytesMut, LittleEndian};
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
+use std::convert::TryInto;
 use std::fmt::Debug;
 use std::io;
 use std::marker::PhantomData;
+use std::mem::size_of;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Split buffer into size delimited frames - This appears more complicated than
@@ -40,7 +42,7 @@ pub trait Codec {
         }
     }
 
-    /// Encodes a frame intox the buffer provided.
+    /// Encodes a frame into the buffer provided.
     fn encode(&mut self, msg: Self::In, buf: &mut BytesMut) -> io::Result<()>;
 }
 
@@ -52,23 +54,23 @@ pub trait Codec {
 /// message.
 pub struct LengthDelimitedCodec<In, Out> {
     state: State,
+    encode_buf: Vec<u8>,
     __in: PhantomData<In>,
     __out: PhantomData<Out>,
 }
 
 enum State {
     Length,
-    Data(usize),
+    Data(u32),
 }
 
-const MAX_MESSAGE_LEN: u64 = 1024 * 1024;
-const MESSAGE_LENGTH_SIZE: usize = std::mem::size_of::<u32>();
-// TODO: static assert that MAX_MESSAGE_LEN can be encoded into MESSAGE_LENGTH_SIZE.
+const MAX_MESSAGE_LEN: u32 = 1024 * 1024;
 
 impl<In, Out> Default for LengthDelimitedCodec<In, Out> {
     fn default() -> Self {
-        LengthDelimitedCodec {
+        Self {
             state: State::Length,
+            encode_buf: Vec::with_capacity(crate::ipccore::IPC_CLIENT_BUFFER_SIZE),
             __in: PhantomData,
             __out: PhantomData,
         }
@@ -77,39 +79,39 @@ impl<In, Out> Default for LengthDelimitedCodec<In, Out> {
 
 impl<In, Out> LengthDelimitedCodec<In, Out> {
     // Lengths are encoded as little endian u32
-    fn decode_length(&mut self, buf: &mut BytesMut) -> Option<usize> {
-        if buf.len() < MESSAGE_LENGTH_SIZE {
+    fn decode_length(buf: &mut BytesMut) -> Option<u32> {
+        if buf.len() < size_of::<u32>() {
             // Not enough data
             return None;
         }
 
-        let n = LittleEndian::read_u32(buf.as_ref());
-
         // Consume the length field
-        let _ = buf.split_to(MESSAGE_LENGTH_SIZE);
-
-        Some(n as usize)
+        let n = LittleEndian::read_u32(buf.as_ref());
+        buf.advance(size_of::<u32>());
+        Some(n)
     }
 
-    fn decode_data(&mut self, buf: &mut BytesMut, n: usize) -> io::Result<Option<Out>>
+    fn decode_data(buf: &mut BytesMut, n: u32) -> io::Result<Option<Out>>
     where
         Out: DeserializeOwned + Debug,
     {
+        let n = n.try_into().unwrap();
+
         // At this point, the buffer has already had the required capacity
         // reserved. All there is to do is read.
         if buf.len() < n {
             return Ok(None);
         }
 
-        let buf = buf.split_to(n).freeze();
-
         trace!("Attempting to decode");
         let msg = bincode::options()
-            .deserialize::<Out>(buf.as_ref())
+            .with_limit(MAX_MESSAGE_LEN as u64)
+            .deserialize::<Out>(&buf[..n])
             .map_err(|e| match *e {
                 bincode::ErrorKind::Io(e) => e,
                 _ => io::Error::new(io::ErrorKind::Other, *e),
             })?;
+        buf.advance(n);
 
         trace!("... Decoded {:?}", msg);
         Ok(Some(msg))
@@ -127,13 +129,14 @@ where
     fn decode(&mut self, buf: &mut BytesMut) -> io::Result<Option<Self::Out>> {
         let n = match self.state {
             State::Length => {
-                match self.decode_length(buf) {
+                match Self::decode_length(buf) {
                     Some(n) => {
+                        assert!(n <= MAX_MESSAGE_LEN);
                         self.state = State::Data(n);
 
                         // Ensure that the buffer has enough space to read the
                         // incoming payload
-                        buf.reserve(n);
+                        buf.reserve(n.try_into().unwrap());
 
                         n
                     }
@@ -143,13 +146,13 @@ where
             State::Data(n) => n,
         };
 
-        match self.decode_data(buf, n)? {
+        match Self::decode_data(buf, n)? {
             Some(data) => {
                 // Update the decode state
                 self.state = State::Length;
 
-                // Make sure the buffer has enough space to read the next head
-                buf.reserve(MESSAGE_LENGTH_SIZE);
+                // Make sure the buffer has enough space to read the next length header.
+                buf.reserve(size_of::<u32>());
 
                 Ok(Some(data))
             }
@@ -159,28 +162,21 @@ where
 
     fn encode(&mut self, item: Self::In, buf: &mut BytesMut) -> io::Result<()> {
         trace!("Attempting to encode");
-        let encoded_len = bincode::options().serialized_size(&item).unwrap();
-        if encoded_len > MAX_MESSAGE_LEN {
-            trace!("oversized message {}", encoded_len);
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "encoded message too big",
-            ));
-        }
 
-        buf.reserve((encoded_len as usize) + MESSAGE_LENGTH_SIZE);
-
-        buf.put_u32_le(encoded_len as u32);
-
+        self.encode_buf.clear();
         if let Err(e) = bincode::options()
-            .with_limit(encoded_len)
-            .serialize_into::<_, Self::In>(&mut buf.writer(), &item)
+            .with_limit(MAX_MESSAGE_LEN as u64)
+            .serialize_into::<_, Self::In>(&mut self.encode_buf, &item)
         {
+            trace!("message encode failed: {:?}", *e);
             match *e {
                 bincode::ErrorKind::Io(e) => return Err(e),
                 _ => return Err(io::Error::new(io::ErrorKind::Other, *e)),
             }
         }
+
+        buf.put_u32_le(self.encode_buf.len().try_into().unwrap());
+        buf.extend_from_slice(&self.encode_buf);
 
         Ok(())
     }
