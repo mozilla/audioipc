@@ -43,8 +43,10 @@ impl RecvMsg for Pipe {
     fn recv_msg(&mut self, buf: &mut ConnectionBuffer) -> Result<usize> {
         assert!(buf.buf.remaining_mut() > 0);
         assert!(buf.cmsg.remaining_mut() > 0);
+        // TODO: MSG_CMSG_CLOEXEC not portable.
+        // TODO: MSG_NOSIGNAL not portable; macOS can set socket option SO_NOSIGPIPE instead.
         #[cfg(target_os = "linux")]
-        let flags = libc::MSG_CMSG_CLOEXEC;
+        let flags = libc::MSG_CMSG_CLOEXEC | libc::MSG_NOSIGNAL;
         #[cfg(not(target_os = "linux"))]
         let flags = 0;
         let r = unsafe {
@@ -53,7 +55,7 @@ impl RecvMsg for Pipe {
         };
         match r {
             Ok((n, cmsg_n, msg_flags)) => unsafe {
-                debug_assert_eq!(msg_flags, flags);
+                trace!("recv_msg_with_flags flags={}", msg_flags);
                 buf.buf.advance_mut(n);
                 buf.cmsg.advance_mut(cmsg_n);
                 Ok(n)
@@ -69,8 +71,18 @@ impl SendMsg for Pipe {
     fn send_msg(&mut self, buf: &mut ConnectionBuffer) -> Result<usize> {
         assert!(!buf.buf.is_empty());
         let r = {
+            // TODO: MSG_NOSIGNAL not portable; macOS can set socket option SO_NOSIGPIPE instead.
+            #[cfg(target_os = "linux")]
+            let flags = libc::MSG_NOSIGNAL;
+            #[cfg(not(target_os = "linux"))]
+            let flags = 0;
             let iovec = [<&IoVec>::from(&buf.buf[..buf.buf.len()])];
-            msg::send_msg_with_flags(self.0.as_raw_fd(), &iovec, &buf.cmsg[..buf.cmsg.len()], 0)
+            msg::send_msg_with_flags(
+                self.0.as_raw_fd(),
+                &iovec,
+                &buf.cmsg[..buf.cmsg.len()],
+                flags,
+            )
         };
         match r {
             Ok(n) => {
