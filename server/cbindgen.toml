@@ -14,7 +14,7 @@ item_types = ["globals", "enums", "structs", "unions", "typedefs", "opaque", "fu
 
 [parse]
 parse_deps = true
-include = ['audioipc']
+include = ["audioipc2"]
 
 [fn]
 args = "Vertical"

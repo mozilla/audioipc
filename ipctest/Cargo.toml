@@ -6,9 +6,9 @@ license = "ISC"
 edition = "2018"
 
 [dependencies]
-audioipc = { path = "../audioipc" }
-audioipc-client= { path = "../client" }
-audioipc-server = { path = "../server" }
+audioipc = { package = "audioipc2", path = "../audioipc" }
+audioipc-client= { package = "audioipc2-client", path = "../client" }
+audioipc-server = { package = "audioipc2-server", path = "../server" }
 cubeb = "0.9.0"
 env_logger = "0.9"
 error-chain = "0.11.0"
