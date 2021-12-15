@@ -112,10 +112,10 @@ impl EventLoopHandle {
 
     // Signal EventLoop to wake connection specified by `token` for processing.
     pub(crate) fn wake_connection(&self, token: Token) {
-        self.requests_tx
-            .send(Request::WakeConnection(token))
-            .expect("EventLoop::shutdown");
-        self.waker.wake().expect("wake failed");
+        match self.requests_tx.send(Request::WakeConnection(token)) {
+            Ok(_) => self.waker.wake().expect("wake failed"),
+            Err(e) => debug!("EventLoopHandle::wake_connection failed: {:?}", e),
+        }
     }
 }
 
@@ -200,7 +200,7 @@ impl EventLoop {
                                 done
                             }
                             Err(e) => {
-                                error!("{}: {:?}: connection error: {:?}", self.name, token, e);
+                                debug!("{}: {:?}: connection error: {:?}", self.name, token, e);
                                 true
                             }
                         }
@@ -215,8 +215,7 @@ impl EventLoop {
                     if done {
                         debug!("{}: {:?}: done, removing", self.name, token);
                         let mut connection = self.connections.remove(token.0);
-                        let r = connection.shutdown(self.poll.registry());
-                        if let Err(e) = r {
+                        if let Err(e) = connection.shutdown(self.poll.registry()) {
                             warn!(
                                 "{}: EventLoop drop - closing connection for {:?} failed: {:?}",
                                 self.name, token, e
@@ -244,11 +243,15 @@ impl EventLoop {
                         "{}: EventLoop: handling wake_connection {:?}",
                         self.name, token
                     );
-                    if let Some(connection) = self.connections.get_mut(token.0) {
+                    let done = if let Some(connection) = self.connections.get_mut(token.0) {
                         match connection.handle_wake(self.poll.registry()) {
-                            Ok(done) => assert!(!done),
+                            Ok(done) => {
+                                assert!(!done);
+                                false
+                            }
                             Err(e) => {
-                                error!("{}: {:?}: connection error: {:?}", self.name, token, e);
+                                debug!("{}: {:?}: connection error: {:?}", self.name, token, e);
+                                true
                             }
                         }
                     } else {
@@ -257,6 +260,17 @@ impl EventLoop {
                             "{}: {:?}: token not found in slab: wake_connection",
                             self.name, token
                         );
+                        false
+                    };
+                    if done {
+                        debug!("{}: {:?}: done (wake), removing", self.name, token);
+                        let mut connection = self.connections.remove(token.0);
+                        if let Err(e) = connection.shutdown(self.poll.registry()) {
+                            warn!(
+                                "{}: EventLoop drop - closing connection for {:?} failed: {:?}",
+                                self.name, token, e
+                            );
+                        }
                     }
                 }
             }

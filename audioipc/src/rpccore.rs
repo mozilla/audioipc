@@ -76,13 +76,9 @@ pub struct Proxy<Request, Response> {
 
 impl<Request, Response> Proxy<Request, Response> {
     pub fn call(&self, request: Request) -> ProxyResponse<Response> {
-        let (handle, token) = self
-            .handle
-            .as_ref()
-            .expect("proxy not connected to event loop");
         let (tx, rx) = mpsc::channel();
         match self.tx.send((request, tx)) {
-            Ok(_) => handle.wake_connection(*token),
+            Ok(_) => self.wake_connection(),
             Err(e) => debug!("Proxy::call error={:?}", e),
         }
         ProxyResponse { inner: rx }
@@ -90,6 +86,14 @@ impl<Request, Response> Proxy<Request, Response> {
 
     pub(crate) fn connect_event_loop(&mut self, handle: EventLoopHandle, token: Token) {
         self.handle = Some((handle, token));
+    }
+
+    fn wake_connection(&self) {
+        let (handle, token) = self
+            .handle
+            .as_ref()
+            .expect("proxy not connected to event loop");
+        handle.wake_connection(*token);
     }
 }
 
@@ -99,6 +103,13 @@ impl<Request, Response> Clone for Proxy<Request, Response> {
             handle: self.handle.clone(),
             tx: self.tx.clone(),
         }
+    }
+}
+
+impl<Request, Response> Drop for Proxy<Request, Response> {
+    fn drop(&mut self) {
+        trace!("Proxy drop, waking EventLoop");
+        self.wake_connection();
     }
 }
 
