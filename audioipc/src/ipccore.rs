@@ -549,7 +549,7 @@ where
             {
                 // TODO: Clean this up to only expect a single fd per message.
                 let mut handle = None;
-                let b = inbound.cmsg.clone().freeze();
+                let b = inbound.cmsg.take().freeze();
                 for fd in cmsg::iterator(b) {
                     assert_eq!(fd.len(), 1);
                     assert!(handle.is_none());

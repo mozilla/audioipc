@@ -468,7 +468,7 @@ impl AssocRawPlatformHandle for ClientMessage {
                 let handle = f().expect("platform_handle must be available when processing ContextSetupDeviceCollectionCallback");
                 data.platform_handle = SerializableHandle::new_serializable_value(handle);
             }
-            _ => {}
+            _ => assert!(f().is_none()),
         }
     }
 
@@ -487,7 +487,7 @@ impl AssocRawPlatformHandle for ClientMessage {
                 let handle = f().expect("platform_handle must be available when processing ContextSetupDeviceCollectionCallback");
                 data.platform_handle = SerializableHandle::new_owned(handle);
             }
-            _ => {}
+            _ => assert!(f().is_none()),
         }
     }
 }
@@ -513,6 +513,8 @@ impl AssocRawPlatformHandle for CallbackReq {
         if let CallbackReq::SharedMem(ref mut data, _) = *self {
             let handle = f().expect("platform_handle must be available when processing SharedMem");
             *data = SerializableHandle::new_serializable_value(handle);
+        } else {
+            assert!(f().is_none());
         }
     }
 
@@ -524,6 +526,8 @@ impl AssocRawPlatformHandle for CallbackReq {
         if let CallbackReq::SharedMem(ref mut data, _) = *self {
             let handle = f().expect("platform_handle must be available when processing SharedMem");
             *data = SerializableHandle::new_owned(handle);
+        } else {
+            assert!(f().is_none());
         }
     }
 }
