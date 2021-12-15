@@ -156,7 +156,7 @@ pub fn client_test(handle: audioipc::PlatformHandleType) -> Result<()> {
     let init_params = audioipc_client::AudioIpcInitParams {
         server_connection: handle,
         pool_size: 1,
-        stack_size: 64 * 1024,
+        stack_size: 64 * 4096,
         thread_create_callback: None,
         thread_destroy_callback: None,
     };
