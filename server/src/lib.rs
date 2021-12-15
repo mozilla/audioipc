@@ -53,6 +53,7 @@ use crate::errors::*;
 struct ServerWrapper {
     rpc_thread: ipccore::EventLoopThread,
     callback_thread: ipccore::EventLoopThread,
+    device_collection_thread: ipccore::EventLoopThread,
 }
 
 fn register_thread(callback: Option<extern "C" fn(*const ::std::os::raw::c_char)>) {
@@ -72,22 +73,22 @@ fn init_threads(
     thread_create_callback: Option<extern "C" fn(*const ::std::os::raw::c_char)>,
     thread_destroy_callback: Option<extern "C" fn()>,
 ) -> Result<ServerWrapper> {
-    let core_name = "AudioIPC Server RPC";
+    let rpc_name = "AudioIPC Server RPC";
     let rpc_thread = ipccore::EventLoopThread::new(
-        core_name.to_string(),
+        rpc_name.to_string(),
         None,
         move || {
-            trace!("Starting {} thread", core_name);
+            trace!("Starting {} thread", rpc_name);
             register_thread(thread_create_callback);
             audioipc::server_platform_init();
         },
         move || {
             unregister_thread(thread_destroy_callback);
-            trace!("Stopping {} thread", core_name);
+            trace!("Stopping {} thread", rpc_name);
         },
     )
     .map_err(|e| {
-        debug!("Failed to start {} thread: {:?}", core_name, e);
+        debug!("Failed to start {} thread: {:?}", rpc_name, e);
         e
     })?;
 
@@ -115,9 +116,28 @@ fn init_threads(
         e
     })?;
 
+    let device_collection_name = "AudioIPC DeviceCollection RPC";
+    let device_collection_thread = ipccore::EventLoopThread::new(
+        device_collection_name.to_string(),
+        None,
+        move || {
+            trace!("Starting {} thread", rpc_name);
+            register_thread(thread_create_callback);
+        },
+        move || {
+            unregister_thread(thread_destroy_callback);
+            trace!("Stopping {} thread", rpc_name);
+        },
+    )
+    .map_err(|e| {
+        debug!("Failed to start {} thread: {:?}", rpc_name, e);
+        e
+    })?;
+
     Ok(ServerWrapper {
         rpc_thread,
         callback_thread,
+        device_collection_thread,
     })
 }
 
@@ -179,9 +199,13 @@ pub extern "C" fn audioipc_server_new_client(
 
     let rpc_thread = wrapper.rpc_thread.handle();
     let callback_thread = wrapper.callback_thread.handle();
+    let device_collection_thread = wrapper.device_collection_thread.handle();
 
-    let server =
-        server::CubebServer::new(rpc_thread.clone(), callback_thread.clone(), shm_area_size);
+    let server = server::CubebServer::new(
+        callback_thread.clone(),
+        device_collection_thread.clone(),
+        shm_area_size,
+    );
     if let Err(e) = rpc_thread.bind_server(server, server_pipe) {
         error!("audioipc_server_new_client - bind_server failed: {:?}", e);
         return audioipc::INVALID_HANDLE_VALUE;
