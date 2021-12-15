@@ -28,6 +28,14 @@ use crate::sys::cmsg;
 
 const WAKE_TOKEN: Token = Token(!0);
 
+thread_local!(static IN_EVENTLOOP: std::cell::RefCell<Option<thread::ThreadId>> = std::cell::RefCell::new(None));
+
+fn assert_not_in_event_loop_thread() {
+    IN_EVENTLOOP.with(|b| {
+        assert_ne!(*b.borrow(), Some(thread::current().id()));
+    });
+}
+
 // Requests sent by an EventLoopHandle to be serviced by
 // the handle's associated EventLoop.
 enum Request {
@@ -92,6 +100,7 @@ impl EventLoopHandle {
         connection: sys::Pipe,
         driver: Box<dyn Driver + Send>,
     ) -> Result<Token> {
+        assert_not_in_event_loop_thread();
         let (tx, rx) = mpsc::channel();
         self.requests_tx
             .send(Request::AddConnection(connection, driver, tx))

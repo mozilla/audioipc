@@ -26,8 +26,9 @@ process is done externally, in Gecko code.
   EventLoopThread per ClientStream.
 - The server side remoting layer (located in the `server` crate) contains
   CubebServer, which adapts both context and stream RPCs to native cubeb API
-  calls.  This is driven by a single pair of "Server RPC" and "Server
-  Callback" EventLoopThreads servicing all CubebServer instances.
+  calls.  This is driven by a single trio of "Server RPC", "Server
+  Callback", and "Server DeviceCollection RPC) EventLoopThreads servicing all
+  CubebServer instances.
 - Core RPC and IPC functionality and support code is located in the `audioipc` crate.
   - The RPC interface provides a Client trait specifying message types the
     client implementation will use, and a Server trait specifying message

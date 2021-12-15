@@ -340,8 +340,8 @@ impl DeviceCollectionChangeCallback {
 }
 
 pub struct CubebServer {
-    rpc_thread: ipccore::EventLoopHandle,
     callback_thread: ipccore::EventLoopHandle,
+    device_collection_thread: ipccore::EventLoopHandle,
     streams: slab::Slab<ServerStream>,
     remote_pid: Option<u32>,
     device_collection_change_callbacks: Option<Rc<RefCell<DeviceCollectionChangeCallback>>>,
@@ -392,13 +392,13 @@ macro_rules! try_stream {
 
 impl CubebServer {
     pub fn new(
-        rpc_thread: ipccore::EventLoopHandle,
         callback_thread: ipccore::EventLoopHandle,
+        device_collection_thread: ipccore::EventLoopHandle,
         shm_area_size: usize,
     ) -> Self {
         CubebServer {
-            rpc_thread,
             callback_thread,
+            device_collection_thread,
             streams: slab::Slab::<ServerStream>::new(),
             remote_pid: None,
             device_collection_change_callbacks: None,
@@ -559,8 +559,10 @@ impl CubebServer {
 
                 // TODO: this should bind the client_pipe and send the server_pipe to the remote, but
                 //       additional work is required as it's not possible to convert a Windows sys::Pipe into a raw handle.
+                // TODO: Use the rpc_thread instead of an extra device_collection_thread, but a reentrant bind_client
+                //       is required to support that.
                 let rpc = match self
-                    .rpc_thread
+                    .device_collection_thread
                     .bind_client::<DeviceCollectionClient>(server_pipe)
                 {
                     Ok(rpc) => rpc,
