@@ -175,7 +175,9 @@ where
             }
         }
 
-        buf.put_u32_le(self.encode_buf.len().try_into().unwrap());
+        let encoded_len = self.encode_buf.len();
+        buf.reserve(encoded_len + size_of::<u32>());
+        buf.put_u32_le(encoded_len.try_into().unwrap());
         buf.extend_from_slice(&self.encode_buf);
 
         Ok(())
