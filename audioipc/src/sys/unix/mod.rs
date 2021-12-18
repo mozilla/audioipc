@@ -88,15 +88,13 @@ impl SendMsg for Pipe {
             Ok(n) => {
                 buf.buf.advance(n);
                 // Close sent fds.
-                // TODO: Clean this up to only expect a single fd per message.
-                let b = buf.cmsg.clone().freeze();
-                for fd in cmsg::iterator(b) {
-                    assert_eq!(fd.len(), 1);
+                while !buf.cmsg.is_empty() {
+                    let fd = cmsg::decode_handle(&mut buf.cmsg);
                     unsafe {
-                        close_platform_handle(fd[0]);
+                        close_platform_handle(fd);
                     }
                 }
-                buf.cmsg.clear();
+                assert!(buf.cmsg.is_empty());
                 Ok(n)
             }
             Err(e) => Err(e),
@@ -134,13 +132,13 @@ impl Drop for ConnectionBuffer {
                 "ConnectionBuffer dropped with {} bytes in cmsg",
                 self.cmsg.len()
             );
-            let b = self.cmsg.clone().freeze();
-            for fd in cmsg::iterator(b) {
-                assert_eq!(fd.len(), 1);
+            while !self.cmsg.is_empty() {
+                let fd = cmsg::decode_handle(&mut self.cmsg);
                 unsafe {
-                    close_platform_handle(fd[0]);
+                    close_platform_handle(fd);
                 }
             }
+            assert!(self.cmsg.is_empty());
         }
     }
 }
