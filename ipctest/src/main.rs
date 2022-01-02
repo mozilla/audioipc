@@ -34,9 +34,9 @@ fn run(wait_for_debugger: bool) -> Result<()> {
         thread_destroy_callback: None,
     };
     let handle = unsafe {
-        audioipc_server::audioipc_server_start(std::ptr::null(), std::ptr::null(), &init_params)
+        audioipc_server::audioipc2_server_start(std::ptr::null(), std::ptr::null(), &init_params)
     };
-    let fd = audioipc_server::audioipc_server_new_client(handle, 0);
+    let fd = audioipc_server::audioipc2_server_new_client(handle, 0);
     let fd = unsafe {
         let new_fd = libc::dup(fd);
         libc::close(fd);
@@ -87,7 +87,7 @@ fn run(wait_for_debugger: bool) -> Result<()> {
         },
     };
 
-    audioipc_server::audioipc_server_stop(handle);
+    audioipc_server::audioipc2_server_stop(handle);
 
     Ok(())
 }
@@ -108,9 +108,9 @@ fn run(wait_for_debugger: bool) -> Result<()> {
         thread_destroy_callback: None,
     };
     let handle = unsafe {
-        audioipc_server::audioipc_server_start(std::ptr::null(), std::ptr::null(), &init_params)
+        audioipc_server::audioipc2_server_start(std::ptr::null(), std::ptr::null(), &init_params)
     };
-    let fd = audioipc_server::audioipc_server_new_client(handle, 0);
+    let fd = audioipc_server::audioipc2_server_new_client(handle, 0);
 
     let args: Vec<String> = std::env::args().collect();
 
@@ -125,7 +125,7 @@ fn run(wait_for_debugger: bool) -> Result<()> {
 
     child.wait().expect("child process wait failed");
 
-    audioipc_server::audioipc_server_stop(handle);
+    audioipc_server::audioipc2_server_stop(handle);
 
     Ok(())
 }
