@@ -162,7 +162,7 @@ where
                 self.state = State::Length;
 
                 // Make sure the buffer has enough space to read the next length header.
-                buf.reserve(size_of::<u32>());
+                buf.reserve(HEADER_LEN);
 
                 Ok(Some(data))
             }
