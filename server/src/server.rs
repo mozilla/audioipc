@@ -707,6 +707,7 @@ impl CubebServer {
             let out_rate = params.output_stream_params.map(|p| p.rate).unwrap_or(0);
             let rate = out_rate.max(in_rate);
             // 1s of audio, rounded up to the nearest 64kB.
+            // Stream latency is capped at 1s in process_stream_init.
             (((rate * frame_size) + 0xffff) & !0xffff) as usize
         } else {
             self.shm_area_size
@@ -774,7 +775,26 @@ impl CubebServer {
             cubeb::StreamParamsRef::from_ptr(osp as *const StreamParams as *mut _)
         });
 
-        let latency = params.latency_frames;
+        // TODO: Manage stream latency requests with respect to the RT deadlines the callback_thread was configured for.
+        fn round_up_pow2(v: u32) -> u32 {
+            debug_assert!(v >= 1);
+            1 << (32 - (v - 1).leading_zeros())
+        }
+        let rate = params
+            .output_stream_params
+            .map(|p| p.rate)
+            .unwrap_or_else(|| params.input_stream_params.map(|p| p.rate).unwrap());
+        // Note: minimum latency supported by AudioIPC is currently ~5ms.  This restriction may be reduced by later IPC improvements.
+        let min_latency = round_up_pow2(5 * rate / 1000);
+        // Note: maximum latency is restricted by the SharedMem size.
+        let max_latency = rate;
+        let latency = params.latency_frames.max(min_latency).min(max_latency);
+        trace!(
+            "stream rate={} latency requested={} calculated={}",
+            rate,
+            params.latency_frames,
+            latency
+        );
 
         let server_stream = &mut self.streams[stm_tok];
         assert!(size_of::<Box<ServerStreamCallbacks>>() == size_of::<usize>());
