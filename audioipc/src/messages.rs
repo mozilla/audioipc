@@ -425,6 +425,7 @@ pub trait AssociateHandleForMessage {
 
     // Update the item's handle with the received value, making it a valid owned handle.
     // Called on the receiving side after deserialization.
+    // Implementations must only call `F` for message types expecting a handle.
     #[cfg(unix)]
     fn receive_owned_message_handle<F>(&mut self, _: F)
     where
