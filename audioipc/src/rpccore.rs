@@ -113,7 +113,9 @@ impl<Request, Response> Drop for Proxy<Request, Response> {
         // Must drop Sender before waking the connection, otherwise
         // the wake may be processed before Sender is closed.
         unsafe { ManuallyDrop::drop(&mut self.tx) }
-        self.wake_connection();
+        if self.handle.is_some() {
+            self.wake_connection()
+        }
     }
 }
 
