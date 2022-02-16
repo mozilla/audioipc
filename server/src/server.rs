@@ -634,7 +634,7 @@ impl CubebServer {
             #[cfg(target_os = "linux")]
             ServerMessage::PromoteThreadToRealTime(thread_info) => {
                 let info = RtPriorityThreadInfo::deserialize(thread_info);
-                match promote_thread_to_real_time(info, 0, 48000) {
+                match promote_thread_to_real_time(info, 256, 48000) {
                     Ok(_) => {
                         info!("Promotion of content process thread to real-time OK");
                     }
