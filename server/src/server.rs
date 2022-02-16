@@ -12,7 +12,7 @@ use audioipc::messages::{
     StreamInitParams, StreamParams,
 };
 use audioipc::shm::SharedMem;
-use audioipc::{ipccore, rpccore, sys};
+use audioipc::{ipccore, rpccore, sys, PlatformHandle};
 use cubeb_core as cubeb;
 use cubeb_core::ffi;
 use std::convert::From;
@@ -320,7 +320,7 @@ fn get_shm_id() -> String {
 struct ServerStream {
     stream: Option<cubeb::Stream>,
     cbs: Box<ServerStreamCallbacks>,
-    shm_setup: Option<rpccore::ProxyResponse<CallbackResp>>,
+    client_pipe: Option<PlatformHandle>,
 }
 
 impl Drop for ServerStream {
@@ -698,12 +698,6 @@ impl CubebServer {
             .callback_thread
             .bind_client::<CallbackClient>(server_pipe)?;
 
-        // Send shm configuration to client but don't wait for result; that'll be checked in process_stream_init.
-        let shm_setup = Some(rpc.call(CallbackReq::SharedMem(
-            SerializableHandle::new(shm_handle, self.remote_pid.unwrap()),
-            shm_area_size,
-        )));
-
         let cbs = Box::new(ServerStreamCallbacks {
             input_frame_size,
             output_frame_size,
@@ -719,13 +713,14 @@ impl CubebServer {
 
         entry.insert(ServerStream {
             stream: None,
-            shm_setup,
             cbs,
+            client_pipe: Some(client_pipe),
         });
 
         Ok(ClientMessage::StreamCreated(StreamCreate {
             token: key,
-            platform_handle: SerializableHandle::new(client_pipe, self.remote_pid.unwrap()),
+            shm_handle: SerializableHandle::new(shm_handle, self.remote_pid.unwrap()),
+            shm_area_size,
         }))
     }
 
@@ -760,38 +755,6 @@ impl CubebServer {
         assert!(size_of::<Box<ServerStreamCallbacks>>() == size_of::<usize>());
         let user_ptr = server_stream.cbs.as_ref() as *const ServerStreamCallbacks as *mut c_void;
 
-        // SharedMem setup message should've been processed by client by now.
-        let shm_setup = server_stream
-            .shm_setup
-            .take()
-            .expect("invalid shm_setup state");
-        match shm_setup.wait() {
-            Ok(CallbackResp::SharedMem) => {}
-            Ok(CallbackResp::Error(e)) => {
-                // If the client replied with an error (e.g. client OOM), log error and fail stream init.
-                debug!(
-                    "Shmem setup for stream {:?} failed (raw error {:?})",
-                    stm_tok, e
-                );
-                return Ok(ClientMessage::Error(e));
-            }
-            Ok(r) => {
-                debug!(
-                    "Shmem setup for stream {:?} failed (unexpected response {:?})",
-                    stm_tok, r
-                );
-                return Ok(error(cubeb::Error::error()));
-            }
-            Err(e) => {
-                // If the client errored before responding, log error and fail stream init.
-                debug!(
-                    "Shmem setup for stream {:?} failed (error {:?})",
-                    stm_tok, e
-                );
-                return Err(e.into());
-            }
-        }
-
         let stream = unsafe {
             let stream = context.stream_init(
                 stream_name,
@@ -816,7 +779,14 @@ impl CubebServer {
 
         server_stream.stream = Some(stream);
 
-        Ok(ClientMessage::StreamInitialized)
+        let client_pipe = server_stream
+            .client_pipe
+            .take()
+            .expect("invalid state after StreamCreated");
+        Ok(ClientMessage::StreamInitialized(SerializableHandle::new(
+            client_pipe,
+            self.remote_pid.unwrap(),
+        )))
     }
 }
 
