@@ -25,6 +25,8 @@ use std::fmt::Debug;
 use crate::duplicate_platform_handle;
 #[cfg(unix)]
 use crate::sys::cmsg;
+#[cfg(unix)]
+use crate::PlatformHandle;
 
 const WAKE_TOKEN: Token = Token(!0);
 
@@ -607,7 +609,15 @@ where
         #[allow(unused_mut)]
         while let Some(mut item) = self.codec.decode(&mut inbound.buf)? {
             #[cfg(unix)]
-            item.receive_owned_message_handle(|| cmsg::decode_handle(&mut inbound.cmsg));
+            item.receive_owned_message_handle(|| {
+                if let Some(handle) = self.extra_handle.take() {
+                    unsafe { handle.into_raw() }
+                } else {
+                    let (handle, extra_handle) = cmsg::decode_handles(&mut inbound.cmsg);
+                    self.extra_handle = extra_handle.map(PlatformHandle::new);
+                    handle
+                }
+            });
             self.handler.consume(item)?;
         }
 
@@ -643,6 +653,8 @@ where
 struct FramedDriver<T: Handler> {
     codec: LengthDelimitedCodec<T::Out, T::In>,
     handler: T,
+    #[cfg(unix)]
+    extra_handle: Option<PlatformHandle>,
 }
 
 impl<T: Handler> FramedDriver<T> {
@@ -650,6 +662,8 @@ impl<T: Handler> FramedDriver<T> {
         FramedDriver {
             codec: Default::default(),
             handler,
+            #[cfg(unix)]
+            extra_handle: None,
         }
     }
 }
