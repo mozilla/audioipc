@@ -78,63 +78,30 @@ impl rpccore::Server for CallbackServer {
                 let input_nbytes = nframes as usize * input_frame_size;
                 let output_nbytes = nframes as usize * output_frame_size;
 
-                // Clone values that need to be moved into the cpu pool thread.
-                let mut shm = unsafe { self.shm.unsafe_view() };
-
-                let duplex_copy_ptr = match &mut self.duplex_input {
-                    Some(buf) => {
-                        assert!(input_frame_size > 0);
-                        assert!(buf.capacity() >= input_nbytes);
-                        buf.as_mut_ptr()
-                    }
-                    None => ptr::null_mut(),
-                } as usize;
-                let user_ptr = self.user_ptr;
-                let cb = self.data_cb.unwrap();
-
                 // Input and output reuse the same shmem backing.  Unfortunately, cubeb's data_callback isn't
                 // specified in such a way that would require the callee to consume all of the input before
                 // writing to the output (i.e., it is passed as two pointers that aren't expected to alias).
                 // That means we need to copy the input here.
-                let (input_ptr, output_ptr) = match (input_frame_size, output_frame_size) {
-                    // Input-only.
-                    (input_frame_size, 0) if input_frame_size > 0 => unsafe {
-                        (
-                            shm.get_slice(input_nbytes).unwrap().as_ptr(),
-                            ptr::null_mut(),
-                        )
-                    },
-                    // Output-only.
-                    (0, output_frame_size) if output_frame_size > 0 => unsafe {
-                        (
-                            ptr::null(),
-                            shm.get_mut_slice(output_nbytes).unwrap().as_mut_ptr(),
-                        )
-                    },
-                    // Duplex, copy shmem to duplex_copy.
-                    (input_frame_size, output_frame_size) => unsafe {
-                        assert!(input_frame_size > 0 && output_frame_size > 0);
-                        assert_ne!(duplex_copy_ptr, 0);
-                        let input = shm.get_slice(input_nbytes).unwrap();
-                        ptr::copy_nonoverlapping(
-                            input.as_ptr(),
-                            duplex_copy_ptr as *mut _,
-                            input.len(),
-                        );
-                        (
-                            duplex_copy_ptr as _,
-                            shm.get_mut_slice(output_nbytes).unwrap().as_mut_ptr(),
-                        )
-                    },
-                };
+                if let Some(buf) = &mut self.duplex_input {
+                    assert!(input_nbytes > 0);
+                    assert!(buf.capacity() >= input_nbytes);
+                    unsafe {
+                        let input = self.shm.get_slice(input_nbytes).unwrap();
+                        ptr::copy_nonoverlapping(input.as_ptr(), buf.as_mut_ptr(), input.len());
+                    }
+                }
 
                 run_in_callback(|| {
                     let nframes = unsafe {
-                        cb(
+                        self.data_cb.unwrap()(
                             ptr::null_mut(), // https://github.com/kinetiknz/cubeb/issues/518
-                            user_ptr as *mut c_void,
-                            input_ptr as *const _,
-                            output_ptr as *mut _,
+                            self.user_ptr as *mut c_void,
+                            if let Some(buf) = &mut self.duplex_input {
+                                buf.as_mut_ptr()
+                            } else {
+                                self.shm.get_slice(input_nbytes).unwrap().as_ptr()
+                            } as *const _,
+                            self.shm.get_mut_slice(output_nbytes).unwrap().as_mut_ptr() as *mut _,
                             nframes as _,
                         )
                     };
@@ -144,22 +111,18 @@ impl rpccore::Server for CallbackServer {
             }
             CallbackReq::State(state) => {
                 trace!("stream_thread: State Callback: {:?}", state);
-                let user_ptr = self.user_ptr;
-                let cb = self.state_cb.unwrap();
                 run_in_callback(|| unsafe {
-                    cb(ptr::null_mut(), user_ptr as *mut _, state);
+                    self.state_cb.unwrap()(ptr::null_mut(), self.user_ptr as *mut _, state);
                 });
 
                 CallbackResp::State
             }
             CallbackReq::DeviceChange => {
-                let cb = self.device_change_cb.clone();
-                let user_ptr = self.user_ptr;
                 run_in_callback(|| {
-                    let cb = cb.lock().unwrap();
-                    if let Some(cb) = *cb {
+                    let cb = *self.device_change_cb.lock().unwrap();
+                    if let Some(cb) = cb {
                         unsafe {
-                            cb(user_ptr as *mut _);
+                            cb(self.user_ptr as *mut _);
                         }
                     } else {
                         warn!("DeviceChange received with null callback");
