@@ -47,13 +47,14 @@ impl CubebDeviceCollectionManager {
         server: &Rc<RefCell<DeviceCollectionChangeCallback>>,
         devtype: cubeb::DeviceType,
     ) -> cubeb::Result<()> {
-        let mut servers = self.servers.lock().unwrap();
-        if servers.is_empty() {
-            self.internal_register(context, true)?;
-        }
         server.borrow_mut().devtype.insert(devtype);
+        let mut servers = self.servers.lock().unwrap();
+        let do_register = servers.is_empty();
         if !servers.iter().any(|s| Rc::ptr_eq(s, server)) {
             servers.push(server.clone());
+        }
+        if do_register {
+            self.internal_register(context, true)?;
         }
         Ok(())
     }
@@ -64,11 +65,28 @@ impl CubebDeviceCollectionManager {
         server: &Rc<RefCell<DeviceCollectionChangeCallback>>,
         devtype: cubeb::DeviceType,
     ) -> cubeb::Result<()> {
+        let do_remove = {
+            server.borrow_mut().devtype.remove(devtype);
+            server.borrow().devtype.is_empty()
+        };
         let mut servers = self.servers.lock().unwrap();
-        server.borrow_mut().devtype.remove(devtype);
-        if server.borrow().devtype.is_empty() {
+        if do_remove {
             servers.retain(|s| !Rc::ptr_eq(s, server));
         }
+        if servers.is_empty() {
+            self.internal_register(context, false)?;
+        }
+        Ok(())
+    }
+
+    fn unregister_server(
+        &mut self,
+        context: &cubeb::Context,
+        server: &Rc<RefCell<DeviceCollectionChangeCallback>>,
+    ) -> cubeb::Result<()> {
+        server.borrow_mut().devtype = cubeb::DeviceType::UNKNOWN;
+        let mut servers = self.servers.lock().unwrap();
+        servers.retain(|s| !Rc::ptr_eq(s, server));
         if servers.is_empty() {
             self.internal_register(context, false)?;
         }
@@ -119,6 +137,12 @@ impl CubebDeviceCollectionManager {
     }
 }
 
+impl Drop for CubebDeviceCollectionManager {
+    fn drop(&mut self) {
+        assert!(self.servers.lock().unwrap().is_empty());
+    }
+}
+
 struct DevIdMap {
     devices: Vec<usize>,
 }
@@ -157,8 +181,9 @@ impl DevIdMap {
 }
 
 struct CubebContextState {
-    context: cubeb::Result<cubeb::Context>,
+    // `manager` must be dropped before the `context` is destroyed.
     manager: CubebDeviceCollectionManager,
+    context: cubeb::Result<cubeb::Context>,
 }
 
 thread_local!(static CONTEXT_KEY: RefCell<Option<CubebContextState>> = RefCell::new(None));
@@ -182,11 +207,11 @@ where
         let mut state = k.borrow_mut();
         if state.is_none() {
             *state = Some(CubebContextState {
-                context: cubeb_init_from_context_params(),
                 manager: CubebDeviceCollectionManager::new(),
+                context: cubeb_init_from_context_params(),
             });
         }
-        let CubebContextState { context, manager } = state.as_mut().unwrap();
+        let CubebContextState { manager, context } = state.as_mut().unwrap();
         // Always reattempt to initialize cubeb, OS config may have changed.
         if context.is_err() {
             *context = cubeb_init_from_context_params();
@@ -347,6 +372,27 @@ pub struct CubebServer {
     device_collection_change_callbacks: Option<Rc<RefCell<DeviceCollectionChangeCallback>>>,
     devidmap: DevIdMap,
     shm_area_size: usize,
+}
+
+impl Drop for CubebServer {
+    fn drop(&mut self) {
+        if let Some(device_collection_change_callbacks) = &self.device_collection_change_callbacks {
+            debug!("CubebServer: dropped with device_collection_change_callbacks registered");
+            CONTEXT_KEY.with(|k| {
+                let mut state = k.borrow_mut();
+                if let Some(CubebContextState {
+                    manager,
+                    context: Ok(context),
+                }) = state.as_mut()
+                {
+                    let r = manager.unregister_server(context, device_collection_change_callbacks);
+                    if r.is_err() {
+                        debug!("CubebServer: unregister_server failed: {:?}", r);
+                    }
+                }
+            })
+        }
+    }
 }
 
 #[allow(unknown_lints)] // non_send_fields_in_send_ty is Nightly-only as of 2021-11-29.
