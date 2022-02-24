@@ -278,7 +278,7 @@ impl ServerStreamCallbacks {
         }
     }
 
-    fn state_callback(&mut self, state: cubeb::State) {
+    fn state_callback(&self, state: cubeb::State) {
         trace!("Stream state callback: {:?}", state);
         let r = self
             .state_callback_rpc
@@ -292,7 +292,7 @@ impl ServerStreamCallbacks {
         }
     }
 
-    fn device_change_callback(&mut self) {
+    fn device_change_callback(&self) {
         trace!("Stream device change callback");
         let r = self
             .device_change_callback_rpc
