@@ -49,15 +49,13 @@ pub fn encode_handle(cmsg: &mut BytesMut, handle: RawFd) {
 // sendmsgs can coalesce into a single recvmsg.  On some (64-bit) systems, the
 // minimum alignment of the cmsghdr buffer provides capacity for 2 handles, so
 // this code must expect 1 or 2 handles per decode call.
-pub fn decode_handles(cmsg: &mut BytesMut) -> (RawFd, Option<RawFd>) {
+pub fn decode_handles(cmsg: &mut BytesMut) -> arrayvec::ArrayVec<RawFd, 2> {
+    let mut fds = arrayvec::ArrayVec::<RawFd, 2>::new();
     let b = cmsg.split_to(space(size_of::<i32>())).freeze();
     let fd = iterator(b).next().unwrap();
     assert!(fd.len() == 1 || fd.len() == 2);
-    if fd.len() == 1 {
-        (fd[0], None)
-    } else {
-        (fd[0], Some(fd[1]))
-    }
+    fds.try_extend_from_slice(&fd).unwrap();
+    fds
 }
 
 fn iterator(c: Bytes) -> ControlMsgIter {
