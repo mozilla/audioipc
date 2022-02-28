@@ -606,9 +606,9 @@ where
                 if let Some(handle) = self.extra_handle.take() {
                     unsafe { handle.into_raw() }
                 } else {
-                    let (handle, extra_handle) = cmsg::decode_handles(&mut inbound.cmsg);
-                    self.extra_handle = extra_handle.map(PlatformHandle::new);
-                    handle
+                    let handles = cmsg::decode_handles(&mut inbound.cmsg);
+                    self.extra_handle = handles.get(1).map(|h| PlatformHandle::new(*h));
+                    handles[0]
                 }
             });
             self.handler.consume(item)?;
