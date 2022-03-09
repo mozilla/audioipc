@@ -9,7 +9,7 @@ edition = "2018"
 audioipc = { path = "../audioipc" }
 audioipc-client= { path = "../client" }
 audioipc-server = { path = "../server" }
-cubeb = "0.9.0"
+cubeb = "0.10.0"
 env_logger = "0.4.3"
 error-chain = "0.11.0"
 log = "0.4"
