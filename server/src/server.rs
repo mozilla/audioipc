@@ -31,7 +31,7 @@ fn error(error: cubeb::Error) -> ClientMessage {
 }
 
 struct CubebDeviceCollectionManager {
-    servers: Mutex<Vec<Rc<RefCell<DeviceCollectionChangeCallback>>>>,
+    servers: Mutex<Vec<(Rc<DeviceCollectionChangeCallback>, cubeb::DeviceType)>>,
 }
 
 impl CubebDeviceCollectionManager {
@@ -42,37 +42,27 @@ impl CubebDeviceCollectionManager {
     }
 
     fn register(
-        &mut self,
+        &self,
         context: &cubeb::Context,
-        server: &Rc<RefCell<DeviceCollectionChangeCallback>>,
+        server: &Rc<DeviceCollectionChangeCallback>,
         devtype: cubeb::DeviceType,
     ) -> cubeb::Result<()> {
-        server.borrow_mut().devtype.insert(devtype);
         let mut servers = self.servers.lock().unwrap();
-        let do_register = servers.is_empty();
-        if !servers.iter().any(|s| Rc::ptr_eq(s, server)) {
-            servers.push(server.clone());
-        }
-        if do_register {
+        if servers.is_empty() {
             self.internal_register(context, true)?;
         }
+        servers.push((server.clone(), devtype));
         Ok(())
     }
 
     fn unregister(
-        &mut self,
+        &self,
         context: &cubeb::Context,
-        server: &Rc<RefCell<DeviceCollectionChangeCallback>>,
+        server: &Rc<DeviceCollectionChangeCallback>,
         devtype: cubeb::DeviceType,
     ) -> cubeb::Result<()> {
-        let do_remove = {
-            server.borrow_mut().devtype.remove(devtype);
-            server.borrow().devtype.is_empty()
-        };
         let mut servers = self.servers.lock().unwrap();
-        if do_remove {
-            servers.retain(|s| !Rc::ptr_eq(s, server));
-        }
+        servers.retain(|(s, d)| !Rc::ptr_eq(s, server) || d != &devtype);
         if servers.is_empty() {
             self.internal_register(context, false)?;
         }
@@ -80,25 +70,14 @@ impl CubebDeviceCollectionManager {
     }
 
     fn unregister_server(
-        &mut self,
+        &self,
         context: &cubeb::Context,
-        server: &Rc<RefCell<DeviceCollectionChangeCallback>>,
+        server: &Rc<DeviceCollectionChangeCallback>,
     ) -> cubeb::Result<()> {
-        server.borrow_mut().devtype = cubeb::DeviceType::UNKNOWN;
-        let mut servers = self.servers.lock().unwrap();
-        servers.retain(|s| !Rc::ptr_eq(s, server));
-        if servers.is_empty() {
-            self.internal_register(context, false)?;
-        }
-        Ok(())
+        self.unregister(context, server, cubeb::DeviceType::all())
     }
 
     fn internal_register(&self, context: &cubeb::Context, enable: bool) -> cubeb::Result<()> {
-        let user_ptr = if enable {
-            self as *const CubebDeviceCollectionManager as *mut c_void
-        } else {
-            std::ptr::null_mut()
-        };
         for &(dir, cb) in &[
             (
                 cubeb::DeviceType::INPUT,
@@ -113,25 +92,22 @@ impl CubebDeviceCollectionManager {
                 context.register_device_collection_changed(
                     dir,
                     if enable { Some(cb) } else { None },
-                    user_ptr,
+                    if enable {
+                        self as *const CubebDeviceCollectionManager as *mut c_void
+                    } else {
+                        std::ptr::null_mut()
+                    },
                 )?;
             }
         }
         Ok(())
     }
 
-    // Warning: this is called from an internal cubeb thread, so we must not mutate unprotected shared state.
     unsafe fn device_collection_changed_callback(&self, device_type: ffi::cubeb_device_type) {
         let servers = self.servers.lock().unwrap();
-        servers.iter().for_each(|server| {
-            if server
-                .borrow()
-                .devtype
-                .contains(cubeb::DeviceType::from_bits_truncate(device_type))
-            {
-                server
-                    .borrow_mut()
-                    .device_collection_changed_callback(device_type)
+        servers.iter().for_each(|(s, d)| {
+            if d.contains(cubeb::DeviceType::from_bits_truncate(device_type)) {
+                s.device_collection_changed_callback(device_type)
             }
         });
     }
@@ -357,11 +333,10 @@ impl Drop for ServerStream {
 
 struct DeviceCollectionChangeCallback {
     rpc: rpccore::Proxy<DeviceCollectionReq, DeviceCollectionResp>,
-    devtype: cubeb::DeviceType,
 }
 
 impl DeviceCollectionChangeCallback {
-    fn device_collection_changed_callback(&mut self, device_type: ffi::cubeb_device_type) {
+    fn device_collection_changed_callback(&self, device_type: ffi::cubeb_device_type) {
         // TODO: Assert device_type is in devtype.
         debug!(
             "Sending device collection ({:?}) changed event",
@@ -379,7 +354,7 @@ pub struct CubebServer {
     device_collection_thread: ipccore::EventLoopHandle,
     streams: slab::Slab<ServerStream>,
     remote_pid: Option<u32>,
-    device_collection_change_callbacks: Option<Rc<RefCell<DeviceCollectionChangeCallback>>>,
+    device_collection_change_callbacks: Option<Rc<DeviceCollectionChangeCallback>>,
     devidmap: DevIdMap,
     shm_area_size: usize,
 }
@@ -632,10 +607,7 @@ impl CubebServer {
                 };
 
                 self.device_collection_change_callbacks =
-                    Some(Rc::new(RefCell::new(DeviceCollectionChangeCallback {
-                        rpc,
-                        devtype: cubeb::DeviceType::empty(),
-                    })));
+                    Some(Rc::new(DeviceCollectionChangeCallback { rpc }));
                 let fd = RegisterDeviceCollectionChanged {
                     platform_handle: SerializableHandle::new(client_pipe, self.remote_pid.unwrap()),
                 };
