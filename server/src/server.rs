@@ -15,7 +15,7 @@ use audioipc::shm::SharedMem;
 use audioipc::{ipccore, rpccore, sys, PlatformHandle};
 use cubeb_core as cubeb;
 use cubeb_core::ffi;
-use std::convert::From;
+use std::convert::{From, TryInto};
 use std::ffi::CStr;
 use std::mem::size_of;
 use std::os::raw::{c_long, c_void};
@@ -226,13 +226,30 @@ impl ServerStreamCallbacks {
             output.len()
         );
 
-        unsafe {
-            if self.input_frame_size != 0 {
+        if self.input_frame_size != 0 {
+            if input.len() > self.shm.get_size() {
+                debug!(
+                    "bad input size: input={} shm={}",
+                    input.len(),
+                    self.shm.get_size()
+                );
+                return cubeb::ffi::CUBEB_ERROR.try_into().unwrap();
+            }
+            unsafe {
                 self.shm
                     .get_mut_slice(input.len())
                     .unwrap()
                     .copy_from_slice(input);
             }
+        }
+
+        if self.output_frame_size != 0 && output.len() > self.shm.get_size() {
+            debug!(
+                "bad output size: output={} shm={}",
+                output.len(),
+                self.shm.get_size()
+            );
+            return cubeb::ffi::CUBEB_ERROR.try_into().unwrap();
         }
 
         let r = self
@@ -246,13 +263,10 @@ impl ServerStreamCallbacks {
 
         match r {
             Ok(CallbackResp::Data(frames)) => {
-                if frames >= 0 {
+                if frames >= 0 && self.output_frame_size != 0 {
                     let nbytes = frames as usize * self.output_frame_size as usize;
-                    trace!("Reslice output to {}", nbytes);
                     unsafe {
-                        if self.output_frame_size != 0 {
-                            output[..nbytes].copy_from_slice(self.shm.get_slice(nbytes).unwrap());
-                        }
+                        output[..nbytes].copy_from_slice(self.shm.get_slice(nbytes).unwrap());
                     }
                 }
                 frames
