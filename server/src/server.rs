@@ -69,14 +69,6 @@ impl CubebDeviceCollectionManager {
         Ok(())
     }
 
-    fn unregister_server(
-        &self,
-        context: &cubeb::Context,
-        server: &Rc<DeviceCollectionChangeCallback>,
-    ) -> cubeb::Result<()> {
-        self.unregister(context, server, cubeb::DeviceType::all())
-    }
-
     fn internal_register(&self, context: &cubeb::Context, enable: bool) -> cubeb::Result<()> {
         for &(dir, cb) in &[
             (
@@ -370,9 +362,13 @@ impl Drop for CubebServer {
                     context: Ok(context),
                 }) = state.as_mut()
                 {
-                    let r = manager.unregister_server(context, device_collection_change_callbacks);
+                    let r = manager.unregister(
+                        context,
+                        device_collection_change_callbacks,
+                        cubeb::DeviceType::all(),
+                    );
                     if r.is_err() {
-                        debug!("CubebServer: unregister_server failed: {:?}", r);
+                        debug!("CubebServer: unregister failed: {:?}", r);
                     }
                 }
             })
