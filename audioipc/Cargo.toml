@@ -28,9 +28,7 @@ memmap2 = "0.2"
 arrayvec = "0.7"
 
 [target.'cfg(target_os = "linux")'.dependencies.audio_thread_priority]
-version = "0.26.0"
-default_features = false
-features = ["winapi"]
+version = "0.26.1"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["combaseapi", "memoryapi", "objbase"] }
