@@ -18,6 +18,4 @@ log = "0.4"
 tokio = "0.1"
 
 [dependencies.audio_thread_priority]
-version = "0.26.0"
-default_features = false
-features = ["winapi"]
+version = "0.26.1"
