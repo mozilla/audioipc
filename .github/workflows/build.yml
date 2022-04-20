@@ -30,6 +30,10 @@ jobs:
       with:
         submodules: recursive
 
+    - name: Install Dependencies (Linux)
+      run: sudo apt-get update && sudo apt-get install libdbus-1-dev
+      if: matrix.os == 'ubuntu-20.04'
+
     - name: Install Rust
       run: rustup toolchain install ${{ matrix.rust }} --profile minimal --component rustfmt clippy
 
