@@ -273,10 +273,7 @@ impl ServerStreamCallbacks {
             }
             _ => {
                 debug!("Unexpected message {:?} during data_callback", r);
-                // TODO: Return a CUBEB_ERROR result here once
-                // https://github.com/kinetiknz/cubeb/issues/553 is
-                // fixed.
-                0
+                cubeb::ffi::CUBEB_ERROR.try_into().unwrap()
             }
         }
     }
@@ -842,9 +839,7 @@ unsafe extern "C" fn data_cb_c(
         };
         cbs.data_callback(input, output, nframes as isize) as c_long
     });
-    // TODO: Return a CUBEB_ERROR result here once
-    // https://github.com/kinetiknz/cubeb/issues/553 is fixed.
-    ok.unwrap_or(0)
+    ok.unwrap_or(cubeb::ffi::CUBEB_ERROR as c_long)
 }
 
 unsafe extern "C" fn state_cb_c(
