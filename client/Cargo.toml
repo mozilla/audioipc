@@ -17,3 +17,4 @@ log = "0.4"
 [dependencies.audio_thread_priority]
 version = "0.26.1"
 default-features = false
+features = ["winapi"]
