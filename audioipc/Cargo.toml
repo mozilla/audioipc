@@ -32,7 +32,7 @@ version = "0.26.1"
 default-features = false
 
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = ["combaseapi", "memoryapi", "objbase"] }
+winapi = { version = "0.3", features = ["combaseapi", "handleapi", "memoryapi", "objbase"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 ashmem = "0.1.2"
