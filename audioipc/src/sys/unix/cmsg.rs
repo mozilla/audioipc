@@ -46,7 +46,7 @@ pub fn encode_handles(cmsg: &mut BytesMut, handles: &[RawFd]) {
     };
 
     unsafe {
-        let cmsghdr_ptr = cmsg.bytes_mut().as_mut_ptr();
+        let cmsghdr_ptr = cmsg.chunk_mut().as_mut_ptr();
         std::ptr::copy_nonoverlapping(
             &cmsghdr as *const _ as *const _,
             cmsghdr_ptr,

@@ -12,7 +12,7 @@ use std::{
 
 use std::io::Result;
 
-use bytes::BufMut;
+use bytes::{Buf, BufMut};
 use mio::windows::NamedPipe;
 use winapi::um::winbase::FILE_FLAG_OVERLAPPED;
 
@@ -70,7 +70,11 @@ impl RecvMsg for Pipe {
     // the `ConnectionBuffer` members has been adjusted appropriate by the caller.
     fn recv_msg(&mut self, buf: &mut ConnectionBuffer) -> Result<usize> {
         assert!(buf.buf.remaining_mut() > 0);
-        let r = unsafe { self.io.read(buf.buf.bytes_mut()) };
+        let r = unsafe {
+            let chunk = buf.buf.chunk_mut();
+            let slice = std::slice::from_raw_parts_mut(chunk.as_mut_ptr(), chunk.len());
+            self.io.read(slice)
+        };
         match r {
             Ok(n) => unsafe {
                 buf.buf.advance_mut(n);
