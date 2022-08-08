@@ -824,7 +824,7 @@ mod test {
 
         // RPC message from client to server.
         let response = client_proxy.call(TestServerMessage::TestRequest);
-        let response = response.wait().expect("client response");
+        let response = response.expect("client response");
         assert_eq!(response, TestClientMessage::TestResponse);
 
         // Explicit shutdown.
@@ -840,7 +840,7 @@ mod test {
 
         // RPC message from client to server.
         let response = client_proxy.call(TestServerMessage::TestRequest);
-        let response = response.wait().expect("client response");
+        let response = response.expect("client response");
         assert_eq!(response, TestClientMessage::TestResponse);
 
         // Explicit shutdown.
@@ -855,7 +855,7 @@ mod test {
         drop(server);
 
         let response = client_proxy.call(TestServerMessage::TestRequest);
-        response.wait().expect_err("sending on closed channel");
+        response.expect_err("sending on closed channel");
     }
 
     #[test]
@@ -865,7 +865,7 @@ mod test {
         drop(client);
 
         let response = client_proxy.call(TestServerMessage::TestRequest);
-        response.wait().expect_err("sending on a closed channel");
+        response.expect_err("sending on a closed channel");
     }
 
     #[test]

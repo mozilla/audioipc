@@ -46,29 +46,9 @@ pub trait Server {
 type ProxyRequest<Request, Response> = (Request, mpsc::Sender<Response>);
 type ProxyReceiver<Request, Response> = mpsc::Receiver<ProxyRequest<Request, Response>>;
 
-// Each RPC Proxy `call` returns a blocking waitable ProxyResponse.
-// `wait` produces the response received over RPC from the associated
-// Proxy `call`.
-pub struct ProxyResponse<Response> {
-    inner: mpsc::Receiver<Response>,
-}
-
-impl<Response> ProxyResponse<Response> {
-    pub fn wait(&self) -> Result<Response> {
-        match self.inner.recv() {
-            Ok(resp) => Ok(resp),
-            Err(_) => Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "proxy recv error",
-            )),
-        }
-    }
-}
-
 // RPC Proxy that may be `clone`d for use by multiple owners/threads.
 // A Proxy `call` arranges for the supplied request to be transmitted
-// to the associated Server via RPC.  The response can be retrieved by
-// `wait`ing on the returned ProxyResponse.
+// to the associated Server via RPC.  Blocks until complete.
 #[derive(Debug)]
 pub struct Proxy<Request, Response> {
     handle: Option<(EventLoopHandle, Token)>,
@@ -76,13 +56,19 @@ pub struct Proxy<Request, Response> {
 }
 
 impl<Request, Response> Proxy<Request, Response> {
-    pub fn call(&self, request: Request) -> ProxyResponse<Response> {
+    pub fn call(&self, request: Request) -> Result<Response> {
         let (tx, rx) = mpsc::channel();
         match self.tx.send((request, tx)) {
             Ok(_) => self.wake_connection(),
             Err(e) => debug!("Proxy::call error={:?}", e),
         }
-        ProxyResponse { inner: rx }
+        match rx.recv() {
+            Ok(resp) => Ok(resp),
+            Err(_) => Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "proxy recv error",
+            )),
+        }
     }
 
     pub(crate) fn connect_event_loop(&mut self, handle: EventLoopHandle, token: Token) {
