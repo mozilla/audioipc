@@ -5,6 +5,7 @@
 
 use std::io::{self, Result};
 use std::mem::ManuallyDrop;
+use std::sync::Arc;
 use std::{collections::VecDeque, sync::mpsc};
 
 use mio::Token;
@@ -43,7 +44,7 @@ pub trait Server {
 
 // RPC Client Proxy implementation.  ProxyRequest's Sender is connected to ProxyReceiver's Receiver,
 // allowing the ProxyReceiver to wait on a response from the proxy.
-type ProxyRequest<Request, Response> = (Request, mpsc::Sender<Response>);
+type ProxyRequest<Request, Response> = (Request, Arc<mpsc::SyncSender<Result<Response>>>);
 type ProxyReceiver<Request, Response> = mpsc::Receiver<ProxyRequest<Request, Response>>;
 
 // RPC Proxy that may be `clone`d for use by multiple owners/threads.
@@ -52,18 +53,38 @@ type ProxyReceiver<Request, Response> = mpsc::Receiver<ProxyRequest<Request, Res
 #[derive(Debug)]
 pub struct Proxy<Request, Response> {
     handle: Option<(EventLoopHandle, Token)>,
-    tx: ManuallyDrop<mpsc::Sender<ProxyRequest<Request, Response>>>,
+    response_rx: mpsc::Receiver<Result<Response>>,
+    response_tx: Arc<mpsc::SyncSender<Result<Response>>>,
+    handler_tx: ManuallyDrop<mpsc::Sender<ProxyRequest<Request, Response>>>,
 }
 
 impl<Request, Response> Proxy<Request, Response> {
-    pub fn call(&self, request: Request) -> Result<Response> {
-        let (tx, rx) = mpsc::channel();
-        match self.tx.send((request, tx)) {
-            Ok(_) => self.wake_connection(),
-            Err(e) => debug!("Proxy::call error={:?}", e),
+    pub fn new(handler_tx: mpsc::Sender<ProxyRequest<Request, Response>>) -> Self {
+        let (tx, rx) = mpsc::sync_channel(1);
+        Self {
+            handle: None,
+            response_rx: rx,
+            response_tx: Arc::new(tx),
+            handler_tx: ManuallyDrop::new(handler_tx),
         }
-        match rx.recv() {
-            Ok(resp) => Ok(resp),
+    }
+
+    pub fn call(&self, request: Request) -> Result<Response> {
+        match self.handler_tx.send((request, self.response_tx.clone())) {
+            Ok(_) => self.wake_connection(),
+            Err(_) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "proxy send error",
+                ))
+            }
+        }
+        // `response_tx` keeps the `Sender` alive, so we can't expect a
+        // channel disconnection if the handler is shut down while a Proxy
+        // is attached.  Instead, the handler *must* clear its processing queues
+        // on drop and send any waiting Proxy calls an error.
+        match self.response_rx.recv() {
+            Ok(resp) => resp,
             Err(_) => Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
                 "proxy recv error",
@@ -86,9 +107,12 @@ impl<Request, Response> Proxy<Request, Response> {
 
 impl<Request, Response> Clone for Proxy<Request, Response> {
     fn clone(&self) -> Self {
-        Proxy {
+        let (tx, rx) = mpsc::sync_channel(1);
+        Self {
             handle: self.handle.clone(),
-            tx: self.tx.clone(),
+            response_rx: rx,
+            response_tx: Arc::new(tx),
+            handler_tx: self.handler_tx.clone(),
         }
     }
 }
@@ -98,7 +122,9 @@ impl<Request, Response> Drop for Proxy<Request, Response> {
         trace!("Proxy drop, waking EventLoop");
         // Must drop Sender before waking the connection, otherwise
         // the wake may be processed before Sender is closed.
-        unsafe { ManuallyDrop::drop(&mut self.tx) }
+        unsafe {
+            ManuallyDrop::drop(&mut self.handler_tx);
+        }
         if self.handle.is_some() {
             self.wake_connection()
         }
@@ -114,7 +140,7 @@ impl<Request, Response> Drop for Proxy<Request, Response> {
 // connected to a ProxyResponse.
 pub(crate) struct ClientHandler<C: Client> {
     messages: ProxyReceiver<C::ServerMessage, C::ClientMessage>,
-    in_flight: VecDeque<mpsc::Sender<C::ClientMessage>>,
+    in_flight: VecDeque<Arc<mpsc::SyncSender<Result<C::ClientMessage>>>>,
 }
 
 impl<C: Client> Handler for ClientHandler<C> {
@@ -124,7 +150,7 @@ impl<C: Client> Handler for ClientHandler<C> {
     fn consume(&mut self, response: Self::In) -> Result<()> {
         trace!("ClientHandler::consume");
         if let Some(complete) = self.in_flight.pop_front() {
-            drop(complete.send(response));
+            drop(complete.send(Ok(response)));
         } else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
@@ -157,6 +183,25 @@ impl<C: Client> Handler for ClientHandler<C> {
     }
 }
 
+impl<C: Client> Drop for ClientHandler<C> {
+    fn drop(&mut self) {
+        // Clear handler queues and send disconnection errors to
+        // any waiting Proxy calls.
+        while let Ok((_, complete)) = self.messages.try_recv() {
+            drop(complete.send(Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "clienthandler dropped",
+            ))));
+        }
+        while let Some(complete) = self.in_flight.pop_front() {
+            drop(complete.send(Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "clienthandler dropped",
+            ))));
+        }
+    }
+}
+
 pub(crate) fn make_client<C: Client>(
 ) -> (ClientHandler<C>, Proxy<C::ServerMessage, C::ClientMessage>) {
     let (tx, rx) = mpsc::channel();
@@ -166,12 +211,7 @@ pub(crate) fn make_client<C: Client>(
         in_flight: VecDeque::with_capacity(32),
     };
 
-    let proxy = Proxy {
-        handle: None,
-        tx: ManuallyDrop::new(tx),
-    };
-
-    (handler, proxy)
+    (handler, Proxy::new(tx))
 }
 
 // Server-specific Handler implementation.
