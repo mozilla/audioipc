@@ -3,11 +3,12 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details
 
+use std::collections::VecDeque;
 use std::io::{self, Result};
 use std::mem::ManuallyDrop;
 use std::sync::Arc;
-use std::{collections::VecDeque, sync::mpsc};
 
+use crossbeam::channel::{self, Receiver, Sender};
 use mio::Token;
 
 use crate::ipccore::EventLoopHandle;
@@ -44,8 +45,8 @@ pub trait Server {
 
 // RPC Client Proxy implementation.  ProxyRequest's Sender is connected to ProxyReceiver's Receiver,
 // allowing the ProxyReceiver to wait on a response from the proxy.
-type ProxyRequest<Request, Response> = (Request, Arc<mpsc::SyncSender<Result<Response>>>);
-type ProxyReceiver<Request, Response> = mpsc::Receiver<ProxyRequest<Request, Response>>;
+type ProxyRequest<Request, Response> = (Request, Arc<Sender<Result<Response>>>);
+type ProxyReceiver<Request, Response> = Receiver<ProxyRequest<Request, Response>>;
 
 // RPC Proxy that may be `clone`d for use by multiple owners/threads.
 // A Proxy `call` arranges for the supplied request to be transmitted
@@ -53,14 +54,14 @@ type ProxyReceiver<Request, Response> = mpsc::Receiver<ProxyRequest<Request, Res
 #[derive(Debug)]
 pub struct Proxy<Request, Response> {
     handle: Option<(EventLoopHandle, Token)>,
-    response_rx: mpsc::Receiver<Result<Response>>,
-    response_tx: Arc<mpsc::SyncSender<Result<Response>>>,
-    handler_tx: ManuallyDrop<mpsc::Sender<ProxyRequest<Request, Response>>>,
+    response_rx: Receiver<Result<Response>>,
+    response_tx: Arc<Sender<Result<Response>>>,
+    handler_tx: ManuallyDrop<Sender<ProxyRequest<Request, Response>>>,
 }
 
 impl<Request, Response> Proxy<Request, Response> {
-    pub fn new(handler_tx: mpsc::Sender<ProxyRequest<Request, Response>>) -> Self {
-        let (tx, rx) = mpsc::sync_channel(1);
+    pub fn new(handler_tx: Sender<ProxyRequest<Request, Response>>) -> Self {
+        let (tx, rx) = channel::bounded(1);
         Self {
             handle: None,
             response_rx: rx,
@@ -107,7 +108,7 @@ impl<Request, Response> Proxy<Request, Response> {
 
 impl<Request, Response> Clone for Proxy<Request, Response> {
     fn clone(&self) -> Self {
-        let (tx, rx) = mpsc::sync_channel(1);
+        let (tx, rx) = channel::bounded(1);
         Self {
             handle: self.handle.clone(),
             response_rx: rx,
@@ -140,7 +141,7 @@ impl<Request, Response> Drop for Proxy<Request, Response> {
 // connected to a ProxyResponse.
 pub(crate) struct ClientHandler<C: Client> {
     messages: ProxyReceiver<C::ServerMessage, C::ClientMessage>,
-    in_flight: VecDeque<Arc<mpsc::SyncSender<Result<C::ClientMessage>>>>,
+    in_flight: VecDeque<Arc<Sender<Result<C::ClientMessage>>>>,
 }
 
 impl<C: Client> Handler for ClientHandler<C> {
@@ -171,7 +172,7 @@ impl<C: Client> Handler for ClientHandler<C> {
                 self.in_flight.push_back(response_tx);
                 Ok(Some(request))
             }
-            Err(mpsc::TryRecvError::Empty) => {
+            Err(channel::TryRecvError::Empty) => {
                 trace!("  --> no request");
                 Ok(None)
             }
@@ -204,7 +205,7 @@ impl<C: Client> Drop for ClientHandler<C> {
 
 pub(crate) fn make_client<C: Client>(
 ) -> (ClientHandler<C>, Proxy<C::ServerMessage, C::ClientMessage>) {
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = channel::bounded(32);
 
     let handler = ClientHandler::<C> {
         messages: rx,
