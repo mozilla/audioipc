@@ -8,7 +8,7 @@ use std::io::{self, Result};
 use std::mem::ManuallyDrop;
 use std::sync::{Arc, Mutex, Weak};
 
-use crossbeam::channel::{self, Receiver, Sender};
+use crossbeam_channel::{self, Receiver, Sender};
 use mio::Token;
 use slab::Slab;
 
@@ -66,7 +66,7 @@ impl<Request, Response> Proxy<Request, Response> {
         handler_tx: Sender<ProxyRequest<Request>>,
         proxy_mgr: Weak<ProxyManager<Response>>,
     ) -> Self {
-        let (tx, rx) = channel::bounded(1);
+        let (tx, rx) = crossbeam_channel::bounded(1);
         let key = proxy_mgr.upgrade().unwrap().register_proxy(tx);
         Self {
             handle: None,
@@ -111,7 +111,7 @@ impl<Request, Response> Proxy<Request, Response> {
 
 impl<Request, Response> Clone for Proxy<Request, Response> {
     fn clone(&self) -> Self {
-        let (tx, rx) = channel::bounded(1);
+        let (tx, rx) = crossbeam_channel::bounded(1);
         let key = self.proxy_mgr.upgrade().unwrap().register_proxy(tx);
         Self {
             handle: self.handle.clone(),
@@ -224,7 +224,7 @@ impl<C: Client> Handler for ClientHandler<C> {
                 self.in_flight.push_back(response_tx);
                 Ok(Some(request))
             }
-            Err(channel::TryRecvError::Empty) => {
+            Err(crossbeam_channel::TryRecvError::Empty) => {
                 trace!("  --> no request");
                 Ok(None)
             }
@@ -238,7 +238,7 @@ impl<C: Client> Handler for ClientHandler<C> {
 
 pub(crate) fn make_client<C: Client>(
 ) -> (ClientHandler<C>, Proxy<C::ServerMessage, C::ClientMessage>) {
-    let (tx, rx) = channel::bounded(32);
+    let (tx, rx) = crossbeam_channel::bounded(32);
 
     let handler = ClientHandler::new(rx);
     let proxy_mgr = handler.proxy_manager();
