@@ -7,7 +7,7 @@ use std::io::{self, Result};
 use std::sync::{mpsc, Arc};
 use std::thread;
 
-use crossbeam::channel::{self, Receiver, Sender};
+use crossbeam_channel::{self, Receiver, Sender};
 use mio::{event::Event, Events, Interest, Poll, Registry, Token, Waker};
 use slab::Slab;
 
@@ -152,7 +152,7 @@ impl EventLoop {
     fn new(name: String) -> Result<EventLoop> {
         let poll = Poll::new()?;
         let waker = Arc::new(Waker::new(poll.registry(), WAKE_TOKEN)?);
-        let (tx, rx) = channel::bounded(EVENT_LOOP_INITIAL_CLIENTS);
+        let (tx, rx) = crossbeam_channel::bounded(EVENT_LOOP_INITIAL_CLIENTS);
         let eventloop = EventLoop {
             poll,
             events: Events::with_capacity(EVENT_LOOP_EVENTS_PER_ITERATION),
