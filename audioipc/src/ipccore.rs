@@ -236,7 +236,7 @@ impl EventLoop {
                         debug!("{}: {:?}: done, removing", self.name, token);
                         let mut connection = self.connections.remove(token.0);
                         if let Err(e) = connection.shutdown(self.poll.registry()) {
-                            warn!(
+                            debug!(
                                 "{}: EventLoop drop - closing connection for {:?} failed: {:?}",
                                 self.name, token, e
                             );
@@ -286,7 +286,7 @@ impl EventLoop {
                         debug!("{}: {:?}: done (wake), removing", self.name, token);
                         let mut connection = self.connections.remove(token.0);
                         if let Err(e) = connection.shutdown(self.poll.registry()) {
-                            warn!(
+                            debug!(
                                 "{}: EventLoop drop - closing connection for {:?} failed: {:?}",
                                 self.name, token, e
                             );
@@ -309,7 +309,7 @@ impl Drop for EventLoop {
                 self.name, token
             );
             if let Err(e) = connection.shutdown(self.poll.registry()) {
-                warn!(
+                debug!(
                     "{}: EventLoop drop - closing connection for {:?} failed: {:?}",
                     self.name, token, e
                 );
