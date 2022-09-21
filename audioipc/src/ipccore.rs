@@ -883,6 +883,19 @@ mod test {
     }
 
     #[test]
+    fn clone_after_drop() {
+        init();
+        let (server, client, client_proxy) = setup();
+        drop(server);
+        drop(client);
+
+        let clone = client_proxy.clone();
+        clone
+            .call(TestServerMessage::TestRequest)
+            .expect_err("sending on a closed channel");
+    }
+
+    #[test]
     fn basic_event_loop_thread_callbacks() {
         init();
         let (start_tx, start_rx) = mpsc::channel();
