@@ -367,13 +367,15 @@ impl Drop for CubebServer {
                     context: Ok(context),
                 }) = state.as_mut()
                 {
-                    let r = manager.unregister(
-                        context,
-                        device_collection_change_callbacks,
-                        cubeb::DeviceType::all(),
-                    );
-                    if r.is_err() {
-                        debug!("CubebServer: unregister failed: {:?}", r);
+                    for devtype in [cubeb::DeviceType::INPUT, cubeb::DeviceType::OUTPUT] {
+                        let r = manager.unregister(
+                            context,
+                            device_collection_change_callbacks,
+                            devtype,
+                        );
+                        if r.is_err() {
+                            debug!("CubebServer: unregister failed: {:?}", r);
+                        }
                     }
                 }
             })
