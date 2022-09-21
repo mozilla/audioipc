@@ -245,9 +245,7 @@ impl<C: Client> Handler for ClientHandler<C> {
         trace!("ClientHandler::consume");
         // `proxy` identifies the waiting Proxy expecting `response`.
         if let Some(proxy) = self.in_flight.pop_front() {
-            if let Err(e) = self.proxies.deliver(proxy, response) {
-                debug!("ClientHandler::consume - deliver error {:?}", e);
-            }
+            self.proxies.deliver(proxy, response)?;
         } else {
             return Err(Error::new(ErrorKind::Other, "request/response mismatch"));
         }
