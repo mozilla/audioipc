@@ -63,7 +63,7 @@ type ProxyRequest<Request> = (ProxyKey, Request);
 #[derive(Debug)]
 pub struct Proxy<Request, Response> {
     handle: Option<(EventLoopHandle, Token)>,
-    key: Result<ProxyKey>,
+    key: ProxyKey,
     response_rx: Receiver<Response>,
     handler_tx: ManuallyDrop<Sender<ProxyRequest<Request>>>,
     proxy_mgr: Arc<ProxyManager<Response>>,
@@ -73,30 +73,35 @@ impl<Request, Response> Proxy<Request, Response> {
     fn new(
         handler_tx: Sender<ProxyRequest<Request>>,
         proxy_mgr: Arc<ProxyManager<Response>>,
-    ) -> Self {
+    ) -> Result<Self> {
         let (tx, rx) = crossbeam_channel::bounded(1);
-        Self {
+        Ok(Self {
             handle: None,
-            key: proxy_mgr.register_proxy(tx),
+            key: proxy_mgr.register_proxy(tx)?,
             response_rx: rx,
             handler_tx: ManuallyDrop::new(handler_tx),
             proxy_mgr,
-        }
+        })
+    }
+
+    pub fn try_clone(&self) -> Result<Self> {
+        let mut clone = Self::new((*self.handler_tx).clone(), self.proxy_mgr.clone())?;
+        let (handle, token) = self
+            .handle
+            .as_ref()
+            .expect("proxy not connected to event loop");
+        clone.connect_event_loop(handle.clone(), *token);
+        Ok(clone)
     }
 
     pub fn call(&self, request: Request) -> Result<Response> {
-        match &self.key {
-            Ok(key) => {
-                match self.handler_tx.send((*key, request)) {
-                    Ok(_) => self.wake_connection(),
-                    Err(_) => return Err(Error::new(ErrorKind::Other, "proxy send error")),
-                }
-                match self.response_rx.recv() {
-                    Ok(resp) => Ok(resp),
-                    Err(_) => Err(Error::new(ErrorKind::Other, "proxy recv error")),
-                }
-            }
-            Err(_) => Err(Error::new(ErrorKind::Other, "proxy not registered")),
+        match self.handler_tx.send((self.key, request)) {
+            Ok(_) => self.wake_connection(),
+            Err(_) => return Err(Error::new(ErrorKind::Other, "proxy send error")),
+        }
+        match self.response_rx.recv() {
+            Ok(resp) => Ok(resp),
+            Err(_) => Err(Error::new(ErrorKind::Other, "proxy recv error")),
         }
     }
 
@@ -113,24 +118,10 @@ impl<Request, Response> Proxy<Request, Response> {
     }
 }
 
-impl<Request, Response> Clone for Proxy<Request, Response> {
-    fn clone(&self) -> Self {
-        let mut clone = Self::new((*self.handler_tx).clone(), self.proxy_mgr.clone());
-        let (handle, token) = self
-            .handle
-            .as_ref()
-            .expect("proxy not connected to event loop");
-        clone.connect_event_loop(handle.clone(), *token);
-        clone
-    }
-}
-
 impl<Request, Response> Drop for Proxy<Request, Response> {
     fn drop(&mut self) {
         trace!("Proxy drop, waking EventLoop");
-        if let Ok(key) = self.key {
-            let _ = self.proxy_mgr.unregister_proxy(key);
-        }
+        let _ = self.proxy_mgr.unregister_proxy(self.key);
         // Must drop `handler_tx` before waking the connection, otherwise
         // the wake may be processed before Sender is closed.
         unsafe {
@@ -286,14 +277,15 @@ impl<C: Client> Drop for ClientHandler<C> {
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub(crate) fn make_client<C: Client>(
-) -> (ClientHandler<C>, Proxy<C::ServerMessage, C::ClientMessage>) {
+) -> Result<(ClientHandler<C>, Proxy<C::ServerMessage, C::ClientMessage>)> {
     let (tx, rx) = crossbeam_channel::bounded(RPC_CLIENT_INITIAL_PROXIES);
 
     let handler = ClientHandler::new(rx);
     let proxy_mgr = handler.proxy_manager().clone();
 
-    (handler, Proxy::new(tx, proxy_mgr))
+    Ok((handler, Proxy::new(tx, proxy_mgr)?))
 }
 
 // Server-specific Handler implementation.

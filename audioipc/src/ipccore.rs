@@ -66,7 +66,7 @@ impl EventLoopHandle {
         <C as Client>::ServerMessage: Serialize + Debug + AssociateHandleForMessage + Send,
         <C as Client>::ClientMessage: DeserializeOwned + Debug + AssociateHandleForMessage + Send,
     {
-        let (handler, mut proxy) = make_client::<C>();
+        let (handler, mut proxy) = make_client::<C>()?;
         let driver = Box::new(FramedDriver::new(handler));
         let r = self.add_connection(connection, driver);
         trace!("EventLoop::bind_client {:?}", r);
@@ -889,10 +889,9 @@ mod test {
         drop(server);
         drop(client);
 
-        let clone = client_proxy.clone();
-        clone
-            .call(TestServerMessage::TestRequest)
-            .expect_err("sending on a closed channel");
+        client_proxy
+            .try_clone()
+            .expect_err("cloning a closed proxy");
     }
 
     #[test]
