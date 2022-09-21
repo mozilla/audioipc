@@ -6,7 +6,6 @@
 use std::collections::VecDeque;
 use std::io::{self, Error, ErrorKind, Result};
 use std::mem::ManuallyDrop;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crossbeam_channel::{self, Receiver, Sender};
@@ -139,65 +138,72 @@ const RPC_CLIENT_INITIAL_PROXIES: usize = 32; // Initial proxy pre-allocation pe
 // the manager on initialization.
 #[derive(Debug)]
 struct ProxyManager<Response> {
-    proxies: Mutex<Slab<Sender<Response>>>,
-    connected: AtomicBool,
+    proxies: Mutex<Option<Slab<Sender<Response>>>>,
 }
 
 impl<Response> ProxyManager<Response> {
     fn new() -> Self {
         Self {
-            proxies: Mutex::new(Slab::with_capacity(RPC_CLIENT_INITIAL_PROXIES)),
-            connected: AtomicBool::new(true),
+            proxies: Mutex::new(Some(Slab::with_capacity(RPC_CLIENT_INITIAL_PROXIES))),
         }
     }
 
     // Register a Proxy's response Sender, returning a unique ID identifying
     // the Proxy to the ClientHandler.
     fn register_proxy(&self, tx: Sender<Response>) -> Result<ProxyKey> {
-        if !self.connected.load(Ordering::SeqCst) {
-            return Err(Error::new(
+        let mut proxies = self.proxies.lock().unwrap();
+        match &mut *proxies {
+            Some(proxies) => {
+                let entry = proxies.vacant_entry();
+                let key = entry.key();
+                entry.insert(tx);
+                Ok(key)
+            }
+            None => Err(Error::new(
                 ErrorKind::Other,
                 "register: proxy manager disconnected",
-            ));
+            )),
         }
-        let mut proxies = self.proxies.lock().unwrap();
-        let entry = proxies.vacant_entry();
-        let key = entry.key();
-        entry.insert(tx);
-        Ok(key)
     }
 
     fn unregister_proxy(&self, key: ProxyKey) -> Result<()> {
-        if !self.connected.load(Ordering::SeqCst) {
-            return Err(Error::new(
-                ErrorKind::Other,
-                "unregister: proxy manager disconnected",
-            ));
-        }
-        match self.proxies.lock().unwrap().try_remove(key) {
-            Some(_) => Ok(()),
+        let mut proxies = self.proxies.lock().unwrap();
+        match &mut *proxies {
+            Some(proxies) => match proxies.try_remove(key) {
+                Some(_) => Ok(()),
+                None => Err(Error::new(
+                    ErrorKind::Other,
+                    "unregister: unknown proxy key",
+                )),
+            },
             None => Err(Error::new(
                 ErrorKind::Other,
-                "unregister: unknown proxy key",
+                "unregister: proxy manager disconnected",
             )),
         }
     }
 
     // Deliver ClientHandler's Response to the Proxy associated with `key`.
     fn deliver(&self, key: ProxyKey, resp: Response) -> Result<()> {
-        match self.proxies.lock().unwrap().get(key) {
-            Some(proxy) => {
-                drop(proxy.send(resp));
-                Ok(())
-            }
-            None => Err(Error::new(ErrorKind::Other, "deliver: unknown proxy key")),
+        let proxies = self.proxies.lock().unwrap();
+        match &*proxies {
+            Some(proxies) => match proxies.get(key) {
+                Some(proxy) => {
+                    drop(proxy.send(resp));
+                    Ok(())
+                }
+                None => Err(Error::new(ErrorKind::Other, "deliver: unknown proxy key")),
+            },
+            None => Err(Error::new(
+                ErrorKind::Other,
+                "unregister: proxy manager disconnected",
+            )),
         }
     }
 
     // ClientHandler disconnected, close Proxy Senders to unblock any waiters.
     fn disconnect_handler(&self) {
-        self.connected.store(false, Ordering::SeqCst);
-        self.proxies.lock().unwrap().clear();
+        *self.proxies.lock().unwrap() = None;
     }
 }
 
@@ -240,7 +246,7 @@ impl<C: Client> Handler for ClientHandler<C> {
         // `proxy` identifies the waiting Proxy expecting `response`.
         if let Some(proxy) = self.in_flight.pop_front() {
             if let Err(e) = self.proxies.deliver(proxy, response) {
-                trace!("ClientHandler::consume - deliver error {:?}", e);
+                debug!("ClientHandler::consume - deliver error {:?}", e);
             }
         } else {
             return Err(Error::new(ErrorKind::Other, "request/response mismatch"));
