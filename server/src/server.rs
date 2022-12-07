@@ -724,8 +724,8 @@ impl CubebServer {
             input_frame_size,
             output_frame_size,
             shm,
-            state_callback_rpc: rpc.try_clone()?,
-            device_change_callback_rpc: rpc.try_clone()?,
+            state_callback_rpc: rpc.clone(),
+            device_change_callback_rpc: rpc.clone(),
             data_callback_rpc: rpc,
         });
 
