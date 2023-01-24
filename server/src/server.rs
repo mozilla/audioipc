@@ -802,7 +802,7 @@ impl CubebServer {
         let min_latency = round_up_pow2(5 * rate / 1000);
         // Note: maximum latency is restricted by the SharedMem size.
         let max_latency = rate;
-        let latency = params.latency_frames.max(min_latency).min(max_latency);
+        let latency = params.latency_frames.clamp(min_latency, max_latency);
         trace!(
             "stream rate={} latency requested={} calculated={}",
             rate,
