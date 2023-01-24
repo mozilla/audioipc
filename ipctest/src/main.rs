@@ -52,7 +52,7 @@ fn run(wait_for_debugger: bool) -> Result<()> {
             let self_path = CString::new(&*args[0]).unwrap();
             let child_arg1 = CString::new("--client").unwrap();
             let child_arg2 = CString::new("--fd").unwrap();
-            let child_arg3 = CString::new(format!("{}", fd)).unwrap();
+            let child_arg3 = CString::new(format!("{fd}")).unwrap();
             let child_arg4 = if wait_for_debugger {
                 CString::new("--wait-for-debugger").unwrap()
             } else {
