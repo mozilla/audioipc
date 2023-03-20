@@ -149,11 +149,11 @@ type ProxyRequest<Request, Response> = (Request, CompletionWriter<Response>);
 #[derive(Debug)]
 pub struct Proxy<Request, Response> {
     handle: Option<(EventLoopHandle, Token)>,
-    requests: ManuallyDrop<Weak<ArrayQueue<ProxyRequest<Request, Response>>>>,
+    requests: ManuallyDrop<RequestQueueSender<ProxyRequest<Request, Response>>>,
 }
 
 impl<Request, Response> Proxy<Request, Response> {
-    fn new(requests: Weak<ArrayQueue<ProxyRequest<Request, Response>>>) -> Self {
+    fn new(requests: RequestQueueSender<ProxyRequest<Request, Response>>) -> Self {
         Self {
             handle: None,
             requests: ManuallyDrop::new(requests),
@@ -161,15 +161,8 @@ impl<Request, Response> Proxy<Request, Response> {
     }
 
     pub fn call(&self, request: Request) -> Result<Response> {
-        let req = if let Some(req) = self.requests.upgrade() {
-            req
-        } else {
-            debug!("Proxy[{:p}]: call failed - CH::requests dropped", self);
-            return Err(Error::new(ErrorKind::Other, "proxy send error"));
-        };
         let response = Completion::new();
-        let response_writer = response.writer();
-        if req.push((request, response_writer)).is_err() {
+        if self.requests.push((request, response.writer())).is_err() {
             debug!("Proxy[{:p}]: call failed - CH::requests full", self);
             return Err(Error::new(ErrorKind::Other, "proxy send error"));
         }
@@ -211,7 +204,7 @@ impl<Request, Response> Drop for Proxy<Request, Response> {
         // Must drop `requests` before waking the connection, otherwise
         // the wake may be processed before the (last) weak reference is
         // dropped.
-        let last_proxy = Weak::weak_count(&self.requests);
+        let last_proxy = Weak::weak_count(&self.requests.inner);
         unsafe {
             ManuallyDrop::drop(&mut self.requests);
         }
@@ -232,12 +225,12 @@ const RPC_CLIENT_INITIAL_PROXIES: usize = 32; // Initial proxy pre-allocation pe
 // connected to a ProxyResponse.
 pub(crate) struct ClientHandler<C: Client> {
     in_flight: VecDeque<CompletionWriter<C::ClientMessage>>,
-    requests: Arc<ArrayQueue<ProxyRequest<C::ServerMessage, C::ClientMessage>>>,
+    requests: Arc<RequestQueue<ProxyRequest<C::ServerMessage, C::ClientMessage>>>,
 }
 
 impl<C: Client> ClientHandler<C> {
     fn new(
-        requests: Arc<ArrayQueue<ProxyRequest<C::ServerMessage, C::ClientMessage>>>,
+        requests: Arc<RequestQueue<ProxyRequest<C::ServerMessage, C::ClientMessage>>>,
     ) -> ClientHandler<C> {
         ClientHandler::<C> {
             in_flight: VecDeque::with_capacity(RPC_CLIENT_INITIAL_PROXIES),
@@ -285,11 +278,68 @@ impl<C: Client> Handler for ClientHandler<C> {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct RequestQueue<T> {
+    queue: ArrayQueue<T>,
+}
+
+impl<T> RequestQueue<T> {
+    pub(crate) fn new(size: usize) -> Self {
+        RequestQueue {
+            queue: ArrayQueue::new(size),
+        }
+    }
+
+    pub(crate) fn pop(&self) -> Option<T> {
+        self.queue.pop()
+    }
+
+    pub(crate) fn new_sender(self: &Arc<Self>) -> RequestQueueSender<T> {
+        RequestQueueSender {
+            inner: Arc::downgrade(self),
+        }
+    }
+}
+
+pub(crate) struct RequestQueueSender<T> {
+    inner: Weak<RequestQueue<T>>,
+}
+
+impl<T> RequestQueueSender<T> {
+    pub(crate) fn push(&self, request: T) -> Result<()> {
+        if let Some(consumer) = self.inner.upgrade() {
+            if consumer.queue.push(request).is_err() {
+                debug!("Proxy[{:p}]: call failed - CH::requests full", self);
+                return Err(io::ErrorKind::ConnectionAborted.into());
+            }
+            return Ok(());
+        }
+        debug!("Proxy[{:p}]: call failed - CH::requests dropped", self);
+        Err(Error::new(ErrorKind::Other, "proxy send error"))
+    }
+}
+
+impl<T> Clone for RequestQueueSender<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+impl<T> std::fmt::Debug for RequestQueueSender<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RequestQueueProducer")
+            .field("inner", &self.inner.as_ptr())
+            .finish()
+    }
+}
+
 #[allow(clippy::type_complexity)]
 pub(crate) fn make_client<C: Client>(
 ) -> Result<(ClientHandler<C>, Proxy<C::ServerMessage, C::ClientMessage>)> {
-    let requests = Arc::new(ArrayQueue::new(RPC_CLIENT_INITIAL_PROXIES));
-    let proxy_req = Arc::downgrade(&requests);
+    let requests = Arc::new(RequestQueue::new(RPC_CLIENT_INITIAL_PROXIES));
+    let proxy_req = requests.new_sender();
     let handler = ClientHandler::new(requests);
 
     Ok((handler, Proxy::new(proxy_req)))
@@ -339,5 +389,76 @@ pub(crate) fn make_server<S: Server>(server: S) -> ServerHandler<S> {
     ServerHandler::<S> {
         server,
         in_flight: VecDeque::with_capacity(RPC_SERVER_INITIAL_CLIENTS),
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn basic() {
+        let queue = Arc::new(RequestQueue::new(1));
+        let producer = queue.new_sender();
+        assert!(queue.pop().is_none());
+        producer.push(1).unwrap();
+        assert!(queue.pop().is_some());
+        assert!(queue.pop().is_none());
+    }
+
+    #[test]
+    fn queue_dropped() {
+        let queue = Arc::new(RequestQueue::new(1));
+        let producer = queue.new_sender();
+        drop(queue);
+        assert!(producer.push(1).is_err());
+    }
+
+    #[test]
+    fn queue_full() {
+        let queue = Arc::new(RequestQueue::new(1));
+        let producer = queue.new_sender();
+        producer.push(1).unwrap();
+        assert!(producer.push(2).is_err());
+    }
+
+    #[test]
+    fn queue_producer_clone() {
+        let queue = Arc::new(RequestQueue::new(1));
+        let producer = queue.new_sender();
+        let producer2 = producer.clone();
+        producer.push(1).unwrap();
+        assert!(producer2.push(2).is_err());
+    }
+
+    #[test]
+    fn queue_producer_drop() {
+        let queue = Arc::new(RequestQueue::new(1));
+        let producer = queue.new_sender();
+        let producer2 = producer.clone();
+        drop(producer);
+        assert!(producer2.push(2).is_ok());
+    }
+
+    #[test]
+    fn queue_producer_weak() {
+        let queue = Arc::new(RequestQueue::new(1));
+        let producer = queue.new_sender();
+        let producer2 = producer.clone();
+        drop(queue);
+        assert!(producer2.push(2).is_err());
+    }
+
+    #[test]
+    fn queue_producer_shutdown() {
+        let queue = Arc::new(RequestQueue::new(1));
+        let producer = queue.new_sender();
+        let producer2 = producer.clone();
+        producer.push(1).unwrap();
+        assert!(Arc::weak_count(&queue) == 2);
+        drop(producer);
+        assert!(Arc::weak_count(&queue) == 1);
+        drop(producer2);
+        assert!(Arc::weak_count(&queue) == 0);
     }
 }
