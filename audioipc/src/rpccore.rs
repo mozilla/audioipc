@@ -162,10 +162,7 @@ impl<Request, Response> Proxy<Request, Response> {
 
     pub fn call(&self, request: Request) -> Result<Response> {
         let response = Completion::new();
-        if self.requests.push((request, response.writer())).is_err() {
-            debug!("Proxy[{:p}]: call failed - CH::requests full", self);
-            return Err(Error::new(ErrorKind::Other, "proxy send error"));
-        }
+        self.requests.push((request, response.writer()))?;
         self.wake_connection();
         match response.wait() {
             Some(resp) => Ok(resp),
@@ -204,7 +201,7 @@ impl<Request, Response> Drop for Proxy<Request, Response> {
         // Must drop `requests` before waking the connection, otherwise
         // the wake may be processed before the (last) weak reference is
         // dropped.
-        let last_proxy = Weak::weak_count(&self.requests.inner);
+        let last_proxy = self.requests.live_proxies();
         unsafe {
             ManuallyDrop::drop(&mut self.requests);
         }
@@ -260,9 +257,7 @@ impl<C: Client> Handler for ClientHandler<C> {
         // If the weak count is zero, no proxies are attached and
         // no further proxies can be attached since every proxy
         // after the initial one is cloned from an existing instance.
-        if Arc::weak_count(&self.requests) == 0 {
-            return Err(io::ErrorKind::ConnectionAborted.into());
-        }
+        self.requests.check_live_proxies()?;
         // Try to get a new message
         match self.requests.pop() {
             Some((request, response_writer)) => {
@@ -299,6 +294,13 @@ impl<T> RequestQueue<T> {
             inner: Arc::downgrade(self),
         }
     }
+
+    pub(crate) fn check_live_proxies(self: &Arc<Self>) -> Result<()> {
+        if Arc::weak_count(self) == 0 {
+            return Err(io::ErrorKind::ConnectionAborted.into());
+        }
+        Ok(())
+    }
 }
 
 pub(crate) struct RequestQueueSender<T> {
@@ -316,6 +318,10 @@ impl<T> RequestQueueSender<T> {
         }
         debug!("Proxy[{:p}]: call failed - CH::requests dropped", self);
         Err(Error::new(ErrorKind::Other, "proxy send error"))
+    }
+
+    pub(crate) fn live_proxies(&self) -> usize {
+        Weak::weak_count(&self.inner)
     }
 }
 
