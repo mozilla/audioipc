@@ -262,10 +262,7 @@ impl EventLoop {
                     );
                     let done = if let Some(connection) = self.connections.get_mut(token.0) {
                         match connection.handle_wake(self.poll.registry()) {
-                            Ok(done) => {
-                                assert!(!done);
-                                false
-                            }
+                            Ok(done) => done,
                             Err(e) => {
                                 debug!("{}: {:?}: connection error: {:?}", self.name, token, e);
                                 true
