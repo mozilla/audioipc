@@ -462,8 +462,11 @@ impl Connection {
             let r = self.io.recv_msg(&mut self.inbound);
             match r {
                 Ok(0) => {
-                    trace!("{:?}: recv EOF", self.token);
-                    assert!(self.inbound.is_empty()); // Ensure no unprocessed messages queued.
+                    trace!(
+                        "{:?}: recv EOF unprocessed inbound={}",
+                        self.token,
+                        self.inbound.is_empty()
+                    );
                     return Ok(true);
                 }
                 Ok(n) => {
@@ -477,8 +480,12 @@ impl Connection {
                             }
                         }
                         Err(e) => {
-                            debug!("{:?}: process_inbound error: {:?}", self.token, e);
-                            assert!(self.inbound.is_empty()); // Ensure no unprocessed messages queued.
+                            debug!(
+                                "{:?}: process_inbound error: {:?} unprocessed inbound={}",
+                                self.token,
+                                e,
+                                self.inbound.is_empty()
+                            );
                             return Err(e);
                         }
                     }
