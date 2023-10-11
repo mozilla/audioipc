@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-20.04, windows-2019, macos-10.15]
+        os: [ubuntu-20.04, windows-2019, macos-12]
         rust: [stable]
         experimental: [false]
         include:
@@ -21,7 +21,7 @@ jobs:
           - os: windows-2019
             rust: nightly
             experimental: true
-          - os: macos-10.15
+          - os: macos-12
             rust: nightly
             experimental: true
 

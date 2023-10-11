@@ -7,7 +7,7 @@ edition = "2018"
 
 [dependencies]
 audioipc = { package = "audioipc2", path = "../audioipc" }
-audioipc-client= { package = "audioipc2-client", path = "../client" }
+audioipc-client = { package = "audioipc2-client", path = "../client" }
 audioipc-server = { package = "audioipc2-server", path = "../server" }
 cubeb = "0.10.0"
 env_logger = "0.9"
@@ -18,4 +18,7 @@ log = "0.4"
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-winapi = "0.3"
+windows-sys = { version = "0.48", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+] }
