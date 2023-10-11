@@ -132,33 +132,39 @@ fn run(wait_for_debugger: bool) -> Result<()> {
 
 #[cfg(windows)]
 fn run_client() -> Result<()> {
-    use winapi::shared::minwindef::FALSE;
-    use winapi::um::{handleapi, processthreadsapi, winnt, winnt::HANDLE};
+    use audioipc::PlatformHandleType;
+    use windows_sys::Win32::{
+        Foundation::{
+            CloseHandle, DuplicateHandle, DUPLICATE_SAME_ACCESS, FALSE, HANDLE,
+            INVALID_HANDLE_VALUE,
+        },
+        System::Threading::{GetCurrentProcess, OpenProcess, PROCESS_DUP_HANDLE},
+    };
 
     let pid: u32 = std::env::var("AUDIOIPC_PID").unwrap().parse().unwrap();
     let handle: usize = std::env::var("AUDIOIPC_HANDLE").unwrap().parse().unwrap();
 
-    let mut target_handle = std::ptr::null_mut();
+    let mut target_handle = INVALID_HANDLE_VALUE;
     unsafe {
-        let source = processthreadsapi::OpenProcess(winnt::PROCESS_DUP_HANDLE, FALSE, pid);
-        let target = processthreadsapi::GetCurrentProcess();
+        let source = OpenProcess(PROCESS_DUP_HANDLE, FALSE, pid);
+        let target = GetCurrentProcess();
 
-        let ok = handleapi::DuplicateHandle(
+        let ok = DuplicateHandle(
             source,
             handle as HANDLE,
             target,
             &mut target_handle,
             0,
             FALSE,
-            winnt::DUPLICATE_SAME_ACCESS,
+            DUPLICATE_SAME_ACCESS,
         );
-        handleapi::CloseHandle(source);
+        CloseHandle(source);
         if ok == FALSE {
             bail!("DuplicateHandle failed");
         }
     }
 
-    client::client_test(target_handle)
+    client::client_test(target_handle as PlatformHandleType)
 }
 
 fn main() {
