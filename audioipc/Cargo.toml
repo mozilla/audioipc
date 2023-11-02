@@ -30,7 +30,7 @@ memmap2 = "0.5"
 arrayvec = "0.7"
 
 [target.'cfg(target_os = "linux")'.dependencies.audio_thread_priority]
-version = "0.28"
+version = "0.29"
 default-features = false
 
 [target.'cfg(windows)'.dependencies]
