@@ -1,6 +1,6 @@
 [package]
 name = "audioipc2-client"
-version = "0.5.0"
+version = "0.6.0"
 authors = [
         "Matthew Gregan <kinetik@flim.org>",
         "Dan Glastonbury <dan.glastonbury@gmail.com>",
@@ -11,6 +11,6 @@ edition = "2018"
 
 [dependencies]
 audioipc = { package = "audioipc2", path = "../audioipc" }
-cubeb-backend = "0.10"
+cubeb-backend = "0.12"
 log = "0.4"
 audio_thread_priority = { version = "0.30", default-features = false }
