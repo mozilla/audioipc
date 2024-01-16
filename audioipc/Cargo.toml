@@ -26,7 +26,7 @@ crossbeam-queue = "0.3"
 [target.'cfg(unix)'.dependencies]
 iovec = "0.1"
 libc = "0.2"
-memmap2 = "0.5"
+memmap2 = "0.9"
 arrayvec = "0.7"
 
 [target.'cfg(target_os = "linux")'.dependencies.audio_thread_priority]
