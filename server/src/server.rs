@@ -154,7 +154,7 @@ struct CubebContextState {
     context: cubeb::Result<cubeb::Context>,
 }
 
-thread_local!(static CONTEXT_KEY: RefCell<Option<CubebContextState>> = RefCell::new(None));
+thread_local!(static CONTEXT_KEY: RefCell<Option<CubebContextState>> = const { RefCell::new(None) });
 
 fn cubeb_init_from_context_params() -> cubeb::Result<cubeb::Context> {
     let params = super::G_CUBEB_CONTEXT_PARAMS.lock().unwrap();
