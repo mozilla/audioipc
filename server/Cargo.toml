@@ -15,7 +15,7 @@ cubeb-core = "0.12.0"
 once_cell = "1.2.0"
 log = "0.4"
 slab = "0.4"
-audio_thread_priority = { version = "0.30", default-features = false }
+audio_thread_priority = { version = "0.31", default-features = false }
 
 [dependencies.error-chain]
 version = "0.12.0"
