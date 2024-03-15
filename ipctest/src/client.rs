@@ -3,7 +3,7 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details.
 
-use cubeb::{self, ffi, Sample};
+use cubeb::{ffi, Sample};
 use std::f32::consts::PI;
 use std::ffi::CString;
 use std::ptr;
