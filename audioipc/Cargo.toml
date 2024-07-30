@@ -18,7 +18,7 @@ log = "0.4"
 serde = "1"
 serde_derive = "1"
 serde_bytes = "0.11"
-mio = { version = "0.8", features = ["os-poll", "net", "os-ext"] }
+mio = { version = "1", features = ["os-poll", "net", "os-ext"] }
 slab = "0.4"
 scopeguard = "1.1.0"
 crossbeam-queue = "0.3"
