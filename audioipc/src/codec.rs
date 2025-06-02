@@ -41,9 +41,7 @@ pub trait Codec {
     fn decode_eof(&mut self, buf: &mut BytesMut) -> io::Result<Self::Out> {
         match self.decode(buf)? {
             Some(frame) => Ok(frame),
-            None => Err(io::Error::other(
-                "bytes remaining on stream",
-            )),
+            None => Err(io::Error::other("bytes remaining on stream")),
         }
     }
 
