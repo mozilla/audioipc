@@ -87,7 +87,7 @@ pub fn decode_handles(buf: &mut BytesMut) -> arrayvec::ArrayVec<RawFd, HANDLE_QU
             fds.try_extend_from_slice(slice).unwrap();
         }
         (level, kind) => {
-            trace!("Skipping cmsg level, {}, type={}...", level, kind);
+            trace!("Skipping cmsg level, {level}, type={kind}...");
         }
     }
 

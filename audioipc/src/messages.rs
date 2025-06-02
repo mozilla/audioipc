@@ -486,7 +486,7 @@ impl Drop for RemoteHandle {
         unsafe {
             if let Some(target_handle) = self.target_handle {
                 if let Err(e) = crate::close_target_handle(target_handle, self.target) {
-                    trace!("RemoteHandle failed to close target handle: {:?}", e);
+                    trace!("RemoteHandle failed to close target handle: {e:?}");
                 }
             }
         }

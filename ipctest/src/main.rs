@@ -183,11 +183,11 @@ fn main() {
     };
 
     if let Err(ref e) = result {
-        error!("error: {}", e);
+        error!("error: {e}");
 
         let mut source = std::error::Error::source(e);
         while let Some(err) = source {
-            info!("caused by: {}", err);
+            info!("caused by: {err}");
             source = std::error::Error::source(err);
         }
 

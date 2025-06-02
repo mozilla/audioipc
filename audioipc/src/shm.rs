@@ -130,7 +130,7 @@ mod unix {
         let err = std::io::Error::last_os_error();
         let errno = err.raw_os_error().unwrap_or(0);
         assert_ne!(errno, 0);
-        debug!("allocate_file: {} failed errno={}", s, errno);
+        debug!("allocate_file: {s} failed errno={errno}");
         if errno == libc::ENOSPC {
             return Err(err.into());
         }
