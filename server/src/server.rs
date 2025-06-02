@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::{cell::RefCell, sync::Mutex};
 use std::{panic, slice};
 
-use crate::errors::*;
+use audioipc::errors::Result;
 
 fn error(error: cubeb::Error) -> ClientMessage {
     ClientMessage::Error(error.raw_code())

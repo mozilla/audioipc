@@ -5,8 +5,6 @@
 #![warn(unused_extern_crates)]
 
 #[macro_use]
-extern crate error_chain;
-#[macro_use]
 extern crate log;
 
 use audio_thread_priority::promote_current_thread_to_real_time;
@@ -34,21 +32,7 @@ static G_CUBEB_CONTEXT_PARAMS: Lazy<Mutex<CubebContextParams>> = Lazy::new(|| {
     })
 });
 
-#[allow(deprecated)]
-#[allow(clippy::upper_case_acronyms)]
-pub mod errors {
-    error_chain! {
-        links {
-            AudioIPC(::audioipc::errors::Error, ::audioipc::errors::ErrorKind);
-        }
-        foreign_links {
-            Cubeb(cubeb_core::Error);
-            Io(::std::io::Error);
-        }
-    }
-}
-
-use crate::errors::*;
+use audioipc::errors::Result;
 
 struct ServerWrapper {
     rpc_thread: ipccore::EventLoopThread,

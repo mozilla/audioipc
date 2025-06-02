@@ -10,16 +10,7 @@ use std::ptr;
 use std::thread;
 use std::time::Duration;
 
-mod errors {
-    #![allow(clippy::upper_case_acronyms)]
-    error_chain! {
-        links {
-            AudioIPC(::audioipc::errors::Error, ::audioipc::errors::ErrorKind);
-        }
-    }
-}
-
-use crate::errors::*;
+use audioipc::errors::{Error, Result};
 
 const SAMPLE_RATE: u32 = 48000;
 const STREAM_FORMAT: cubeb::SampleFormat = cubeb::SampleFormat::S16LE;
@@ -112,7 +103,7 @@ fn enumerate_devices(ctx: &cubeb::Context) -> Result<()> {
             return Ok(());
         }
         Err(e) => {
-            return Err(e).chain_err(|| "Error enumerating devices");
+            return Err(Error::Other(format!("Error enumerating devices: {e}")));
         }
     };
 
@@ -129,7 +120,7 @@ fn enumerate_devices(ctx: &cubeb::Context) -> Result<()> {
     let devices = match ctx.enumerate_devices(cubeb::DeviceType::OUTPUT) {
         Ok(devices) => devices,
         Err(e) => {
-            return Err(e).chain_err(|| "Error enumerating devices");
+            return Err(Error::Other(format!("Error enumerating devices: {e}")));
         }
     };
 
@@ -145,7 +136,7 @@ pub fn client_test(handle: audioipc::PlatformHandleType) -> Result<()> {
     macro_rules! query(
         ($e: expr) => (match $e {
             Ok(v) => v,
-            Err(e) => { return Err(e).chain_err(|| "cubeb api error") }
+            Err(e) => { return Err(Error::Other(format!("Cubeb API error: {}", e))) }
         })
         );
 
@@ -164,7 +155,9 @@ pub fn client_test(handle: audioipc::PlatformHandleType) -> Result<()> {
         audioipc_client::audioipc2_client_init(&mut c, context_name.as_ptr(), &init_params)
     } < 0
     {
-        return Err("Failed to connect to remote cubeb server.".into());
+        return Err(Error::Other(
+            "Failed to connect to remote cubeb server.".into(),
+        ));
     }
     let ctx = unsafe { cubeb::Context::from_ptr(c) };
 

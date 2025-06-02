@@ -46,9 +46,6 @@ windows-sys = { version = "0.52", features = [
 [target.'cfg(target_os = "android")'.dependencies]
 ashmem = "0.1.2"
 
-[dependencies.error-chain]
-version = "0.12.0"
-default-features = false
 
 [build-dependencies]
 cc = "1.0"
