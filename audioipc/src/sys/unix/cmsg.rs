@@ -14,7 +14,7 @@ trait AsBytes {
     fn as_bytes(&self) -> &[u8];
 }
 
-impl<'a, T: Sized> AsBytes for &'a [T] {
+impl<T: Sized> AsBytes for &[T] {
     fn as_bytes(&self) -> &[u8] {
         // TODO: This should account for the alignment of T
         let byte_count = std::mem::size_of_val(*self);
