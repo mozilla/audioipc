@@ -311,12 +311,12 @@ impl<T> RequestQueueSender<T> {
     pub(crate) fn push(&self, request: T) -> Result<()> {
         if let Some(consumer) = self.inner.upgrade() {
             if consumer.queue.push(request).is_err() {
-                debug!("Proxy[{:p}]: call failed - CH::requests full", self);
+                debug!("Proxy[{self:p}]: call failed - CH::requests full");
                 return Err(io::ErrorKind::ConnectionAborted.into());
             }
             return Ok(());
         }
-        debug!("Proxy[{:p}]: call failed - CH::requests dropped", self);
+        debug!("Proxy[{self:p}]: call failed - CH::requests dropped");
         Err(Error::other("proxy send error"))
     }
 

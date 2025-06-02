@@ -131,10 +131,7 @@ impl rpccore::Server for DeviceCollectionServer {
     fn process(&mut self, req: Self::ServerMessage) -> Self::ClientMessage {
         match req {
             DeviceCollectionReq::DeviceChange(device_type) => {
-                trace!(
-                    "ctx_thread: DeviceChange Callback: device_type={}",
-                    device_type
-                );
+                trace!("ctx_thread: DeviceChange Callback: device_type={device_type}");
 
                 let devtype = cubeb_backend::DeviceType::from_bits_truncate(device_type);
 

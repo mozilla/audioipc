@@ -69,10 +69,7 @@ impl rpccore::Server for CallbackServer {
                 output_frame_size,
             } => {
                 trace!(
-                    "stream_thread: Data Callback: nframes={} input_fs={} output_fs={}",
-                    nframes,
-                    input_frame_size,
-                    output_frame_size,
+                    "stream_thread: Data Callback: nframes={nframes} input_fs={input_frame_size} output_fs={output_frame_size}",
                 );
 
                 let input_nbytes = nframes as usize * input_frame_size;
@@ -121,7 +118,7 @@ impl rpccore::Server for CallbackServer {
                 })
             }
             CallbackReq::State(state) => {
-                trace!("stream_thread: State Callback: {:?}", state);
+                trace!("stream_thread: State Callback: {state:?}");
                 run_in_callback(|| unsafe {
                     self.state_cb.unwrap()(ptr::null_mut(), self.user_ptr as *mut _, state);
                 });

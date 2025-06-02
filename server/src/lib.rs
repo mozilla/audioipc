@@ -62,17 +62,17 @@ fn init_threads(
         rpc_name.to_string(),
         None,
         move || {
-            trace!("Starting {} thread", rpc_name);
+            trace!("Starting {rpc_name} thread");
             register_thread(thread_create_callback);
             audioipc::server_platform_init();
         },
         move || {
             unregister_thread(thread_destroy_callback);
-            trace!("Stopping {} thread", rpc_name);
+            trace!("Stopping {rpc_name} thread");
         },
     )
     .map_err(|e| {
-        debug!("Failed to start {} thread: {:?}", rpc_name, e);
+        debug!("Failed to start {rpc_name} thread: {e:?}");
         e
     })?;
 
@@ -81,22 +81,19 @@ fn init_threads(
         callback_name.to_string(),
         None,
         move || {
-            trace!("Starting {} thread", callback_name);
+            trace!("Starting {callback_name} thread");
             if let Err(e) = promote_current_thread_to_real_time(0, 48000) {
-                debug!(
-                    "Failed to promote {} thread to real-time: {:?}",
-                    callback_name, e
-                );
+                debug!("Failed to promote {callback_name} thread to real-time: {e:?}");
             }
             register_thread(thread_create_callback);
         },
         move || {
             unregister_thread(thread_destroy_callback);
-            trace!("Stopping {} thread", callback_name);
+            trace!("Stopping {callback_name} thread");
         },
     )
     .map_err(|e| {
-        debug!("Failed to start {} thread: {:?}", callback_name, e);
+        debug!("Failed to start {callback_name} thread: {e:?}");
         e
     })?;
 
@@ -105,16 +102,16 @@ fn init_threads(
         device_collection_name.to_string(),
         None,
         move || {
-            trace!("Starting {} thread", device_collection_name);
+            trace!("Starting {device_collection_name} thread");
             register_thread(thread_create_callback);
         },
         move || {
             unregister_thread(thread_destroy_callback);
-            trace!("Stopping {} thread", device_collection_name);
+            trace!("Stopping {device_collection_name} thread");
         },
     )
     .map_err(|e| {
-        debug!("Failed to start {} thread: {:?}", device_collection_name, e);
+        debug!("Failed to start {device_collection_name} thread: {e:?}");
         e
     })?;
 
@@ -173,10 +170,7 @@ pub extern "C" fn audioipc2_server_new_client(
     let (server_pipe, client_pipe) = match sys::make_pipe_pair() {
         Ok((server_pipe, client_pipe)) => (server_pipe, client_pipe),
         Err(e) => {
-            error!(
-                "audioipc_server_new_client - make_pipe_pair failed: {:?}",
-                e
-            );
+            error!("audioipc_server_new_client - make_pipe_pair failed: {e:?}");
             return audioipc::INVALID_HANDLE_VALUE;
         }
     };
@@ -191,7 +185,7 @@ pub extern "C" fn audioipc2_server_new_client(
         shm_area_size,
     );
     if let Err(e) = rpc_thread.bind_server(server, server_pipe) {
-        error!("audioipc_server_new_client - bind_server failed: {:?}", e);
+        error!("audioipc_server_new_client - bind_server failed: {e:?}");
         return audioipc::INVALID_HANDLE_VALUE;
     }
 
