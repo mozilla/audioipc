@@ -28,7 +28,7 @@ impl SharedMemView {
         if size <= self.size {
             Ok(&map[..size])
         } else {
-            bail!("mmap size");
+            Err(Error::Other("mmap size".into()))
         }
     }
 
@@ -37,7 +37,7 @@ impl SharedMemView {
         if size <= self.size {
             Ok(&mut map[..size])
         } else {
-            bail!("mmap size")
+            Err(Error::Other("mmap size".into()))
         }
     }
 }

@@ -3,9 +3,6 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details.
 #![warn(unused_extern_crates)]
-#![recursion_limit = "1024"]
-#[macro_use]
-extern crate error_chain;
 #[macro_use]
 extern crate log;
 
@@ -13,17 +10,7 @@ use std::process::exit;
 
 mod client;
 
-mod errors {
-    #![allow(clippy::upper_case_acronyms)]
-    error_chain! {
-        links {
-            AudioIPC(::audioipc::errors::Error, ::audioipc::errors::ErrorKind);
-            Server(::audioipc_server::errors::Error, ::audioipc_server::errors::ErrorKind);
-        }
-    }
-}
-
-use crate::errors::*;
+use audioipc::errors::{Error, Result};
 
 // Run with 'RUST_LOG=run,audioipc cargo run -p ipctest'
 #[cfg(unix)]
@@ -47,7 +34,7 @@ fn run(wait_for_debugger: bool) -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
     match unsafe { libc::fork() } {
-        -1 => bail!("fork() failed"),
+        -1 => return Err(Error::Other("fork() failed".into())),
         0 => {
             let self_path = CString::new(&*args[0]).unwrap();
             let child_arg1 = CString::new("--client").unwrap();
@@ -75,13 +62,13 @@ fn run(wait_for_debugger: bool) -> Result<()> {
             if libc::WIFSIGNALED(status) {
                 let signum = libc::WTERMSIG(status);
                 if libc::WCOREDUMP(status) {
-                    bail!(
-                        "Child process {} exited with sig {}. Core dumped.",
-                        n,
-                        signum
-                    );
+                    return Err(Error::Other(format!(
+                        "Child process {n} exited with sig {signum}. Core dumped."
+                    )));
                 } else {
-                    bail!("Child process {} exited with sig {}.", n, signum);
+                    return Err(Error::Other(format!(
+                        "Child process {n} exited with sig {signum}."
+                    )));
                 }
             }
         },
@@ -160,7 +147,7 @@ fn run_client() -> Result<()> {
         );
         CloseHandle(source);
         if ok == FALSE {
-            bail!("DuplicateHandle failed");
+            return Err(Error::Other("DuplicateHandle failed".into()));
         }
     }
 
@@ -198,13 +185,10 @@ fn main() {
     if let Err(ref e) = result {
         error!("error: {}", e);
 
-        for e in e.iter().skip(1) {
-            info!("caused by: {}", e);
-        }
-
-        // Requires RUST_BACKTRACE=1 in the environment.
-        if let Some(backtrace) = e.backtrace() {
-            info!("backtrace: {:?}", backtrace);
+        let mut source = std::error::Error::source(e);
+        while let Some(err) = source {
+            info!("caused by: {}", err);
+            source = std::error::Error::source(err);
         }
 
         exit(1);
