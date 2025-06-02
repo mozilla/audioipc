@@ -11,17 +11,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-20.04, windows-2019, macos-12]
+        os: [ubuntu-24.04, windows-2025, macos-14]
         rust: [stable]
         experimental: [false]
         include:
-          - os: ubuntu-20.04
+          - os: ubuntu-24.04
             rust: nightly
             experimental: true
-          - os: windows-2019
+          - os: windows-2025
             rust: nightly
             experimental: true
-          - os: macos-12
+          - os: macos-14
             rust: nightly
             experimental: true
 
@@ -32,10 +32,13 @@ jobs:
 
     - name: Install Dependencies (Linux)
       run: sudo apt-get update && sudo apt-get install libdbus-1-dev
-      if: matrix.os == 'ubuntu-20.04'
+      if: matrix.os == 'ubuntu-24.04'
 
     - name: Install Rust
-      run: rustup toolchain install ${{ matrix.rust }} --profile minimal --component rustfmt clippy
+      run: |
+        rustup toolchain install ${{ matrix.rust }} --profile minimal
+        rustup component add rustfmt --toolchain ${{ matrix.rust }}
+        rustup component add clippy --toolchain ${{ matrix.rust }}
 
     - name: Check format
       shell: bash
