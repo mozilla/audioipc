@@ -173,7 +173,7 @@ impl<'ctx> ClientStream<'ctx> {
                         "SharedMem client mapping failed (size={}, err={:?})",
                         data.shm_area_size, e
                     );
-                    return Err(Error::default());
+                    return Err(Error::Error);
                 }
             };
 
@@ -189,7 +189,7 @@ impl<'ctx> ClientStream<'ctx> {
                         "duplex_input allocation failed (size={}, err={:?})",
                         data.shm_area_size, e
                     );
-                    return Err(Error::default());
+                    return Err(Error::Error);
                 }
             }
         } else {
@@ -219,7 +219,7 @@ impl<'ctx> ClientStream<'ctx> {
 
         ctx.callback_handle()
             .bind_server(server, stream)
-            .map_err(|_| Error::default())?;
+            .map_err(|_| Error::Error)?;
 
         let stream = Box::into_raw(Box::new(ClientStream {
             context: ctx,
@@ -314,7 +314,7 @@ impl StreamOps for ClientStream<'_> {
     fn device_destroy(&mut self, device: &DeviceRef) -> Result<()> {
         assert_not_in_callback();
         if device.as_ptr().is_null() {
-            Err(Error::error())
+            Err(Error::Error)
         } else {
             unsafe {
                 let _: Box<Device> = Box::from_raw(device.as_ptr() as *mut _);

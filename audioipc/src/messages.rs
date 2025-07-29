@@ -138,6 +138,7 @@ pub struct StreamParams {
     pub channels: c_uint,
     pub layout: ffi::cubeb_channel_layout,
     pub prefs: ffi::cubeb_stream_prefs,
+    pub input_params: ffi::cubeb_input_processing_params,
 }
 
 impl From<&cubeb::StreamParamsRef> for StreamParams {
@@ -626,6 +627,7 @@ mod test {
             channels: 32,
             layout: ffi::CUBEB_LAYOUT_3F1_LFE,
             prefs: ffi::CUBEB_STREAM_PREF_LOOPBACK,
+            input_params: ffi::CUBEB_INPUT_PROCESSING_PARAM_NONE,
         };
         let wrapped = ::cubeb::StreamParams::from(raw);
         let params = StreamParams::from(wrapped.as_ref());
