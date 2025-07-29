@@ -19,7 +19,7 @@ use cubeb_core::ffi;
 use std::convert::TryInto;
 use std::ffi::CStr;
 use std::mem::size_of;
-use std::os::raw::{c_long, c_void};
+use std::os::raw::{c_int, c_long, c_void};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::{cell::RefCell, sync::Mutex};
@@ -28,7 +28,7 @@ use std::{panic, slice};
 use audioipc::errors::Result;
 
 fn error(error: cubeb::Error) -> ClientMessage {
-    ClientMessage::Error(error.raw_code())
+    ClientMessage::Error(error as c_int)
 }
 
 struct CubebDeviceCollectionManager {
@@ -416,7 +416,7 @@ impl rpccore::Server for CubebServer {
             self.remote_pid = Some(pid);
         }
         with_local_context(|context, manager| match *context {
-            Err(_) => error(cubeb::Error::error()),
+            Err(_) => error(cubeb::Error::Error),
             Ok(ref context) => self.process_msg(context, manager, &req),
         })
     }
@@ -438,7 +438,7 @@ macro_rules! try_stream {
                 column!(),
                 $stm_tok
             );
-            return error(cubeb::Error::invalid_parameter());
+            return error(cubeb::Error::InvalidParameter);
         }
     };
 }
@@ -534,11 +534,11 @@ impl CubebServer {
 
             ServerMessage::StreamCreate(ref params) => self
                 .process_stream_create(params)
-                .unwrap_or_else(|_| error(cubeb::Error::error())),
+                .unwrap_or_else(|_| error(cubeb::Error::Error)),
 
             ServerMessage::StreamInit(stm_tok, ref params) => self
                 .process_stream_init(context, stm_tok, params)
-                .unwrap_or_else(|_| error(cubeb::Error::error())),
+                .unwrap_or_else(|_| error(cubeb::Error::Error)),
 
             ServerMessage::StreamDestroy(stm_tok) => {
                 if self.streams.contains(stm_tok) {
@@ -547,7 +547,7 @@ impl CubebServer {
                 } else {
                     // Debugging for BMO 1594216/1612044.
                     error!("StreamDestroy({stm_tok}): invalid token");
-                    return error(cubeb::Error::invalid_parameter());
+                    return error(cubeb::Error::InvalidParameter);
                 }
                 ClientMessage::StreamDestroyed
             }
@@ -622,7 +622,7 @@ impl CubebServer {
                         debug!(
                             "ContextSetupDeviceCollectionCallback - make_pipe_pair failed: {e:?}"
                         );
-                        return error(cubeb::Error::error());
+                        return error(cubeb::Error::Error);
                     }
                 };
 
@@ -637,7 +637,7 @@ impl CubebServer {
                     Ok(rpc) => rpc,
                     Err(e) => {
                         debug!("ContextSetupDeviceCollectionCallback - bind_client: {e:?}");
-                        return error(cubeb::Error::error());
+                        return error(cubeb::Error::Error);
                     }
                 };
 
@@ -687,7 +687,7 @@ impl CubebServer {
         enable: bool,
     ) -> cubeb::Result<ClientMessage> {
         if devtype == cubeb::DeviceType::UNKNOWN {
-            return Err(cubeb::Error::invalid_parameter());
+            return Err(cubeb::Error::InvalidParameter);
         }
 
         assert!(self.device_collection_change_callbacks.is_some());

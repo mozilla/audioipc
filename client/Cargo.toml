@@ -11,6 +11,6 @@ edition = "2018"
 
 [dependencies]
 audioipc = { package = "audioipc2", path = "../audioipc" }
-cubeb-backend = "0.13"
+cubeb-backend = "0.29"
 log = "0.4"
 audio_thread_priority = { version = "0.32", default-features = false }
