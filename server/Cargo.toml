@@ -11,7 +11,7 @@ edition = "2018"
 
 [dependencies]
 audioipc = { package = "audioipc2", path = "../audioipc" }
-cubeb-core = "0.29"
+cubeb-core = "0.30.1"
 once_cell = "1.2.0"
 log = "0.4"
 slab = "0.4"
