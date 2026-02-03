@@ -5,7 +5,6 @@
 
 use cubeb::{ffi, Sample};
 use std::f32::consts::PI;
-use std::ffi::CString;
 use std::ptr;
 use std::thread;
 use std::time::Duration;
@@ -142,7 +141,6 @@ pub fn client_test(handle: audioipc::PlatformHandleType) -> Result<()> {
 
     // Bootstrap connection to server by calling direction into client
     // init function to get a raw cubeb pointer.
-    let context_name = CString::new("AudioIPC").unwrap();
     let mut c: *mut ffi::cubeb = ptr::null_mut();
     let init_params = audioipc_client::AudioIpcInitParams {
         server_connection: handle,
@@ -151,10 +149,7 @@ pub fn client_test(handle: audioipc::PlatformHandleType) -> Result<()> {
         thread_create_callback: None,
         thread_destroy_callback: None,
     };
-    if unsafe {
-        audioipc_client::audioipc2_client_init(&mut c, context_name.as_ptr(), &init_params)
-    } < 0
-    {
+    if unsafe { audioipc_client::audioipc2_client_init(&mut c, &init_params) } < 0 {
         return Err(Error::Other(
             "Failed to connect to remote cubeb server.".into(),
         ));
