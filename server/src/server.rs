@@ -235,7 +235,7 @@ impl ServerStreamCallbacks {
         }
 
         if self.input_frame_size != 0 {
-            if input.is_empty() || input.len() > self.shm.get_size() {
+            if input.len() > self.shm.get_size() {
                 debug!(
                     "bad input size: input={} shm={}",
                     input.len(),
