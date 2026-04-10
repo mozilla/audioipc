@@ -5,6 +5,10 @@ authors = ["Dan Glastonbury <dan.glastonbury@gmail.com>"]
 license = "ISC"
 edition = "2018"
 
+[lib]
+name = "ipctest"
+path = "src/lib.rs"
+
 [dependencies]
 audioipc = { package = "audioipc2", path = "../audioipc" }
 audioipc-client = { package = "audioipc2-client", path = "../client" }

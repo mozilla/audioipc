@@ -31,8 +31,33 @@ jobs:
         submodules: recursive
 
     - name: Install Dependencies (Linux)
-      run: sudo apt-get update && sudo apt-get install libdbus-1-dev
+      run: sudo apt-get update && sudo apt-get install libdbus-1-dev libpulse-dev pulseaudio
       if: matrix.os == 'ubuntu-24.04'
+
+    - name: Start Sound Server (Linux)
+      run: pulseaudio -D --start --exit-idle-time=-1
+      if: matrix.os == 'ubuntu-24.04'
+
+    - name: Install virtual audio devices (Windows)
+      run: git clone https://github.com/LABSN/sound-ci-helpers && powershell sound-ci-helpers/windows/setup_sound.ps1
+      if: matrix.os == 'windows-2025'
+
+    - name: Allow microphone access to all apps (Windows)
+      shell: pwsh
+      run: |
+        New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy\"
+        New-ItemProperty -Path "HKLM:\SOFTWARE\policies\microsoft\windows\appprivacy" -Name "LetAppsAccessMicrophone" -Value "0x00000001"  -PropertyType "dword"
+      if: matrix.os == 'windows-2025'
+
+    - name: Install virtual audio devices (macOS)
+      if: matrix.os == 'macos-14'
+      run: |
+        brew install switchaudio-osx
+        brew install blackhole-2ch
+        sudo kill -9 `pgrep coreaudiod`
+        sleep 10
+        SwitchAudioSource -s "BlackHole 2ch" -t input
+        SwitchAudioSource -s "BlackHole 2ch" -t output
 
     - name: Install Rust
       run: |
