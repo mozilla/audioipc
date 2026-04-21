@@ -271,6 +271,13 @@ impl ServerStreamCallbacks {
 
         match r {
             Ok(CallbackResp::Data(frames)) => {
+                if frames < 0 || frames > nframes {
+                    debug!(
+                        "bad callback response: frames={} nframes={}",
+                        frames, nframes
+                    );
+                    return cubeb::ffi::CUBEB_ERROR.try_into().unwrap();
+                }
                 if let (Ok(frames), Some(output_frame_size)) =
                     (usize::try_from(frames), self.output_frame_size)
                 {
