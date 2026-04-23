@@ -7,7 +7,6 @@
 #[macro_use]
 extern crate log;
 
-use audio_thread_priority::promote_current_thread_to_real_time;
 use audioipc::ipccore;
 use audioipc::sys;
 use audioipc::PlatformHandleType;
@@ -15,10 +14,12 @@ use once_cell::sync::Lazy;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_void;
 use std::ptr;
-use std::sync::Mutex;
+use std::sync::atomic::AtomicUsize;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 mod server;
+pub(crate) mod thread_priority;
 
 struct CubebContextParams {
     context_name: CString,
@@ -38,6 +39,10 @@ struct ServerWrapper {
     rpc_thread: ipccore::EventLoopThread,
     callback_thread: ipccore::EventLoopThread,
     device_collection_thread: ipccore::EventLoopThread,
+    // Shared across all CubebServer instances hosted by this process.  Counts
+    // the number of streams that are currently started; on 0->1/1->0 transitions
+    // the callback thread is promoted/demoted via ipccore::run_task.
+    active_streams: Arc<AtomicUsize>,
 }
 
 fn register_thread(callback: Option<extern "C" fn(*const ::std::os::raw::c_char)>) {
@@ -82,12 +87,14 @@ fn init_threads(
         None,
         move || {
             trace!("Starting {callback_name} thread");
-            if let Err(e) = promote_current_thread_to_real_time(0, 48000) {
-                debug!("Failed to promote {callback_name} thread to real-time: {e:?}");
-            }
+            // Thread starts at normal priority; it is promoted on demand when
+            // the first stream is started, and demoted when the last stream stops.
             register_thread(thread_create_callback);
         },
         move || {
+            // Best-effort: if the thread is still promoted at shutdown, drop it
+            // back to normal priority before unregistering.
+            thread_priority::demote();
             unregister_thread(thread_destroy_callback);
             trace!("Stopping {callback_name} thread");
         },
@@ -119,6 +126,7 @@ fn init_threads(
         rpc_thread,
         callback_thread,
         device_collection_thread,
+        active_streams: Arc::new(AtomicUsize::new(0)),
     })
 }
 
@@ -183,6 +191,7 @@ pub extern "C" fn audioipc2_server_new_client(
     let server = server::CubebServer::new(
         callback_thread.clone(),
         device_collection_thread.clone(),
+        wrapper.active_streams.clone(),
         remote_pid,
         shm_area_size,
     );

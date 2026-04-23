@@ -46,6 +46,10 @@ enum Request {
     Shutdown,
     // See EventLoop::wake_connection
     WakeConnection(Token),
+    // Run an arbitrary closure on the EventLoop's thread. Used to perform
+    // work that must execute on a specific thread (e.g. thread priority
+    // changes that can only be made by the target thread).
+    RunTask(Box<dyn FnOnce() + Send>),
 }
 
 // EventLoopHandle is a cloneable external reference
@@ -141,6 +145,20 @@ impl EventLoopHandle {
             debug!("EventLoopHandle::shutdown send failed");
             io::ErrorKind::ConnectionAborted
         })?;
+        self.waker.wake()
+    }
+
+    // Queue a closure to run on the EventLoop's thread.  The closure is
+    // executed after any currently-pending requests and before the next
+    // poll iteration.  Returns immediately without waiting for the closure
+    // to complete.
+    pub fn run_task<F: FnOnce() + Send + 'static>(&self, f: F) -> Result<()> {
+        self.requests
+            .push(Request::RunTask(Box::new(f)))
+            .map_err(|_| {
+                debug!("EventLoopHandle::run_task send failed");
+                io::ErrorKind::ConnectionAborted
+            })?;
         self.waker.wake()
     }
 
@@ -283,6 +301,10 @@ impl EventLoop {
                 Request::Shutdown => {
                     debug!("{}: EventLoop: handling shutdown", self.name);
                     return Ok(false);
+                }
+                Request::RunTask(f) => {
+                    trace!("{}: EventLoop: handling run_task", self.name);
+                    f();
                 }
                 Request::WakeConnection(token) => {
                     debug!(
