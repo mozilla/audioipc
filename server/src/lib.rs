@@ -186,7 +186,7 @@ pub extern "C" fn audioipc2_server_new_client(
         remote_pid,
         shm_area_size,
     );
-    if let Err(e) = rpc_thread.bind_server(server, server_pipe) {
+    if let Err(e) = rpc_thread.bind_server_async(server, server_pipe) {
         error!("audioipc_server_new_client - bind_server failed: {e:?}");
         return audioipc::INVALID_HANDLE_VALUE;
     }
