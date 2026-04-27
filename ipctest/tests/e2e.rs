@@ -114,9 +114,9 @@ fn multi_process_client_test() {
 
     let client_handle = unsafe {
         let child_process = OpenProcess(PROCESS_DUP_HANDLE, FALSE, child_pid);
-        assert!(child_process != 0, "OpenProcess failed");
+        assert!(!child_process.is_null(), "OpenProcess failed");
 
-        let mut target_handle: HANDLE = 0;
+        let mut target_handle: HANDLE = std::ptr::null_mut();
         let ok = DuplicateHandle(
             GetCurrentProcess(),
             fd as HANDLE,
