@@ -3,6 +3,7 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details
 
+use crate::thread_priority;
 use crate::ClientContext;
 use crate::{assert_not_in_callback, run_in_callback};
 use audioipc::messages::StreamCreateParams;
@@ -14,6 +15,7 @@ use std::convert::TryFrom;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_void;
 use std::ptr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
@@ -45,6 +47,10 @@ pub struct ClientStream<'ctx> {
     device_change_cb: Arc<Mutex<ffi::cubeb_device_changed_callback>>,
     // Signals ClientStream that CallbackServer has dropped.
     shutdown_rx: mpsc::Receiver<()>,
+    // Whether this stream is currently contributing to the context's
+    // active-stream count.  Transitioned atomically on successful start/stop
+    // so concurrent calls can't over- or under-count.
+    active: AtomicBool,
 }
 
 struct CallbackServer {
@@ -257,14 +263,61 @@ impl<'ctx> ClientStream<'ctx> {
             token: data.token,
             device_change_cb,
             shutdown_rx,
+            active: AtomicBool::new(false),
         }));
         Ok(unsafe { Stream::from_ptr(stream as *mut _) })
+    }
+
+    // Flip `active` false->true and bump the context's active-stream count,
+    // dispatching `enter_active` to the callback thread on the 0->1 transition.
+    fn mark_active(&self) {
+        if self
+            .active
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            let prev = self.context.active_streams.fetch_add(1, Ordering::AcqRel);
+            if prev == 0 {
+                let rpc = self.context.rpc();
+                if let Err(e) = self
+                    .context
+                    .callback_handle()
+                    .run_task(move || thread_priority::promote(&rpc))
+                {
+                    warn!("failed to dispatch thread promotion: {e:?}");
+                }
+            }
+        }
+    }
+
+    // Flip `active` true->false and decrement the context's active-stream count,
+    // dispatching `leave_active` to the callback thread on the 1->0 transition.
+    fn mark_inactive(&self) {
+        if self
+            .active
+            .compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            let prev = self.context.active_streams.fetch_sub(1, Ordering::AcqRel);
+            if prev == 1 {
+                if let Err(e) = self
+                    .context
+                    .callback_handle()
+                    .run_task(thread_priority::demote)
+                {
+                    warn!("failed to dispatch thread demotion: {e:?}");
+                }
+            }
+        }
     }
 }
 
 impl Drop for ClientStream<'_> {
     fn drop(&mut self) {
         debug!("ClientStream drop");
+        // Release any contribution this stream was making to the context's
+        // active-stream count before tearing down the remote stream.
+        self.mark_inactive();
         let _ = send_recv!(self.context.rpc(), StreamDestroy(self.token) => StreamDestroyed);
         debug!("ClientStream drop - stream destroyed");
         // Wait for CallbackServer to shutdown.  The remote server drops the RPC
@@ -281,13 +334,17 @@ impl StreamOps for ClientStream<'_> {
     fn start(&mut self) -> Result<()> {
         assert_not_in_callback();
         let rpc = self.context.rpc();
-        send_recv!(rpc, StreamStart(self.token) => StreamStarted)
+        send_recv!(rpc, StreamStart(self.token) => StreamStarted)?;
+        self.mark_active();
+        Ok(())
     }
 
     fn stop(&mut self) -> Result<()> {
         assert_not_in_callback();
         let rpc = self.context.rpc();
-        send_recv!(rpc, StreamStop(self.token) => StreamStopped)
+        send_recv!(rpc, StreamStop(self.token) => StreamStopped)?;
+        self.mark_inactive();
+        Ok(())
     }
 
     fn position(&mut self) -> Result<u64> {

@@ -6,10 +6,6 @@
 use crate::stream;
 use crate::{assert_not_in_callback, run_in_callback};
 use crate::{ClientStream, AUDIOIPC_INIT_PARAMS};
-#[cfg(target_os = "linux")]
-use audio_thread_priority::get_current_thread_info;
-#[cfg(not(target_os = "linux"))]
-use audio_thread_priority::promote_current_thread_to_real_time;
 use audioipc::ipccore::EventLoopHandle;
 use audioipc::{ipccore, rpccore, sys, PlatformHandle};
 use audioipc::{
@@ -22,6 +18,7 @@ use cubeb_backend::{
 };
 use std::ffi::{CStr, CString};
 use std::os::raw::c_void;
+use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::{fmt, ptr};
@@ -46,6 +43,10 @@ pub struct ClientContext {
     backend_id: CString,
     device_collection_rpc: bool,
     device_collection_callbacks: Arc<Mutex<DeviceCollectionCallbacks>>,
+    // Number of ClientStreams on this context that are currently started.
+    // Used to gate callback-thread promotion: the thread is promoted on the
+    // 0->1 transition and demoted on 1->0.
+    pub(crate) active_streams: Arc<AtomicUsize>,
 }
 
 impl ClientContext {
@@ -65,31 +66,6 @@ impl ClientContext {
     }
 }
 
-#[cfg(target_os = "linux")]
-fn promote_thread(rpc: &rpccore::Proxy<ServerMessage, ClientMessage>) {
-    match get_current_thread_info() {
-        Ok(info) => {
-            let bytes = info.serialize();
-            let _ = rpc.call(ServerMessage::PromoteThreadToRealTime(bytes));
-        }
-        Err(_) => {
-            warn!("Could not remotely promote thread to RT.");
-        }
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-fn promote_thread(_rpc: &rpccore::Proxy<ServerMessage, ClientMessage>) {
-    match promote_current_thread_to_real_time(0, 48000) {
-        Ok(_) => {
-            info!("Audio thread promoted to real-time.");
-        }
-        Err(_) => {
-            warn!("Could not promote thread to real-time.");
-        }
-    }
-}
-
 fn register_thread(callback: Option<extern "C" fn(*const ::std::os::raw::c_char)>) {
     if let Some(func) = callback {
         let thr = thread::current();
@@ -102,14 +78,6 @@ fn unregister_thread(callback: Option<extern "C" fn()>) {
     if let Some(func) = callback {
         func();
     }
-}
-
-fn promote_and_register_thread(
-    rpc: &rpccore::Proxy<ServerMessage, ClientMessage>,
-    callback: Option<extern "C" fn(*const ::std::os::raw::c_char)>,
-) {
-    promote_thread(rpc);
-    register_thread(callback);
 }
 
 #[derive(Default)]
@@ -181,7 +149,6 @@ impl ContextOps for ClientContext {
             .handle()
             .bind_client::<CubebClient>(server_connection)
             .map_err(|_| Error::Error)?;
-        let rpc2 = rpc.clone();
 
         // Don't let errors bubble from here.  Later calls against this context
         // will return errors the caller expects to handle.
@@ -192,11 +159,18 @@ impl ContextOps for ClientContext {
         let backend_id = CString::new(backend_id).expect("backend_id query failed");
 
         // TODO: remove params.pool_size from init params.
+        // The callback thread starts at normal priority; it is promoted on demand
+        // when the first stream on this context is started, and demoted when the
+        // last stream stops.
         let callback_thread = ipccore::EventLoopThread::new(
             "AudioIPC Client Callback".to_string(),
             Some(params.stack_size),
-            move || promote_and_register_thread(&rpc2, thread_create_callback),
-            move || unregister_thread(thread_destroy_callback),
+            move || register_thread(thread_create_callback),
+            move || {
+                // Best-effort: if still promoted at shutdown, demote first.
+                crate::thread_priority::demote();
+                unregister_thread(thread_destroy_callback);
+            },
         )
         .map_err(|_| Error::Error)?;
 
@@ -208,6 +182,7 @@ impl ContextOps for ClientContext {
             backend_id,
             device_collection_rpc: false,
             device_collection_callbacks: Arc::new(Mutex::new(Default::default())),
+            active_streams: Arc::new(AtomicUsize::new(0)),
         });
         Ok(ctx)
     }

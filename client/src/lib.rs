@@ -11,6 +11,7 @@ extern crate log;
 mod send_recv;
 mod context;
 mod stream;
+mod thread_priority;
 
 use crate::context::ClientContext;
 use crate::stream::ClientStream;

@@ -22,8 +22,11 @@ use std::mem::size_of;
 use std::os::raw::{c_int, c_long, c_void};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::{cell::RefCell, sync::Mutex};
 use std::{panic, slice};
+
+use crate::thread_priority;
 
 use audioipc::errors::Result;
 
@@ -360,12 +363,31 @@ struct ServerStream {
     stream: Option<cubeb::Stream>,
     cbs: Box<ServerStreamCallbacks>,
     client_pipe: Option<PlatformHandle>,
+    // Whether this stream is currently contributing to the server's active-stream
+    // count.  Flipped on successful cubeb start/stop transitions; false for a
+    // freshly-created stream that hasn't been started yet.
+    active: bool,
+    // Shared counter and callback-thread handle used to drive promote/demote
+    // transitions when this stream's active state changes.
+    active_streams: Arc<AtomicUsize>,
+    callback_thread: ipccore::EventLoopHandle,
 }
 
 impl Drop for ServerStream {
     fn drop(&mut self) {
         // `stream` *must* be dropped before `cbs`.
         drop(self.stream.take());
+        // An active stream being dropped (StreamDestroy or client disconnect)
+        // must release its contribution to the active-stream count.
+        if self.active {
+            self.active = false;
+            let prev = self.active_streams.fetch_sub(1, Ordering::AcqRel);
+            if prev == 1 {
+                if let Err(e) = self.callback_thread.run_task(thread_priority::demote) {
+                    warn!("failed to dispatch thread demotion: {e:?}");
+                }
+            }
+        }
     }
 }
 
@@ -387,6 +409,9 @@ pub struct CubebServer {
     callback_thread: ipccore::EventLoopHandle,
     device_collection_thread: ipccore::EventLoopHandle,
     streams: slab::Slab<ServerStream>,
+    // Server-wide active-stream counter, shared with every ServerStream so
+    // their Drop/start/stop can participate in the promote/demote refcount.
+    active_streams: Arc<AtomicUsize>,
     remote_pid: Option<u32>,
     device_collection_change_callbacks: Option<Rc<DeviceCollectionChangeCallback>>,
     devidmap: DevIdMap,
@@ -462,6 +487,7 @@ impl CubebServer {
     pub fn new(
         callback_thread: ipccore::EventLoopHandle,
         device_collection_thread: ipccore::EventLoopHandle,
+        active_streams: Arc<AtomicUsize>,
         remote_pid: u32,
         shm_area_size: usize,
     ) -> Self {
@@ -469,6 +495,7 @@ impl CubebServer {
             callback_thread,
             device_collection_thread,
             streams: slab::Slab::<ServerStream>::new(),
+            active_streams,
             remote_pid: Some(remote_pid),
             device_collection_change_callbacks: None,
             devidmap: DevIdMap::new(),
@@ -567,15 +594,40 @@ impl CubebServer {
                 ClientMessage::StreamDestroyed
             }
 
-            ServerMessage::StreamStart(stm_tok) => try_stream!(self, stm_tok)
-                .start()
-                .map(|_| ClientMessage::StreamStarted)
-                .unwrap_or_else(error),
+            ServerMessage::StreamStart(stm_tok) => match try_stream!(self, stm_tok).start() {
+                Ok(()) => {
+                    let stream = &mut self.streams[stm_tok];
+                    if !stream.active {
+                        stream.active = true;
+                        let prev = self.active_streams.fetch_add(1, Ordering::AcqRel);
+                        if prev == 0 {
+                            if let Err(e) = self.callback_thread.run_task(thread_priority::promote)
+                            {
+                                warn!("failed to dispatch thread promotion: {e:?}");
+                            }
+                        }
+                    }
+                    ClientMessage::StreamStarted
+                }
+                Err(e) => error(e),
+            },
 
-            ServerMessage::StreamStop(stm_tok) => try_stream!(self, stm_tok)
-                .stop()
-                .map(|_| ClientMessage::StreamStopped)
-                .unwrap_or_else(error),
+            ServerMessage::StreamStop(stm_tok) => match try_stream!(self, stm_tok).stop() {
+                Ok(()) => {
+                    let stream = &mut self.streams[stm_tok];
+                    if stream.active {
+                        stream.active = false;
+                        let prev = self.active_streams.fetch_sub(1, Ordering::AcqRel);
+                        if prev == 1 {
+                            if let Err(e) = self.callback_thread.run_task(thread_priority::demote) {
+                                warn!("failed to dispatch thread demotion: {e:?}");
+                            }
+                        }
+                    }
+                    ClientMessage::StreamStopped
+                }
+                Err(e) => error(e),
+            },
 
             ServerMessage::StreamGetPosition(stm_tok) => try_stream!(self, stm_tok)
                 .position()
@@ -783,6 +835,9 @@ impl CubebServer {
             stream: None,
             cbs,
             client_pipe: Some(client_pipe),
+            active: false,
+            active_streams: self.active_streams.clone(),
+            callback_thread: self.callback_thread.clone(),
         });
 
         Ok(ClientMessage::StreamCreated(StreamCreate {
