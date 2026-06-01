@@ -294,6 +294,7 @@ pub enum CallbackReq {
     Data { nframes: isize },
     State(ffi::cubeb_state),
     DeviceChange,
+    Drain,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -302,6 +303,7 @@ pub enum CallbackResp {
     State,
     DeviceChange,
     Error(c_int),
+    Drain,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
