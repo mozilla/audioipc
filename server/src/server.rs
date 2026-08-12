@@ -368,16 +368,51 @@ fn validate_stream_params(p: &StreamParams) -> cubeb::Result<()> {
             | ffi::CUBEB_SAMPLE_FLOAT32LE
             | ffi::CUBEB_SAMPLE_FLOAT32BE
     );
+    let valid_layout =
+        p.layout == ffi::CUBEB_LAYOUT_UNDEFINED || p.layout.count_ones() == p.channels;
 
     if valid_format
         && p.channels >= 1
         && p.channels <= MAX_CHANNELS
         && p.rate >= MIN_RATE
         && p.rate <= MAX_RATE
+        && valid_layout
     {
         Ok(())
     } else {
         Err(cubeb::Error::InvalidParameter)
+    }
+}
+
+#[cfg(test)]
+mod stream_params_tests {
+    use super::*;
+
+    fn stream_params(channels: u32, layout: ffi::cubeb_channel_layout) -> StreamParams {
+        StreamParams {
+            format: ffi::CUBEB_SAMPLE_FLOAT32LE,
+            rate: 48_000,
+            channels,
+            layout,
+            prefs: ffi::CUBEB_STREAM_PREF_NONE,
+            input_params: ffi::CUBEB_INPUT_PROCESSING_PARAM_NONE,
+        }
+    }
+
+    #[test]
+    fn validate_channel_layout() {
+        assert_eq!(
+            validate_stream_params(&stream_params(2, ffi::CUBEB_LAYOUT_STEREO)),
+            Ok(())
+        );
+        assert_eq!(
+            validate_stream_params(&stream_params(255, ffi::CUBEB_LAYOUT_UNDEFINED)),
+            Ok(())
+        );
+        assert_eq!(
+            validate_stream_params(&stream_params(255, ffi::CUBEB_LAYOUT_STEREO)),
+            Err(cubeb::Error::InvalidParameter)
+        );
     }
 }
 
