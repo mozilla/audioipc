@@ -144,6 +144,7 @@ impl rpccore::Server for CallbackServer {
 
                 CallbackResp::State
             }
+            CallbackReq::Drain => CallbackResp::Drain,
             CallbackReq::DeviceChange => {
                 run_in_callback(|| {
                     let cb = *self.device_change_cb.lock().unwrap();
