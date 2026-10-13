@@ -3,7 +3,10 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details
 
-use std::{collections::VecDeque, io::Result};
+use std::{
+    collections::VecDeque,
+    io::{self, Result},
+};
 
 use bytes::BytesMut;
 use mio::{event::Source, Interest, Registry, Token};
@@ -40,6 +43,8 @@ const HANDLE_QUEUE_LIMIT: usize = 16;
 pub struct ConnectionBuffer {
     pub buf: BytesMut,
     handles: VecDeque<RemoteHandle>,
+    #[cfg(unix)]
+    read_limit: Option<usize>,
 }
 
 impl ConnectionBuffer {
@@ -47,6 +52,8 @@ impl ConnectionBuffer {
         ConnectionBuffer {
             buf: BytesMut::with_capacity(cap),
             handles: VecDeque::with_capacity(HANDLE_QUEUE_LIMIT),
+            #[cfg(unix)]
+            read_limit: None,
         }
     }
 
@@ -54,13 +61,40 @@ impl ConnectionBuffer {
         self.buf.is_empty()
     }
 
-    pub fn push_handle(&mut self, handle: RemoteHandle) {
-        assert!(self.handles.len() < self.handles.capacity());
-        self.handles.push_back(handle)
+    /// Queue an owned handle, or close it if the queue is full.
+    ///
+    /// Ownership is consumed on both success and error.
+    pub fn push_handle(&mut self, handle: RemoteHandle) -> Result<()> {
+        self.ensure_handle_capacity()?;
+        self.handles.push_back(handle);
+        Ok(())
+    }
+
+    pub(crate) fn ensure_handle_capacity(&self) -> Result<()> {
+        if self.handles.len() >= HANDLE_QUEUE_LIMIT {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "too many queued handles",
+            ));
+        }
+        Ok(())
     }
 
     pub fn pop_handle(&mut self) -> Option<RemoteHandle> {
         self.handles.pop_front()
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn set_read_limit(&mut self, limit: Option<usize>) {
+        if let Some(limit) = limit {
+            debug_assert!(limit > 0);
+        }
+        self.read_limit = limit;
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn handle_count(&self) -> usize {
+        self.handles.len()
     }
 }
 

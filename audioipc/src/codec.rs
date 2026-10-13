@@ -83,6 +83,17 @@ impl<In, Out> Default for LengthDelimitedCodec<In, Out> {
 }
 
 impl<In, Out> LengthDelimitedCodec<In, Out> {
+    // Limit a receive to the current header or payload so ancillary rights
+    // cannot be delivered for the next frame before this one is validated.
+    #[cfg(unix)]
+    pub(crate) fn next_read_len(&self, buffered: usize) -> usize {
+        let needed = match self.state {
+            State::Length => HEADER_LEN,
+            State::Data(n) => n as usize,
+        };
+        needed.saturating_sub(buffered)
+    }
+
     // Lengths are encoded as little endian u32
     fn decode_length(buf: &mut BytesMut) -> Option<u32> {
         if buf.len() < HEADER_LEN {

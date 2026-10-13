@@ -503,6 +503,18 @@ impl Drop for RemoteHandle {
 unsafe impl Send for RemoteHandle {}
 
 pub trait AssociateHandleForMessage {
+    /// Whether any message of this type can carry a handle.
+    ///
+    /// Handle-free protocols return false so unexpected descriptors can be
+    /// rejected before an entire frame arrives. The default is conservative for
+    /// existing implementations that only override `has_associated_handle`.
+    fn may_have_associated_handles() -> bool
+    where
+        Self: Sized,
+    {
+        true
+    }
+
     // True if this item has an associated handle attached for remoting.
     fn has_associated_handle(&self) -> bool {
         false
@@ -603,13 +615,33 @@ impl AssociateHandleForMessage for ClientMessage {
     }
 }
 
-impl AssociateHandleForMessage for ServerMessage {}
+impl AssociateHandleForMessage for ServerMessage {
+    fn may_have_associated_handles() -> bool {
+        false
+    }
+}
 
-impl AssociateHandleForMessage for DeviceCollectionReq {}
-impl AssociateHandleForMessage for DeviceCollectionResp {}
+impl AssociateHandleForMessage for DeviceCollectionReq {
+    fn may_have_associated_handles() -> bool {
+        false
+    }
+}
+impl AssociateHandleForMessage for DeviceCollectionResp {
+    fn may_have_associated_handles() -> bool {
+        false
+    }
+}
 
-impl AssociateHandleForMessage for CallbackReq {}
-impl AssociateHandleForMessage for CallbackResp {}
+impl AssociateHandleForMessage for CallbackReq {
+    fn may_have_associated_handles() -> bool {
+        false
+    }
+}
+impl AssociateHandleForMessage for CallbackResp {
+    fn may_have_associated_handles() -> bool {
+        false
+    }
+}
 
 #[cfg(test)]
 mod test {
