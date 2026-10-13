@@ -43,6 +43,8 @@ const HANDLE_QUEUE_LIMIT: usize = 16;
 pub struct ConnectionBuffer {
     pub buf: BytesMut,
     handles: VecDeque<RemoteHandle>,
+    #[cfg(unix)]
+    read_limit: Option<usize>,
 }
 
 impl ConnectionBuffer {
@@ -50,6 +52,8 @@ impl ConnectionBuffer {
         ConnectionBuffer {
             buf: BytesMut::with_capacity(cap),
             handles: VecDeque::with_capacity(HANDLE_QUEUE_LIMIT),
+            #[cfg(unix)]
+            read_limit: None,
         }
     }
 
@@ -78,6 +82,19 @@ impl ConnectionBuffer {
 
     pub fn pop_handle(&mut self) -> Option<RemoteHandle> {
         self.handles.pop_front()
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn set_read_limit(&mut self, limit: Option<usize>) {
+        if let Some(limit) = limit {
+            debug_assert!(limit > 0);
+        }
+        self.read_limit = limit;
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn handle_count(&self) -> usize {
+        self.handles.len()
     }
 }
 

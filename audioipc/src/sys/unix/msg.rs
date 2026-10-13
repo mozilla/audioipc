@@ -14,6 +14,7 @@ use std::{cmp, io, mem, ptr};
 #[cfg(test)]
 thread_local! {
     pub(super) static SEND_ERROR: std::cell::Cell<Option<libc::c_int>> = const { std::cell::Cell::new(None) };
+    pub(super) static SEND_LIMIT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
 }
 
 fn cvt(r: libc::ssize_t) -> io::Result<usize> {
@@ -90,5 +91,24 @@ pub(crate) fn send_msg_with_flags(
     msghdr.msg_control = control;
     msghdr.msg_controllen = controllen as _;
 
-    cvt_r(|| unsafe { libc::sendmsg(socket, &msghdr as *const _, flags) })
+    #[cfg(test)]
+    let limit = SEND_LIMIT.with(|limit| limit.take());
+    #[cfg(test)]
+    let mut limited_iov = libc::iovec {
+        iov_base: ptr::null_mut(),
+        iov_len: 0,
+    };
+    #[cfg(test)]
+    if let Some(limit) = limit {
+        limited_iov.iov_base = slice[0].iov_base;
+        limited_iov.iov_len = limit.min(slice[0].iov_len);
+        msghdr.msg_iov = &mut limited_iov;
+        msghdr.msg_iovlen = 1;
+    }
+    let result = cvt_r(|| unsafe { libc::sendmsg(socket, &msghdr as *const _, flags) });
+    #[cfg(test)]
+    if limit.is_some() && matches!(result, Ok(n) if n > 0) {
+        SEND_ERROR.with(|error| error.set(Some(libc::EAGAIN)));
+    }
+    result
 }

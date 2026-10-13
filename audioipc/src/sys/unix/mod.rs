@@ -75,6 +75,11 @@ pub struct Pipe {
 }
 
 impl Pipe {
+    #[cfg(test)]
+    pub(crate) fn partial_send_for_test(&mut self, len: usize) {
+        msg::SEND_LIMIT.with(|limit| limit.set(Some(len)));
+    }
+
     fn new(io: UnixStream) -> Self {
         Pipe {
             io,
@@ -110,7 +115,8 @@ impl RecvMsg for Pipe {
         assert!(buf.buf.remaining_mut() > 0);
         let r = unsafe {
             let chunk = buf.buf.chunk_mut();
-            let slice = std::slice::from_raw_parts_mut(chunk.as_mut_ptr(), chunk.len());
+            let len = buf.read_limit.unwrap_or(chunk.len()).min(chunk.len());
+            let slice = std::slice::from_raw_parts_mut(chunk.as_mut_ptr(), len);
             let mut iovec = [<&mut IoVec>::from(slice)];
             msg::recv_msg_with_flags(
                 self.io.as_raw_fd(),

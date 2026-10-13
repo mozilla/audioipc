@@ -507,9 +507,19 @@ impl Connection {
         // has been consumed.
         loop {
             trace!("{:?}: pre-recv inbound: {:?}", self.token, self.inbound);
+            #[cfg(unix)]
+            self.inbound
+                .set_read_limit(self.driver.next_read_len(&self.inbound));
             let r = self.io.recv_msg(&mut self.inbound);
             match r {
                 Ok(0) => {
+                    #[cfg(unix)]
+                    if self.inbound.handle_count() != 0 {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "unmatched inbound handles at EOF",
+                        ));
+                    }
                     trace!(
                         "{:?}: recv EOF unprocessed inbound={}",
                         self.token,
@@ -571,7 +581,11 @@ impl Connection {
     fn send_outbound(&mut self, registry: &Registry) -> Result<bool> {
         // Attempt to flush outbound buffer.  If the connection's write buffer is full, register for WRITABLE
         // and complete flushing when associated notitication arrives later.
-        while !self.outbound.is_empty() {
+        loop {
+            self.flush_outbound()?;
+            if self.outbound.is_empty() {
+                break;
+            }
             let r = self.io.send_msg(&mut self.outbound);
             match r {
                 Ok(0) => {
@@ -628,6 +642,9 @@ fn interrupted(err: &std::io::Error) -> bool {
 // Driver only has a single implementation, but must be hidden behind a Trait object to
 // hide the varying FramedDriver sizes (due to different `T` values).
 trait Driver {
+    #[cfg(unix)]
+    fn next_read_len(&self, inbound: &sys::ConnectionBuffer) -> Option<usize>;
+
     // Handle inbound messages.  Returns true if Driver is done; this will trigger Connection removal and cleanup.
     fn process_inbound(&mut self, inbound: &mut sys::ConnectionBuffer) -> Result<bool>;
 
@@ -644,20 +661,45 @@ where
     T::In: DeserializeOwned + Debug + AssociateHandleForMessage,
     T::Out: Serialize + Debug + AssociateHandleForMessage,
 {
+    #[cfg(unix)]
+    fn next_read_len(&self, inbound: &sys::ConnectionBuffer) -> Option<usize> {
+        T::In::may_have_associated_handles().then(|| self.codec.next_read_len(inbound.buf.len()))
+    }
+
     // Caller passes `inbound` data, this function will trim any complete messages from `inbound` and pass them to the handler for processing.
     fn process_inbound(&mut self, inbound: &mut sys::ConnectionBuffer) -> Result<bool> {
         debug!("process_inbound: {inbound:?}");
 
+        // Receives for handle-bearing protocols stop at frame boundaries. Each
+        // frame may own at most one descriptor; handle-free protocols reject
+        // descriptors immediately, even on an incomplete frame.
+        #[cfg(unix)]
+        if inbound.handle_count() > 1
+            || (!T::In::may_have_associated_handles() && inbound.handle_count() != 0)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unexpected inbound handles",
+            ));
+        }
+
         // Repeatedly call `decode` as long as it produces items, passing each produced item to the handler to action.
         #[allow(unused_mut)]
         while let Some(mut item) = self.codec.decode(&mut inbound.buf)? {
+            #[cfg(unix)]
+            if !item.has_associated_handle() && inbound.handle_count() != 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "unexpected inbound handle for message",
+                ));
+            }
             if item.has_associated_handle() {
                 // On Unix, dequeue a handle from the connection and update the item's handle.
                 #[cfg(unix)]
                 {
-                    let new = inbound
-                        .pop_handle()
-                        .expect("inbound handle expected for item");
+                    let new = inbound.pop_handle().ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidData, "missing inbound handle")
+                    })?;
                     unsafe { item.set_local_handle(new.take()) };
                 }
                 // On Windows, the deserialized item contains the correct handle value, so
@@ -679,7 +721,13 @@ where
     fn flush_outbound(&mut self, outbound: &mut sys::ConnectionBuffer) -> Result<()> {
         debug!("flush_outbound: {:?}", outbound.buf);
 
-        // Repeatedly grab outgoing items from the handler, passing each to `encode` for serialization into `outbound`.
+        // Handle-capable protocols keep one frame in flight so a new descriptor
+        // cannot attach to an earlier frame's unsent tail. Handle-free protocols
+        // can batch messages, including callbacks queued after a partial send.
+        let single_frame = T::Out::may_have_associated_handles();
+        if single_frame && !outbound.is_empty() {
+            return Ok(());
+        }
         while let Some(mut item) = self.handler.produce()? {
             let handle = if item.has_associated_handle() {
                 outbound.ensure_handle_capacity()?;
@@ -700,6 +748,9 @@ where
                 // `outbound` retains ownership of the handle until the associated
                 // encoded item in `outbound.buf` is sent to the remote process.
                 outbound.push_handle(handle)?;
+            }
+            if single_frame {
+                break;
             }
         }
         Ok(())
@@ -838,10 +889,8 @@ mod test {
         let _ = env_logger::builder().is_test(true).try_init();
     }
 
-    #[cfg(unix)]
     struct PendingMessages<M>(std::collections::VecDeque<M>);
 
-    #[cfg(unix)]
     impl<M> Handler for PendingMessages<M> {
         type In = TestServerMessage;
         type Out = M;
@@ -853,6 +902,86 @@ mod test {
         fn produce(&mut self) -> Result<Option<M>> {
             Ok(self.0.pop_front())
         }
+    }
+
+    #[cfg(unix)]
+    pub(super) struct RejectDelivery<T>(pub(super) std::marker::PhantomData<T>);
+
+    #[cfg(unix)]
+    impl<T> Handler for RejectDelivery<T> {
+        type In = T;
+        type Out = crate::messages::ServerMessage;
+
+        fn consume(&mut self, _: T) -> Result<()> {
+            panic!("invalid descriptor transfer reached the message handler");
+        }
+
+        fn produce(&mut self) -> Result<Option<Self::Out>> {
+            Ok(None)
+        }
+    }
+
+    fn assert_callback_message_batching<M>(messages: impl Fn() -> Vec<M>)
+    where
+        M: Serialize + DeserializeOwned + Debug + AssociateHandleForMessage,
+    {
+        use bytes::{Buf, BytesMut};
+
+        for partially_sent in [false, true] {
+            let mut pending = std::collections::VecDeque::from(messages());
+            let expected = format!("{pending:?}");
+            let first = pending.pop_front().unwrap();
+            let mut driver =
+                FramedDriver::new(PendingMessages(std::collections::VecDeque::from([first])));
+            let mut outbound = sys::ConnectionBuffer::with_capacity(128);
+            let mut wire = BytesMut::new();
+
+            if partially_sent {
+                driver.flush_outbound(&mut outbound).unwrap();
+                // Preserve the byte already written, leaving an incomplete
+                // frame in the buffer when further callbacks become ready.
+                wire.extend_from_slice(&outbound.buf[..1]);
+                outbound.buf.advance(1);
+            }
+            driver.handler.0.extend(pending);
+            driver.flush_outbound(&mut outbound).unwrap();
+            wire.extend_from_slice(&outbound.buf);
+
+            let mut decoder = LengthDelimitedCodec::<M, M>::default();
+            let mut received = Vec::new();
+            while let Some(message) = decoder.decode(&mut wire).unwrap() {
+                received.push(message);
+            }
+            assert_eq!(format!("{received:?}"), expected);
+            assert!(wire.is_empty());
+            assert!(outbound.pop_handle().is_none());
+        }
+    }
+
+    #[test]
+    fn callback_message_batching_requests() {
+        use crate::messages::CallbackReq;
+
+        assert_callback_message_batching(|| {
+            vec![
+                CallbackReq::Data { nframes: 128 },
+                CallbackReq::State(cubeb::ffi::CUBEB_STATE_STARTED),
+                CallbackReq::DeviceChange,
+            ]
+        });
+    }
+
+    #[test]
+    fn callback_message_batching_responses() {
+        use crate::messages::CallbackResp;
+
+        assert_callback_message_batching(|| {
+            vec![
+                CallbackResp::Data(128),
+                CallbackResp::State,
+                CallbackResp::DeviceChange,
+            ]
+        });
     }
 
     #[cfg(unix)]
@@ -1386,4 +1515,30 @@ mod test {
 
         drop(client);
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn scm_rights_missing_descriptor_returns_protocol_error() {
+        #[derive(Debug, Serialize, Deserialize)]
+        struct NeedsHandle;
+
+        impl AssociateHandleForMessage for NeedsHandle {
+            fn has_associated_handle(&self) -> bool {
+                true
+            }
+        }
+
+        let mut inbound = sys::ConnectionBuffer::with_capacity(128);
+        let mut encoder = LengthDelimitedCodec::<NeedsHandle, NeedsHandle>::default();
+        encoder.encode(NeedsHandle, &mut inbound.buf).unwrap();
+        let mut driver = FramedDriver::new(RejectDelivery::<NeedsHandle>(std::marker::PhantomData));
+        let error = driver
+            .process_inbound(&mut inbound)
+            .expect_err("missing SCM_RIGHTS descriptor must reject the message");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
 }
+
+#[cfg(all(test, unix, not(miri)))]
+#[path = "scm_rights_ipccore_tests.rs"]
+mod scm_rights_ipccore_tests;
