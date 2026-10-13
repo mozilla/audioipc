@@ -12,6 +12,8 @@ fn multi_process_client_test() {
     use std::os::unix::process::CommandExt;
     use std::process::Command;
 
+    let _ = env_logger::try_init();
+
     // Child path: we've been re-spawned; the socketpair fd is in env var.
     if let Ok(fd_str) = std::env::var("AUDIOIPC_TEST_CLIENT_FD") {
         let sock_fd: i32 = fd_str.parse().expect("invalid fd");
@@ -25,8 +27,6 @@ fn multi_process_client_test() {
             }
         });
     }
-
-    let _ = env_logger::try_init();
 
     let server = ipctest::TestServer::new();
 
@@ -63,11 +63,14 @@ fn multi_process_client_test() {
     let fd = server.new_client(child_pid);
     ipctest::send_fd(parent_fd, fd);
     unsafe {
-        libc::close(fd);
         libc::close(parent_fd);
     }
 
     let status = child.wait().expect("child process wait failed");
+    // Keep the sending process's socket descriptor alive until the child has
+    // finished. On macOS, closing it immediately after SCM_RIGHTS transfer can
+    // cause the received socket to report premature EOF.
+    unsafe { libc::close(fd) };
     assert!(status.success(), "child exited with: {}", status);
 }
 

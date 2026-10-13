@@ -135,7 +135,9 @@ pub fn client_test(handle: audioipc::PlatformHandleType) -> Result<()> {
     macro_rules! query(
         ($e: expr) => (match $e {
             Ok(v) => v,
-            Err(e) => { return Err(Error::Other(format!("Cubeb API error: {}", e))) }
+            Err(e) => { return Err(Error::Other(format!(
+                "Cubeb API error in {}: {} ({:?})", stringify!($e), e, e
+            ))) }
         })
         );
 
@@ -185,10 +187,31 @@ pub fn client_test(handle: audioipc::PlatformHandleType) -> Result<()> {
 
     let mut position = 0u32;
 
+    // Allow repeated tests to use a virtual device without changing the
+    // system's default output device.
+    let output_devices = if std::env::var_os("AUDIOIPC_TEST_OUTPUT_DEVICE").is_some() {
+        Some(query!(ctx.enumerate_devices(cubeb::DeviceType::OUTPUT)))
+    } else {
+        None
+    };
+    let output_device = match std::env::var("AUDIOIPC_TEST_OUTPUT_DEVICE") {
+        Ok(name) => output_devices
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|d| {
+                d.device_id() == Some(name.as_str()) || d.friendly_name() == Some(name.as_str())
+            })
+            .map(|d| d.devid())
+            .ok_or_else(|| Error::Other(format!("Output device not found: {name}")))?,
+        Err(std::env::VarError::NotPresent) => ptr::null_mut(),
+        Err(e) => return Err(Error::Other(format!("Invalid output device name: {e}"))),
+    };
+
     let mut builder = cubeb::StreamBuilder::<Frame>::new();
     builder
         .name("Cubeb tone (mono)")
-        .default_output(&params)
+        .output(output_device, &params)
         .latency(4096)
         .data_callback(move |_, output| {
             // generate our test tone on the fly

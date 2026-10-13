@@ -22,6 +22,15 @@ impl Default for TestServer {
 
 impl TestServer {
     pub fn new() -> Self {
+        if std::env::var_os("AUDIOIPC_TEST_CUBEB_LOG").is_some() {
+            cubeb_core::set_logging(
+                cubeb::LogLevel::Normal,
+                Some(|message| {
+                    eprintln!("cubeb: {}", message.to_string_lossy());
+                }),
+            )
+            .expect("failed to enable cubeb logging");
+        }
         let init_params = audioipc_server::AudioIpcServerInitParams {
             thread_create_callback: None,
             thread_destroy_callback: None,

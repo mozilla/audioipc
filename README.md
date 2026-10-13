@@ -19,6 +19,33 @@ supplied to `audioipc_client_init` to establish the client-server
 connection.  Transferring this handle from the server process to the client
 process is done externally, in Gecko code.
 
+## Running tests
+
+Run `cargo test --workspace`. The `ipctest` end-to-end test opens and plays
+an audio stream, so it requires a working default output device and access
+to the platform audio service. On macOS, run this test outside development
+sandboxes that restrict CoreAudio access.
+
+For backend diagnostics, run:
+
+```sh
+AUDIOIPC_TEST_CUBEB_LOG=1 RUST_LOG=audioipc2_server=trace cargo test -p ipctest --test e2e -- --nocapture
+```
+
+The client error includes the failed API expression. Backend logging is
+enabled in the server process by `AUDIOIPC_TEST_CUBEB_LOG`; server tracing
+shows the RPC request and response.
+
+Set `AUDIOIPC_TEST_OUTPUT_DEVICE` to an output device ID or friendly name to
+select a virtual device for quiet repeated runs. For example, on macOS with
+BlackHole installed:
+
+```sh
+AUDIOIPC_TEST_OUTPUT_DEVICE="BlackHole 2ch" cargo test -p ipctest --test e2e
+```
+
+## Architecture
+
 - The client side remoting layer (located in the `client` crate) contains
   ClientContext and ClientStream, which adapts the cubeb context and cubeb
   stream APIs (respectively) to the RPC layer.  This is driven by one
