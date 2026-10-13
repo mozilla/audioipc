@@ -623,10 +623,24 @@ impl CubebServer {
                 .map(|_| ClientMessage::StreamStarted)
                 .unwrap_or_else(error),
 
-            ServerMessage::StreamStop(stm_tok) => try_stream!(self, stm_tok)
-                .stop()
-                .map(|_| ClientMessage::StreamStopped)
-                .unwrap_or_else(error),
+            ServerMessage::StreamStop(stm_tok) => {
+                let result = try_stream!(self, stm_tok).stop();
+                if result.is_ok() {
+                    // Drain the callback pipe so any data callback already queued on
+                    // it completes before we reply StreamStopped.  An error here means
+                    // the callback pipe is gone, so there is nothing left to drain.
+                    if let Err(e) = self.streams[stm_tok]
+                        .cbs
+                        .data_callback_rpc
+                        .call(CallbackReq::Drain)
+                    {
+                        debug!("StreamStop({stm_tok}): callback pipe drain failed: {e:?}");
+                    }
+                }
+                result
+                    .map(|_| ClientMessage::StreamStopped)
+                    .unwrap_or_else(error)
+            }
 
             ServerMessage::StreamGetPosition(stm_tok) => try_stream!(self, stm_tok)
                 .position()
