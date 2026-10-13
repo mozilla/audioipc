@@ -3,96 +3,100 @@
 // This program is made available under an ISC-style license.  See the
 // accompanying file LICENSE for details
 
-use crate::sys::HANDLE_QUEUE_LIMIT;
 use bytes::{BufMut, BytesMut};
 use libc::cmsghdr;
 use std::convert::TryInto;
 use std::os::unix::io::RawFd;
-use std::{mem, slice};
+use std::{io, mem};
 
-trait AsBytes {
-    fn as_bytes(&self) -> &[u8];
-}
+#[cfg(test)]
+#[path = "cmsg_tests.rs"]
+mod tests;
 
-impl<T: Sized> AsBytes for &[T] {
-    fn as_bytes(&self) -> &[u8] {
-        // TODO: This should account for the alignment of T
-        let byte_count = std::mem::size_of_val(*self);
-        unsafe { slice::from_raw_parts(self.as_ptr() as *const _, byte_count) }
-    }
-}
-
-// Encode `handles` into a cmsghdr in `buf`.
+/// Encode descriptor values into an SCM_RIGHTS control record.
 pub fn encode_handles(cmsg: &mut BytesMut, handles: &[RawFd]) {
-    assert!(handles.len() <= HANDLE_QUEUE_LIMIT);
-    let msg = handles.as_bytes();
+    let payload_len = mem::size_of_val(handles);
 
-    let cmsg_space = space(msg.len());
-    assert!(cmsg.remaining_mut() >= cmsg_space);
-
-    // Some definitions of cmsghdr contain padding.  Rather
-    // than try to keep an up-to-date #cfg list to handle
-    // that, just use a pre-zeroed struct to fill out any
-    // fields we don't care about.
-    let _zeroed = unsafe { mem::zeroed() };
-    #[allow(clippy::needless_update)]
-    // `cmsg_len` is `usize` on some platforms, `u32` on others.
-    #[allow(clippy::useless_conversion)]
-    let cmsghdr = cmsghdr {
-        cmsg_len: len(msg.len()).try_into().unwrap(),
-        cmsg_level: libc::SOL_SOCKET,
-        cmsg_type: libc::SCM_RIGHTS,
-        .._zeroed
-    };
+    let cmsg_space = space(payload_len);
+    cmsg.reserve(cmsg_space);
 
     unsafe {
         let cmsghdr_ptr = cmsg.chunk_mut().as_mut_ptr();
-        std::ptr::copy_nonoverlapping(
-            &cmsghdr as *const _ as *const _,
-            cmsghdr_ptr,
-            mem::size_of::<cmsghdr>(),
-        );
-        let cmsg_data_ptr = libc::CMSG_DATA(cmsghdr_ptr as _);
-        std::ptr::copy_nonoverlapping(msg.as_ptr(), cmsg_data_ptr, msg.len());
+        std::ptr::write_bytes(cmsghdr_ptr, 0, cmsg_space);
+        let header = cmsghdr_ptr.cast::<cmsghdr>();
+        #[allow(clippy::useless_conversion)]
+        std::ptr::addr_of_mut!((*header).cmsg_len)
+            .write_unaligned(len(payload_len).try_into().unwrap());
+        std::ptr::addr_of_mut!((*header).cmsg_level).write_unaligned(libc::SOL_SOCKET);
+        std::ptr::addr_of_mut!((*header).cmsg_type).write_unaligned(libc::SCM_RIGHTS);
+        let cmsg_data_ptr = libc::CMSG_DATA(header);
+        std::ptr::copy_nonoverlapping(handles.as_ptr().cast::<u8>(), cmsg_data_ptr, payload_len);
         cmsg.advance_mut(cmsg_space);
     }
 }
 
-// Decode `buf` containing a cmsghdr with one or more handle(s).
-pub fn decode_handles(buf: &mut BytesMut) -> arrayvec::ArrayVec<RawFd, HANDLE_QUEUE_LIMIT> {
-    let mut fds = arrayvec::ArrayVec::<RawFd, HANDLE_QUEUE_LIMIT>::new();
-
+/// Visit descriptor values in the control records in `buf`.
+///
+/// The callback can run before a later record produces an error. For control data
+/// returned by `recvmsg`, it must take ownership of each descriptor immediately
+/// and arrange to close it even if this function returns `Err`. This decoder does
+/// not close descriptors itself.
+pub fn decode_handles(mut buf: &[u8], mut receive: impl FnMut(RawFd)) -> io::Result<()> {
     let cmsghdr_len = len(0);
 
-    if buf.len() < cmsghdr_len {
-        // No more entries---not enough data in `buf` for a
-        // complete message.
-        return fds;
+    while !buf.is_empty() {
+        if buf.len() < cmsghdr_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "short control header",
+            ));
+        }
+        let cmsg = unsafe { buf.as_ptr().cast::<cmsghdr>().read_unaligned() };
+        #[allow(clippy::unnecessary_cast)]
+        let cmsg_len = cmsg.cmsg_len as usize;
+        if cmsg_len < cmsghdr_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid control length",
+            ));
+        }
+
+        match (cmsg.cmsg_level, cmsg.cmsg_type) {
+            (libc::SOL_SOCKET, libc::SCM_RIGHTS) => {
+                // Darwin can retain the original cmsg_len after truncation.
+                let slice = &buf[cmsghdr_len..cmsg_len.min(buf.len())];
+                // Keep the older API rather than raising compiler requirements.
+                #[allow(clippy::chunks_exact_to_as_chunks)]
+                let mut descriptors = slice.chunks_exact(mem::size_of::<RawFd>());
+                for fd in &mut descriptors {
+                    receive(RawFd::from_ne_bytes(fd.try_into().unwrap()));
+                }
+                if !descriptors.remainder().is_empty() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "partial descriptor",
+                    ));
+                }
+            }
+            (level, kind) => {
+                trace!("Skipping cmsg level, {level}, type={kind}...");
+            }
+        }
+
+        if cmsg_len > buf.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "truncated control record",
+            ));
+        }
+        let next = space(cmsg_len - cmsghdr_len);
+        if next >= buf.len() {
+            break;
+        }
+        buf = &buf[next..];
     }
 
-    let cmsg: &cmsghdr = unsafe { &*(buf.as_ptr() as *const _) };
-    #[allow(clippy::unnecessary_cast)] // `cmsg_len` type is platform-dependent.
-    let cmsg_len = cmsg.cmsg_len as usize;
-
-    match (cmsg.cmsg_level, cmsg.cmsg_type) {
-        (libc::SOL_SOCKET, libc::SCM_RIGHTS) => {
-            trace!("Found SCM_RIGHTS...");
-            let slice = &buf[cmsghdr_len..cmsg_len];
-            let slice = unsafe {
-                slice::from_raw_parts(
-                    slice.as_ptr() as *const _,
-                    slice.len() / mem::size_of::<i32>(),
-                )
-            };
-            fds.try_extend_from_slice(slice).unwrap();
-        }
-        (level, kind) => {
-            trace!("Skipping cmsg level, {level}, type={kind}...");
-        }
-    }
-
-    assert!(fds.len() <= HANDLE_QUEUE_LIMIT);
-    fds
+    Ok(())
 }
 
 fn len(len: usize) -> usize {

@@ -5,6 +5,20 @@ env:
 on: [push, pull_request]
 
 jobs:
+  scm-rights-miri:
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Miri
+      run: rustup toolchain install nightly --profile minimal --component miri --component rust-src
+
+    - name: Test ancillary codec under Miri
+      run: >-
+        cargo +nightly miri test
+        --manifest-path audioipc/tests/scm_rights_miri/Cargo.toml
+        --target x86_64-unknown-linux-gnu
+
   build:
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.experimental }}
