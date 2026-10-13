@@ -682,6 +682,7 @@ where
         // Repeatedly grab outgoing items from the handler, passing each to `encode` for serialization into `outbound`.
         while let Some(mut item) = self.handler.produce()? {
             let handle = if item.has_associated_handle() {
+                outbound.ensure_handle_capacity()?;
                 #[allow(unused_mut)]
                 let mut handle = item.take_handle();
                 // On Windows, the handle is transferred by duplicating it into the target remote process.
@@ -698,7 +699,7 @@ where
             if let Some(handle) = handle {
                 // `outbound` retains ownership of the handle until the associated
                 // encoded item in `outbound.buf` is sent to the remote process.
-                outbound.push_handle(handle);
+                outbound.push_handle(handle)?;
             }
         }
         Ok(())
@@ -835,6 +836,54 @@ mod test {
 
     fn init() {
         let _ = env_logger::builder().is_test(true).try_init();
+    }
+
+    #[cfg(unix)]
+    struct PendingMessages<M>(std::collections::VecDeque<M>);
+
+    #[cfg(unix)]
+    impl<M> Handler for PendingMessages<M> {
+        type In = TestServerMessage;
+        type Out = M;
+
+        fn consume(&mut self, _: TestServerMessage) -> Result<()> {
+            unreachable!();
+        }
+
+        fn produce(&mut self) -> Result<Option<M>> {
+            Ok(self.0.pop_front())
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scm_rights_outbound_overflow_does_not_encode_frame() {
+        use crate::messages::{ClientMessage, RemoteHandle, SerializableHandle};
+        use crate::PlatformHandle;
+        use std::fs::File;
+
+        let mut outbound = sys::ConnectionBuffer::with_capacity(128);
+        while outbound
+            .push_handle(unsafe {
+                RemoteHandle::new(
+                    PlatformHandle::from(File::open("/dev/null").unwrap()).into_raw(),
+                    0,
+                )
+            })
+            .is_ok()
+        {}
+        let message = ClientMessage::StreamInitialized(SerializableHandle::new(
+            PlatformHandle::from(File::open("/dev/null").unwrap()),
+            0,
+        ));
+        let mut driver =
+            FramedDriver::new(PendingMessages(std::collections::VecDeque::from([message])));
+        let error = driver.flush_outbound(&mut outbound).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            outbound.buf.is_empty(),
+            "overflow encoded an unpaired frame"
+        );
     }
 
     fn setup() -> (

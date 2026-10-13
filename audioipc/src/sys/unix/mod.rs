@@ -17,6 +17,39 @@ use super::{ConnectionBuffer, RecvMsg, SendMsg, HANDLE_QUEUE_LIMIT};
 pub mod cmsg;
 mod msg;
 
+struct MessageFlags {
+    receive: libc::c_int,
+    send: libc::c_int,
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "freebsd",
+    target_os = "dragonfly",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "illumos"
+))]
+const MESSAGE_FLAGS: MessageFlags = MessageFlags {
+    receive: libc::MSG_CMSG_CLOEXEC,
+    send: libc::MSG_NOSIGNAL,
+};
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "freebsd",
+    target_os = "dragonfly",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "illumos"
+)))]
+// Sending on these targets may need SO_NOSIGPIPE instead of a flag.
+const MESSAGE_FLAGS: MessageFlags = MessageFlags {
+    receive: 0,
+    send: 0,
+};
+
 // Receive complete rights transfers before enforcing HANDLE_QUEUE_LIMIT. Darwin
 // can install FDs omitted by ancillary truncation, leaving userspace unable to
 // close them. 512 is a conservative capacity, not Darwin's exact send limit:
@@ -31,6 +64,10 @@ mod msg;
 const RECEIVE_HANDLE_CAPACITY: usize = 253;
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
 const RECEIVE_HANDLE_CAPACITY: usize = 512;
+
+#[cfg(all(test, not(miri)))]
+#[path = "scm_rights_tests.rs"]
+mod scm_rights_tests;
 
 pub struct Pipe {
     pub(crate) io: UnixStream,
@@ -71,12 +108,6 @@ impl RecvMsg for Pipe {
     // the `ConnectionBuffer` members has been adjusted appropriate by the caller.
     fn recv_msg(&mut self, buf: &mut ConnectionBuffer) -> Result<usize> {
         assert!(buf.buf.remaining_mut() > 0);
-        // TODO: MSG_CMSG_CLOEXEC not portable.
-        // TODO: MSG_NOSIGNAL not portable; macOS can set socket option SO_NOSIGPIPE instead.
-        #[cfg(target_os = "linux")]
-        let flags = libc::MSG_CMSG_CLOEXEC | libc::MSG_NOSIGNAL;
-        #[cfg(not(target_os = "linux"))]
-        let flags = 0;
         let r = unsafe {
             let chunk = buf.buf.chunk_mut();
             let slice = std::slice::from_raw_parts_mut(chunk.as_mut_ptr(), chunk.len());
@@ -85,7 +116,7 @@ impl RecvMsg for Pipe {
                 self.io.as_raw_fd(),
                 &mut iovec,
                 self.cmsg.chunk_mut(),
-                flags,
+                MESSAGE_FLAGS.receive,
             )
         };
         match r {
@@ -105,8 +136,20 @@ impl RecvMsg for Pipe {
                         "truncated ancillary data",
                     ));
                 }
+                // Targets without atomic receive flags still need fcntl. This
+                // fallback cannot prevent a concurrent fork/exec inheritance race.
+                if MESSAGE_FLAGS.receive == 0 {
+                    for h in &handles {
+                        let flags = libc::fcntl(h.handle, libc::F_GETFD);
+                        if flags == -1
+                            || libc::fcntl(h.handle, libc::F_SETFD, flags | libc::FD_CLOEXEC) == -1
+                        {
+                            return Err(io::Error::last_os_error());
+                        }
+                    }
+                }
                 for h in handles {
-                    buf.push_handle(h);
+                    buf.push_handle(h)?;
                 }
                 Ok(n)
             },
@@ -128,20 +171,16 @@ impl SendMsg for Pipe {
             cmsg::encode_handles(&mut self.cmsg, &handles[..buf.handles.len()]);
         }
         let r = {
-            // TODO: MSG_NOSIGNAL not portable; macOS can set socket option SO_NOSIGPIPE instead.
-            #[cfg(target_os = "linux")]
-            let flags = libc::MSG_NOSIGNAL;
-            #[cfg(not(target_os = "linux"))]
-            let flags = 0;
             let iovec = [<&IoVec>::from(&buf.buf[..buf.buf.len()])];
-            msg::send_msg_with_flags(self.io.as_raw_fd(), &iovec, &self.cmsg, flags)
+            msg::send_msg_with_flags(self.io.as_raw_fd(), &iovec, &self.cmsg, MESSAGE_FLAGS.send)
         };
+        self.cmsg.clear();
         match r {
             Ok(n) => {
                 buf.buf.advance(n);
-                // Discard sent handles.
-                while buf.handles.pop_front().is_some() {}
-                self.cmsg.clear();
+                if n > 0 {
+                    buf.handles.clear();
+                }
                 Ok(n)
             }
             Err(e) => Err(e),

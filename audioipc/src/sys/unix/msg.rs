@@ -9,6 +9,13 @@ use iovec::IoVec;
 use std::os::unix::io::RawFd;
 use std::{cmp, io, mem, ptr};
 
+// One-shot, per-test-thread fault injection: exercise retries without relying on
+// platform-specific socket buffer limits or changing production syscall behavior.
+#[cfg(test)]
+thread_local! {
+    pub(super) static SEND_ERROR: std::cell::Cell<Option<libc::c_int>> = const { std::cell::Cell::new(None) };
+}
+
 fn cvt(r: libc::ssize_t) -> io::Result<usize> {
     if r == -1 {
         Err(io::Error::last_os_error())
@@ -62,6 +69,11 @@ pub(crate) fn send_msg_with_flags(
     cmsg: &[u8],
     flags: libc::c_int,
 ) -> io::Result<usize> {
+    #[cfg(test)]
+    if let Some(errno) = SEND_ERROR.with(|error| error.take()) {
+        return Err(io::Error::from_raw_os_error(errno));
+    }
+
     let slice = unix::as_os_slice(bufs);
     let len = cmp::min(<libc::c_int>::MAX as usize, slice.len());
     let (control, controllen) = if cmsg.is_empty() {
