@@ -84,19 +84,24 @@ impl<In, Out> Default for LengthDelimitedCodec<In, Out> {
 
 impl<In, Out> LengthDelimitedCodec<In, Out> {
     // Lengths are encoded as little endian u32
-    fn decode_length(buf: &mut BytesMut) -> Option<u32> {
+    fn decode_length(buf: &mut BytesMut) -> io::Result<Option<u32>> {
         if buf.len() < HEADER_LEN {
             // Not enough data
-            return None;
+            return Ok(None);
         }
 
         let magic = LittleEndian::read_u64(&buf[0..8]);
-        assert_eq!(magic, MAGIC);
+        if magic != MAGIC {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid IPC frame magic",
+            ));
+        }
 
         // Consume the length field
         let n = LittleEndian::read_u32(&buf[8..12]);
         buf.advance(HEADER_LEN);
-        Some(n)
+        Ok(Some(n))
     }
 
     fn decode_data(buf: &mut BytesMut, n: u32) -> io::Result<Option<Out>>
@@ -136,26 +141,24 @@ where
 
     fn decode(&mut self, buf: &mut BytesMut) -> io::Result<Option<Self::Out>> {
         let n = match self.state {
-            State::Length => {
-                match Self::decode_length(buf) {
-                    Some(n) => {
-                        assert!(
-                            n <= MAX_MESSAGE_LEN,
-                            "assertion failed: {} <= {}",
-                            n,
-                            MAX_MESSAGE_LEN
-                        );
-                        self.state = State::Data(n);
-
-                        // Ensure that the buffer has enough space to read the
-                        // incoming payload
-                        buf.reserve(n.try_into().unwrap());
-
-                        n
+            State::Length => match Self::decode_length(buf)? {
+                Some(n) => {
+                    if n > MAX_MESSAGE_LEN {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("IPC frame too large: {n}"),
+                        ));
                     }
-                    None => return Ok(None),
+                    self.state = State::Data(n);
+
+                    // Ensure that the buffer has enough space to read the
+                    // incoming payload
+                    buf.reserve(n.try_into().unwrap());
+
+                    n
                 }
-            }
+                None => return Ok(None),
+            },
             State::Data(n) => n,
         };
 
@@ -196,5 +199,113 @@ where
         buf.extend_from_slice(&self.encode_buf);
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::{Codec, LengthDelimitedCodec, HEADER_LEN, MAGIC, MAX_MESSAGE_LEN};
+    use byteorder::{ByteOrder, LittleEndian};
+    use bytes::BytesMut;
+    use serde_derive::{Deserialize, Serialize};
+    use std::io::ErrorKind;
+
+    #[derive(Debug, Deserialize, Serialize)]
+    enum TestMessage {
+        Ping,
+    }
+
+    #[test]
+    fn decode_rejects_invalid_magic() {
+        let mut codec = LengthDelimitedCodec::<(), TestMessage>::default();
+        let mut buf = BytesMut::from(&[0u8; HEADER_LEN][..]);
+        LittleEndian::write_u64(&mut buf[0..8], MAGIC ^ 1);
+        LittleEndian::write_u32(&mut buf[8..12], 0);
+
+        let err = codec.decode(&mut buf).expect_err("decode should fail");
+        assert_eq!(err.kind(), ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn decode_rejects_oversized_frame() {
+        let mut codec = LengthDelimitedCodec::<(), TestMessage>::default();
+        let mut buf = BytesMut::from(&[0u8; HEADER_LEN][..]);
+        LittleEndian::write_u64(&mut buf[0..8], MAGIC);
+        LittleEndian::write_u32(&mut buf[8..12], MAX_MESSAGE_LEN + 1);
+
+        let err = codec.decode(&mut buf).expect_err("decode should fail");
+        assert_eq!(err.kind(), ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn encode_decode_roundtrip() {
+        let mut codec = LengthDelimitedCodec::<TestMessage, TestMessage>::default();
+        let mut buf = BytesMut::new();
+        codec.encode(TestMessage::Ping, &mut buf).unwrap();
+        let msg = codec.decode(&mut buf).unwrap();
+        assert!(msg.is_some());
+    }
+
+    #[test]
+    fn decode_incomplete_header() {
+        let mut codec = LengthDelimitedCodec::<(), TestMessage>::default();
+        // Only 8 bytes — need 12 for header.
+        let mut buf = BytesMut::from(&[0u8; 8][..]);
+        assert!(codec.decode(&mut buf).unwrap().is_none());
+    }
+
+    #[test]
+    fn decode_incomplete_payload() {
+        let mut codec = LengthDelimitedCodec::<(), TestMessage>::default();
+        let mut buf = BytesMut::from(&[0u8; HEADER_LEN + 2][..]);
+        LittleEndian::write_u64(&mut buf[0..8], MAGIC);
+        LittleEndian::write_u32(&mut buf[8..12], 100); // Claims 100 bytes, only 2 present.
+        assert!(codec.decode(&mut buf).unwrap().is_none());
+    }
+
+    #[test]
+    fn decode_garbage_payload() {
+        let mut codec = LengthDelimitedCodec::<(), TestMessage>::default();
+        let payload = vec![0xABu8; 50];
+        let mut buf = BytesMut::with_capacity(HEADER_LEN + payload.len());
+        buf.extend_from_slice(&MAGIC.to_le_bytes());
+        buf.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&payload);
+        // Should return a deserialization error, not panic.
+        assert!(codec.decode(&mut buf).is_err());
+    }
+
+    #[test]
+    fn decode_zero_length_payload() {
+        let mut codec = LengthDelimitedCodec::<(), TestMessage>::default();
+        let mut buf = BytesMut::from(&[0u8; HEADER_LEN][..]);
+        LittleEndian::write_u64(&mut buf[0..8], MAGIC);
+        LittleEndian::write_u32(&mut buf[8..12], 0);
+        // Zero-length bincode payload — should fail deserialization, not panic.
+        assert!(codec.decode(&mut buf).is_err());
+    }
+
+    #[test]
+    fn decode_max_valid_length() {
+        let mut codec = LengthDelimitedCodec::<(), TestMessage>::default();
+        let mut buf = BytesMut::from(&[0u8; HEADER_LEN][..]);
+        LittleEndian::write_u64(&mut buf[0..8], MAGIC);
+        LittleEndian::write_u32(&mut buf[8..12], MAX_MESSAGE_LEN);
+        // Accepted by length check, but not enough data — returns None.
+        assert!(codec.decode(&mut buf).unwrap().is_none());
+    }
+
+    #[test]
+    fn encode_decode_multiple_frames() {
+        let mut codec = LengthDelimitedCodec::<TestMessage, TestMessage>::default();
+        let mut buf = BytesMut::new();
+        codec.encode(TestMessage::Ping, &mut buf).unwrap();
+        codec.encode(TestMessage::Ping, &mut buf).unwrap();
+        codec.encode(TestMessage::Ping, &mut buf).unwrap();
+        // Decode all three.
+        assert!(codec.decode(&mut buf).unwrap().is_some());
+        assert!(codec.decode(&mut buf).unwrap().is_some());
+        assert!(codec.decode(&mut buf).unwrap().is_some());
+        assert!(codec.decode(&mut buf).unwrap().is_none());
     }
 }
