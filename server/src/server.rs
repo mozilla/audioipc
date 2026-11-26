@@ -25,10 +25,17 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::{cell::RefCell, sync::Mutex};
 use std::{panic, slice};
 
-use audioipc::errors::Result;
+use audioipc::errors::{Error, Result};
 
 fn error(error: cubeb::Error) -> ClientMessage {
     ClientMessage::Error(error as c_int)
+}
+
+fn stream_init_error(err: Error) -> ClientMessage {
+    match err {
+        Error::Cubeb(err) => error(err),
+        _ => error(cubeb::Error::Error),
+    }
 }
 
 struct CubebDeviceCollectionManager {
@@ -604,7 +611,7 @@ impl CubebServer {
 
             ServerMessage::StreamInit(stm_tok) => self
                 .process_stream_init(context, stm_tok)
-                .unwrap_or_else(|_| error(cubeb::Error::Error)),
+                .unwrap_or_else(stream_init_error),
 
             ServerMessage::StreamDestroy(stm_tok) => {
                 if self.streams.contains(stm_tok) {
@@ -1016,4 +1023,24 @@ unsafe extern "C" fn device_collection_changed_output_cb_c(
         manager.device_collection_changed_callback(ffi::CUBEB_DEVICE_TYPE_OUTPUT);
     });
     ok.expect("Collection changed (output) callback panicked");
+}
+
+#[cfg(test)]
+mod stream_init_error_tests {
+    use super::*;
+
+    #[test]
+    fn preserves_cubeb_errors_and_maps_other_errors() {
+        for err in [
+            cubeb::Error::PermissionDenied,
+            cubeb::Error::InvalidParameter,
+        ] {
+            assert!(
+                matches!(stream_init_error(err.into()), ClientMessage::Error(code) if code == err as c_int)
+            );
+        }
+        assert!(
+            matches!(stream_init_error(Error::Disconnected), ClientMessage::Error(code) if code == cubeb::Error::Error as c_int)
+        );
+    }
 }

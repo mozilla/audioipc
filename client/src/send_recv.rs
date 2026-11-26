@@ -71,3 +71,16 @@ macro_rules! send_recv {
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decodes_permission_denied() {
+        assert_eq!(
+            _err(Error::PermissionDenied as c_int),
+            Error::PermissionDenied
+        );
+    }
+}
