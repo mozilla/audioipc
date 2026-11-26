@@ -421,7 +421,7 @@ impl Connection {
             registry,
             Some(
                 self.interest
-                    .map_or_else(|| Interest::WRITABLE, |i| i.add(Interest::WRITABLE)),
+                    .map_or(Interest::WRITABLE, |i| i.add(Interest::WRITABLE)),
             ),
         )
     }
